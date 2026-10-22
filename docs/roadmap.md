@@ -25,7 +25,7 @@
 | #6 服务、安全与管理 | [#26 凭据/token](https://github.com/freesialuo/CalRelay/issues/26)、[#27 服务生命周期](https://github.com/freesialuo/CalRelay/issues/27)、[#34 管理鉴权](https://github.com/freesialuo/CalRelay/issues/34)、[#35 管理闭环](https://github.com/freesialuo/CalRelay/issues/35) |
 | #7 运行与恢复 | [#36 健康监督](https://github.com/freesialuo/CalRelay/issues/36)、[#37 备份恢复](https://github.com/freesialuo/CalRelay/issues/37)、[#38 容器部署](https://github.com/freesialuo/CalRelay/issues/38) |
 
-#21 已由 #39 合并，#22 已由 #40 合并（见 [来源同步](source-sync.md)）。当前推进 #19 的时区兼容性黄金样例与来源 `VTIMEZONE` 拒绝边界（见 [领域能力](domain-capabilities.md)），为 #20 与 #23 解锁时间语义基线；其余实现项仍按依赖逐项交付。用户故事、开发准入和验证约定见 [开发方法](development-method.md)。#9 的分支归档流程保持独立，不与业务实现混合。
+#21 已由 #39 合并，#22 已由 #40 合并（见 [来源同步](source-sync.md)），#19 已由 #41 合并。当前推进 #20 的重复展开黄金样例评估与受限展开边界（见 [领域能力](domain-capabilities.md)），为 #23 的持久化实例与提醒规划水位解锁领域基线；其余实现项仍按依赖逐项交付。用户故事、开发准入和验证约定见 [开发方法](development-method.md)。#9 的分支归档流程保持独立，不与业务实现混合。
 
 ## 决策基线
 

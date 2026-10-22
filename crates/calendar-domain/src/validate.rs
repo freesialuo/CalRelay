@@ -183,12 +183,26 @@ impl Ctx<'_> {
         duration: Option<&str>,
         path: &str,
     ) {
-        if end.is_some() && duration.is_some() {
-            self.err(Code::EndAndDurationExclusive, path);
-        }
+        self.span_shape(start, end, duration, path);
         if let Some(end) = end {
             self.temporal(end, &format!("{path}/end"));
             self.end_vs_start(start, end, &format!("{path}/end"));
+        }
+    }
+
+    /// Checks span fields without ordering an inherited absolute end against a new start.
+    fn span_shape(
+        &mut self,
+        start: &Temporal,
+        end: Option<&Temporal>,
+        duration: Option<&str>,
+        path: &str,
+    ) {
+        if end.is_some() && duration.is_some() {
+            self.err(Code::EndAndDurationExclusive, path);
+        }
+        if end.is_some_and(|end| family(start) != family(end)) {
+            self.err(Code::EndTypeMismatch, &format!("{path}/end"));
         }
         if let Some(d) = duration {
             let p = format!("{path}/duration");
@@ -202,7 +216,6 @@ impl Ctx<'_> {
 
     fn end_vs_start(&mut self, start: &Temporal, end: &Temporal, path: &str) {
         if family(start) != family(end) {
-            self.err(Code::EndTypeMismatch, path);
             return;
         }
         let ordered = match (start, end) {
@@ -350,6 +363,24 @@ impl Ctx<'_> {
                 self.patch(event, &e.recurrence_id, patch, &format!("{p}/change/patch"));
             }
         }
+    }
+}
+
+/// Validate merged occurrence span fields before resolving an inherited or explicit end.
+pub(crate) fn validate_span_shape(
+    start: &Temporal,
+    end: Option<&Temporal>,
+    duration: Option<&str>,
+) -> Result<(), Vec<ValidationError>> {
+    let mut cx = Ctx {
+        errors: Vec::new(),
+        timezones: &[],
+    };
+    cx.span_shape(start, end, duration, "/recurrence");
+    if cx.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cx.errors)
     }
 }
 
