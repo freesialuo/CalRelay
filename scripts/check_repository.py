@@ -26,8 +26,15 @@ def main():
     assert 'pull_request' in workflow['on'] and 'push' in workflow['on']
     assert 'pull_request_target' not in workflow['on']
     assert workflow['permissions'] == {'contents': 'read'}
-    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust', 'kani'}
-    for job in workflow['jobs'].values():
+    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust'}
+    assert 'kani' not in workflow['jobs']
+    kani = yaml.load((ROOT / '.github/workflows/kani.yml').read_text(), Loader=yaml.BaseLoader)
+    assert set(kani['on']) == {'pull_request', 'workflow_dispatch'}
+    assert kani['on']['pull_request']['branches'] == ['main']
+    assert kani['on']['pull_request']['paths']
+    assert kani['permissions'] == {'contents': 'read'}
+    assert set(kani['jobs']) == {'kani'}
+    for job in [*workflow['jobs'].values(), *kani['jobs'].values()]:
         for step in job.get('steps', []):
             if 'uses' in step:
                 assert re.fullmatch(r'[^@]+@[0-9a-f]{40}', step['uses']), step['uses']

@@ -11,7 +11,11 @@ python3 scripts/check_kani.py
 cargo test -p calendar-domain --test recurrence_bounds --locked
 ```
 
-固定 Kani 0.68.0；其 setup 安装对应 Rust nightly 和 CBMC。CI 的 `kani` 作业执行证明及故障注入，结果为固定 `quality-gate` 的必需输入。现有 Rust 全量回归仍由 `rust` 作业执行。
+固定 Kani 0.68.0；其 setup 安装对应 Rust nightly 和 CBMC。独立的 `Kani` 工作流执行证明及故障注入，不参与 `quality-gate`，不设为必需状态检查。
+
+- 自动触发：目标为 `main` 的 PR 改动领域 crate、workspace 清单/锁文件、Cargo/工具链配置、验证脚本/测试或 `kani.yml`。
+- 按需触发：合并到默认分支后，在 Actions → Kani → Run workflow 选择分支运行；也可执行 `gh workflow run kani.yml --ref <branch>`。手动运行不受路径过滤限制。
+- 仅文档、存储层等无关改动跳过 Kani；常规 `quality-gate` 只依赖 contracts、pr-policy、rust。Kani 被跳过、失败或尚未结束均不阻塞该门禁。现有 Rust 全量回归仍由 `rust` 作业执行。
 
 ## 验证范围与 AC 映射
 
@@ -22,7 +26,7 @@ cargo test -p calendar-domain --test recurrence_bounds --locked
 | AC1 | `recurrence_bounds` 集成测试 | DAILY COUNT=1..=4，重复 RDATE 数 0..=4，EXDATE 开/关，预算 1..=9：360 组；验证先计费再去重/排除、错误上限、成功集合与原始身份。属于枚举测试，不是形式证明 |
 | AC2 | `window_membership` | 四个独立 i8 秒值（Unix epoch 前后 -128..=127 秒），前置条件 start<=end、window_start<window_end；调用实际 Chrono UTC 构造与生产窗口函数，与不相交的补集规格对照；包括零时长和相邻边界，unwind=2 |
 | AC3 | `scripts/check_kani.py` | 临时副本将扣 1 改成扣 0，以及区间右边界 `<` 改成 `<=`；分别要求预算/窗口的命名断言产生反例 |
-| AC4 | CI / `quality-gate` | 先要求全部三个 harness 成功，再分别验证两个 mutant；版本不符、编译/工具失败、unwind 失败或缺少目标断言反例均不能算检出缺陷 |
+| AC4 | 独立可选 `Kani` 工作流 | 先要求全部三个 harness 成功，再分别验证两个 mutant；版本不符、编译/工具失败、unwind 失败或缺少目标断言反例均不能算检出缺陷 |
 
 所有 harness 调用生产函数，不复制待验证实现；未使用 stub、跳过内存/溢出/unwind 检查或实验性循环契约。前置条件保留成功与拒绝路径。故障注入仅改临时副本，使用 `find … -delete` 清理。
 
@@ -38,3 +42,7 @@ cargo test -p calendar-domain --test recurrence_bounds --locked
 - 回归：Rust workspace 74 项测试、fmt、Clippy `-D warnings`、11 项 Python 测试、仓库检查及 `git diff --check` 通过。
 
 首次工具试跑因错误枚举析构中的集合循环需要显式 unwind；补充上限后保留默认检查并通过。该工具配置问题不计为需求 Red。CI 的 Linux 运行结果以对应 PR 为准。
+
+## 可选触发策略（#47）
+
+将 Kani 从强制门禁移到独立工作流，保留证明及反例判定逻辑。实际检查：16 个路径匹配正反例、11 项 Python 回归、工作流结构、仓库检查及 `git diff --check` 通过；远端 main 的实际必需检查仅为 `quality-gate`。此次仅调整配置与文档，未重跑 Rust/Kani；证明及故障注入逻辑未改动。

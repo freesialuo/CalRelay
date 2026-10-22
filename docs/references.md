@@ -82,3 +82,5 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 - [Kani 循环展开](https://model-checking.github.io/kani/tutorial-loop-unwinding.html)：显式记录 unwind；不关闭 unwinding assertions，不把有限范围推成完整算法证明。
 - [Kani 安装](https://model-checking.github.io/kani/install-guide.html)、[0.68.0 公共源码](https://github.com/model-checking/kani/tree/kani-0.68.0)：固定安装版本；本地 CLI `--help` 核对 `--lib`、`--harness` 和默认检查，实际输出用于故障注入判定。
 - [Chrono DateTime::from_timestamp](https://docs.rs/chrono/0.4.45/chrono/struct.DateTime.html#method.from_timestamp)：Context7 `/websites/rs_chrono_chrono` 核对范围错误返回 None、秒/纳秒构造及闰秒限制；窗口 harness 使用小范围有效整秒 UTC，保留真实生产比较路径。
+
+#47 通过 Context7 `/websites/github_en_actions` 核对 [路径过滤](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore) 与 [手动运行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)：路径过滤与目标分支条件同时生效；跳过的工作流不应被设为必需检查；`workflow_dispatch` 需工作流已位于默认分支。
