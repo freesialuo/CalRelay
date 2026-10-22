@@ -1,0 +1,29 @@
+name: 缺陷
+description: 报告可复现问题
+labels: [bug]
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供最小复现，勿粘贴 token 或完整私有日历。
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本与运行环境
+    validations:
+      required: true

@@ -1,0 +1,68 @@
+# 实施路线与架构决策
+
+## GitHub 工作项
+
+| Issue | 交付范围 |
+| --- | --- |
+| [#1](https://github.com/freesialuo/CalRelay/issues/1) | 架构基线、开发流程与 CI |
+| [#2](https://github.com/freesialuo/CalRelay/issues/2) | Rust workspace、事件领域与时间语义 |
+| [#3](https://github.com/freesialuo/CalRelay/issues/3) | ICS 与鉴权 HTTP 接入协调器 |
+| [#4](https://github.com/freesialuo/CalRelay/issues/4) | SQLite 修订日志与可恢复调度 |
+| [#5](https://github.com/freesialuo/CalRelay/issues/5) | ICS 订阅与 Bark 输出器 |
+| [#6](https://github.com/freesialuo/CalRelay/issues/6) | TypeScript 管理面与 Cloudflare 安全 |
+| [#7](https://github.com/freesialuo/CalRelay/issues/7) | Docker、健康监督与备份恢复 |
+
+## 决策基线
+
+| 编号 | 决策 | 原因与代价 |
+| --- | --- | --- |
+| ADR-001 | 模块化单体，Rust + TypeScript | 事务与部署简单，模块边界仍需严格维护 |
+| ADR-002 | 自定义 EventV1，参考 iCalendar/JSCalendar | 保留领域语义，需维护规范映射与能力清单 |
+| ADR-003 | SQLite 单节点持久化 | 自托管成本低，接受单写者和单节点限制 |
+| ADR-004 | 持久化修订日志 + 数据库任务队列 | 重启可恢复，需规划水位、租约与幂等约束 |
+| ADR-005 | ICS 拉取与主动推送分离 | 不把客户端刷新当作可靠定时投递 |
+| ADR-006 | Access 身份 + Turnstile + 应用会话 | 人机验证和管理员授权各有独立职责 |
+| ADR-007 | 可重试投递，不承诺端到端 exactly-once | Bark 无已核验的幂等/终端回执保障 |
+| ADR-008 | 先固定内置适配器，后扩展外部接入 API | 减少任意代码执行和插件 ABI 复杂度 |
+
+以上均为本次设计建议。项目所有者可在实现前修改；名称与 remote URL 不影响领域设计。
+
+## 阶段 0：模型与兼容性验证
+
+- 项目名已确定为 CalRelay，remote 为 `https://github.com/freesialuo/CalRelay.git`；许可证由项目所有者选择。
+- 建立 Rust workspace、前端、锁文件和 CI；实现 EventV1 结构及语义验证器。
+- 使用本仓库 schema 和 example 建立跨语言契约；定义错误码及能力清单。
+- 对候选 ICS/时区/重复库做黄金样例验证，锁定版本；若无法满足时间语义，先收窄能力并明确拒绝。
+
+验收：时间类型不丢失，单次/全天/夏令时/重复例外可解释；不支持的输入有明确诊断。
+
+## 阶段 1：可靠最小闭环
+
+- ICS 单次事件 + 鉴权 HTTP 获取；标准事件 upsert/delete。
+- SQLite 迁移、源快照事务、修订日志、规划水位、任务租约。
+- 固定提前量 Bark、稳定 UID 的只读 ICS 订阅、发送记录。
+- 事件改期/取消、重启恢复、过期追赶规则、凭据和订阅 token 轮换。
+
+验收：重复同步不重复造任务；取消作废未发任务；崩溃后可恢复；Bark 不确定结果不误报设备已送达。
+
+## 阶段 2：完整管理与部署
+
+- TypeScript 管理面：来源、日历、规则、输出、订阅、诊断与审计。
+- Access + Turnstile + 会话、SSRF 防护、API token 作用域和请求限额。
+- 可运行 Dockerfile/Compose、持久卷、健康检查、外部监督样例、备份恢复流程。
+
+验收：容器升级数据保留；healthcheck 与重启分别演练；外部渠道失败不引起重启风暴；管理身份和订阅权限互不混用。
+
+## 阶段 3：日历与来源扩展
+
+- RRULE、EXDATE、RDATE/PERIOD、单次例外、THISANDFUTURE、自定义时区逐项启用。
+- OAuth2、分页/增量源、声明式 JSON 映射、多日历过滤。
+- 导入警报执行策略、每日摘要、免打扰、变更通知及其他输出器。
+
+验收：每项能力有真实协议样例与故障样例；导出后再次导入关键语义一致；同一输入在不同宿主机时区得到相同规划结果。
+
+## 质量与暂缓项
+
+核心时间逻辑做性质测试与黄金样例；数据库并发约束和崩溃恢复做集成测试；ICS 做语义 round-trip；网络输出使用模拟服务验证超时/限流/响应丢失。接入与输出真实凭据只用于明确授权的人工联调。
+
+暂缓：CalDAV 双向同步、多租户、多实例调度、任意进程内插件、跨源智能合并。需要时另立 ADR，不提前增加消息中间件。

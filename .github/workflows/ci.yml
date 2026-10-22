@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements/ci.txt
+      - name: Install pinned validation dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements/ci.txt
+      - name: Check whitespace
+        run: git diff --check HEAD^ HEAD
+      - name: Check repository structure
+        run: python scripts/check_repository.py
+      - name: Test contracts and PR policy
+        run: python -m unittest discover -s tests -v
+
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate current PR and linked Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_pr.py
+
+  quality-gate:
+    name: quality-gate
+    if: ${{ always() }}
+    needs: [contracts, pr-policy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every applicable check to pass
+        env:
+          CONTRACTS_RESULT: ${{ needs.contracts.result }}
+          PR_POLICY_RESULT: ${{ needs.pr-policy.result }}
+        run: |
+          test "$CONTRACTS_RESULT" = success
+          test "$PR_POLICY_RESULT" = success
