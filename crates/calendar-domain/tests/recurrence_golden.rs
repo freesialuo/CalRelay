@@ -723,3 +723,101 @@ fn recurrence_year_limit_keeps_last_supported_year() {
         Err(ExpansionError::InvalidWindow)
     );
 }
+
+#[test]
+fn exception_spans_override_period_spans_without_shadowing() {
+    let end = json!({"kind": "utc", "value": "2026-02-01T12:00:00Z"});
+    for (period_span, patch, expected_end) in [
+        (
+            json!({"duration": "PT2H"}),
+            json!({"end": end}),
+            "2026-02-01T12:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"duration": "PT2H"}),
+            "2026-02-01T11:00:00Z",
+        ),
+        (
+            json!({"duration": "PT2H"}),
+            json!({"end": null}),
+            "2026-02-01T11:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"duration": null}),
+            "2026-02-01T12:00:00Z",
+        ),
+        (
+            json!({"duration": "PT2H"}),
+            json!({"duration": null}),
+            "2026-02-01T09:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"end": null}),
+            "2026-02-01T09:00:00Z",
+        ),
+        (
+            json!({"duration": "PT2H"}),
+            json!({"title": "Renamed"}),
+            "2026-02-01T11:00:00Z",
+        ),
+    ] {
+        let start = json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"});
+        let mut period = period_span;
+        period["kind"] = json!("period");
+        period["start"] = start.clone();
+        let event = event_with(json!({
+            "duration": null,
+            "recurrence": {
+                "rdates": [period],
+                "exceptions": [{"recurrence_id": start, "range": "single", "change": {"kind": "override", "patch": patch}}]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let out = expand_occurrences(
+            &event,
+            &default_options("2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].end_utc, utc_dt(expected_end), "{patch}");
+    }
+}
+
+#[test]
+fn calendar_timezone_is_validated_only_for_temporals_that_need_it() {
+    for start in [
+        json!({"kind": "utc", "value": "2026-01-31T09:00:00Z"}),
+        json!({"kind": "zoned", "local": "2026-01-31T09:00:00", "tzid": "America/Vancouver"}),
+        json!({"kind": "date", "date": "2026-01-31"}),
+        json!({"kind": "floating", "local": "2026-01-31T09:00:00"}),
+    ] {
+        let event = event_with(json!({
+            "start": start,
+            "duration": null,
+            "timezones": [{"tzid": "Custom/Calendar", "vtimezone": "BEGIN:VTIMEZONE\nEND:VTIMEZONE"}]
+        }));
+        let needs_calendar = matches!(start["kind"].as_str(), Some("date" | "floating"));
+        let mut options = default_options("2026-01-01T00:00:00Z", "2026-02-02T00:00:00Z");
+        options.calendar_tzid = Some("UTC");
+        let expected = expand_occurrences(&event, &options).unwrap();
+        for (tzid, error) in [
+            (None, ExpansionError::MissingCalendarTimezone),
+            (
+                Some("Unknown/Zone"),
+                ExpansionError::MissingCalendarTimezone,
+            ),
+            (Some("Custom/Calendar"), ExpansionError::UnsupportedTimezone),
+        ] {
+            options.calendar_tzid = tzid;
+            let out = expand_occurrences(&event, &options);
+            if needs_calendar {
+                assert_eq!(out, Err(error), "{start}: {tzid:?}");
+            } else {
+                assert_eq!(out, Ok(expected.clone()), "{start}: {tzid:?}");
+            }
+        }
+    }
+}

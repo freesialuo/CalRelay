@@ -379,31 +379,34 @@ fn parse_verified_rrule(rule: &str, start: &Temporal) -> Result<ParsedRrule, Exp
 
 struct Resolver<'a> {
     event: &'a EventV1,
-    calendar_tz: Option<(&'a str, Tz)>,
+    calendar_tzid: Option<&'a str>,
 }
 
 impl<'a> Resolver<'a> {
-    fn new(event: &'a EventV1, options: &ExpansionOptions<'a>) -> Result<Self, ExpansionError> {
-        let timezones = event.timezones.as_deref().unwrap_or(&[]);
-        let calendar_tz = match options.calendar_tzid {
-            Some(tzid) => {
-                if timezones
-                    .iter()
-                    .any(|z| z.tzid == tzid && !z.vtimezone.trim().is_empty())
-                {
-                    return Err(ExpansionError::UnsupportedTimezone);
-                }
-                if timezones.iter().any(|z| z.tzid == tzid) {
-                    return Err(ExpansionError::MissingCalendarTimezone);
-                }
-                let tz = tzid
-                    .parse::<Tz>()
-                    .map_err(|_| ExpansionError::MissingCalendarTimezone)?;
-                Some((tzid, tz))
-            }
-            None => None,
-        };
-        Ok(Self { event, calendar_tz })
+    fn new(event: &'a EventV1, options: &ExpansionOptions<'a>) -> Self {
+        Self {
+            event,
+            calendar_tzid: options.calendar_tzid,
+        }
+    }
+
+    fn calendar_timezone(&self) -> Result<&'a str, ExpansionError> {
+        let tzid = self
+            .calendar_tzid
+            .ok_or(ExpansionError::MissingCalendarTimezone)?;
+        let timezones = self.event.timezones.as_deref().unwrap_or(&[]);
+        if timezones
+            .iter()
+            .any(|z| z.tzid == tzid && !z.vtimezone.trim().is_empty())
+        {
+            return Err(ExpansionError::UnsupportedTimezone);
+        }
+        if timezones.iter().any(|z| z.tzid == tzid) {
+            return Err(ExpansionError::MissingCalendarTimezone);
+        }
+        tzid.parse::<Tz>()
+            .map_err(|_| ExpansionError::MissingCalendarTimezone)?;
+        Ok(tzid)
     }
 
     fn resolve_temporal(
@@ -431,9 +434,7 @@ impl<'a> Resolver<'a> {
                 Ok((dt, local_dt.date(), tzid.clone()))
             }
             Temporal::Floating { local } => {
-                let (cal_tzid, _) = self
-                    .calendar_tz
-                    .ok_or(ExpansionError::MissingCalendarTimezone)?;
+                let cal_tzid = self.calendar_timezone()?;
                 let local_dt = parse_local(local).expect("validated floating local");
                 let zoned = Temporal::Zoned {
                     local: local.clone(),
@@ -446,9 +447,7 @@ impl<'a> Resolver<'a> {
                 Ok((dt, local_dt.date(), cal_tzid.to_owned()))
             }
             Temporal::Date { date } => {
-                let (cal_tzid, _) = self
-                    .calendar_tz
-                    .ok_or(ExpansionError::MissingCalendarTimezone)?;
+                let cal_tzid = self.calendar_timezone()?;
                 let d = parse_date(date).expect("validated date");
                 let zoned = Temporal::Zoned {
                     local: format!("{date}T00:00:00"),
@@ -555,7 +554,7 @@ pub fn expand_occurrences(
         return Err(ExpansionError::InvalidWindow);
     }
 
-    let resolver = Resolver::new(event, options)?;
+    let resolver = Resolver::new(event, options);
     let (master_start_utc, _, _) = resolver.resolve_temporal(&event.start)?;
     let Some(recurrence) = &event.recurrence else {
         let end_utc = resolve_span_end(
@@ -757,9 +756,15 @@ fn apply_patch<'a>(
     }
     if let Some(end_opt) = &patch.end {
         *end_override = Some(end_opt.as_ref());
+        if end_opt.is_some() {
+            *duration_override = Some(None);
+        }
     }
     if let Some(dur_opt) = &patch.duration {
         *duration_override = Some(dur_opt.as_deref());
+        if dur_opt.is_some() {
+            *end_override = Some(None);
+        }
     }
 }
 

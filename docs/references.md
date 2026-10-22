@@ -33,6 +33,8 @@
 
 第二轮 review 通过同一 Context7 库核对 [NaiveDate::from_ymd_opt](https://docs.rs/chrono/0.4.45/chrono/struct.NaiveDate.html#method.from_ymd_opt) 和 [Datelike::year](https://docs.rs/chrono/0.4.45/chrono/trait.Datelike.html#tymethod.year)：Chrono 的可表示年份宽于本项目 Temporal 的四位格式，因此候选日期必须先检查项目范围再格式化与解析。
 
+第三轮 review 通过 Context7 `/chronotope/chrono-tz` 核对 [Tz::from_str](https://docs.rs/chrono-tz/0.10.4/chrono_tz/enum.Tz.html#impl-FromStr-for-Tz)：未知 IANA 名称返回错误；本项目仅在 date/floating 需要解释日历时区时调用该校验，继续优先拒绝来源 VTIMEZONE。
+
 ## 安全与运行文档
 
 | 来源 | 本项目采用方式 |
