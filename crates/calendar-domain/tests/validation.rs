@@ -285,6 +285,124 @@ fn override_patch_is_validated_like_an_event() {
     assert!(codes(exc(json!({"duration": "-PT1H"}))).contains(&Code::NegativeDuration));
 }
 
+fn with_override(mut master: Value, recurrence_id: Value, patch: Value) -> Value {
+    master["recurrence"] = json!({"rrule": "FREQ=DAILY", "exceptions": [
+        {"recurrence_id": recurrence_id, "range": "single",
+         "change": {"kind": "override", "patch": patch}}
+    ]});
+    master
+}
+
+#[test]
+fn end_only_override_is_anchored_to_the_affected_occurrence() {
+    for (start, rid, before, after) in [
+        (
+            utc("2026-11-02T17:00:00Z"),
+            utc("2026-11-05T17:00:00Z"),
+            utc("2026-11-05T16:00:00Z"),
+            utc("2026-11-05T18:00:00Z"),
+        ),
+        (
+            date("2026-11-02"),
+            date("2026-11-05"),
+            date("2026-11-05"),
+            date("2026-11-06"),
+        ),
+        (
+            floating("2026-11-02T17:00:00"),
+            floating("2026-11-05T17:00:00"),
+            floating("2026-11-05T16:00:00"),
+            floating("2026-11-05T18:00:00"),
+        ),
+    ] {
+        let master = event(json!({"start": start}));
+        let errors = check(with_override(
+            master.clone(),
+            rid.clone(),
+            json!({"end": before}),
+        ))
+        .unwrap_err();
+        assert!(errors.iter().any(|e| e.code == Code::EndBeforeStart
+            && e.path == "/recurrence/exceptions/0/change/patch/end"));
+        assert_eq!(
+            check(with_override(
+                master.clone(),
+                rid.clone(),
+                json!({"end": after})
+            )),
+            Ok(())
+        );
+        assert_eq!(
+            check(with_override(
+                master,
+                rid,
+                json!({"start": before, "end": after})
+            )),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+fn override_span_inherits_omitted_fields_and_respects_explicit_null() {
+    let rid = utc("2026-11-02T17:00:00Z");
+    for (master_span, conflicting_patch, cleared_patch) in [
+        (
+            json!({"duration": "PT1H"}),
+            json!({"end": utc("2026-11-02T18:00:00Z")}),
+            json!({"end": utc("2026-11-02T18:00:00Z"), "duration": null}),
+        ),
+        (
+            json!({"end": utc("2026-11-02T18:00:00Z")}),
+            json!({"duration": "PT1H"}),
+            json!({"duration": "PT1H", "end": null}),
+        ),
+    ] {
+        let master = event(master_span);
+        assert!(codes(with_override(
+            master.clone(),
+            rid.clone(),
+            conflicting_patch
+        ))
+        .contains(&Code::EndAndDurationExclusive));
+        assert_eq!(
+            check(with_override(master.clone(), rid.clone(), cleared_patch)),
+            Ok(())
+        );
+        assert_eq!(
+            check(with_override(
+                master,
+                rid.clone(),
+                json!({"title": "updated"})
+            )),
+            Ok(())
+        );
+    }
+    let bad = with_override(
+        event(json!({"duration": "PT1H"})),
+        rid,
+        json!({"start": date("2026-11-02")}),
+    );
+    assert!(codes(bad).contains(&Code::DateDurationHasTime));
+}
+
+#[test]
+fn source_timezone_definitions_take_precedence_on_either_side_of_a_span() {
+    let zone = zoned("2026-11-02T09:00:00", "America/Vancouver");
+    for (start, end) in [
+        (zone.clone(), utc("2026-11-02T16:00:00Z")),
+        (utc("2026-11-02T18:00:00Z"), zone),
+    ] {
+        let master = event(json!({"start": start, "end": end,
+            "timezones": [{"tzid": "America/Vancouver", "vtimezone": "BEGIN:VTIMEZONE\nEND:VTIMEZONE"}]
+        }));
+        assert_eq!(check(master.clone()), Ok(()));
+        let mut iana = master;
+        iana["timezones"] = json!([]);
+        assert!(codes(iana).contains(&Code::EndBeforeStart));
+    }
+}
+
 #[test]
 fn this_and_future_is_explicitly_unsupported() {
     let start = utc("2026-11-02T17:00:00Z");

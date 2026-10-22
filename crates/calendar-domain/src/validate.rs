@@ -122,6 +122,12 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    fn has_source_timezone(&self, tzid: &str) -> bool {
+        self.timezones
+            .iter()
+            .any(|z| z.tzid == tzid && !z.vtimezone.is_empty())
+    }
+
     fn err(&mut self, code: Code, path: &str) {
         self.errors.push(ValidationError {
             code,
@@ -136,11 +142,7 @@ impl Ctx<'_> {
             Temporal::Utc { value } => parse_utc(value).is_some(),
             Temporal::Floating { local } => parse_local(local).is_some(),
             Temporal::Zoned { local, tzid } => {
-                let known = tzid.parse::<Tz>().is_ok()
-                    || self
-                        .timezones
-                        .iter()
-                        .any(|z| z.tzid == *tzid && !z.vtimezone.is_empty());
+                let known = tzid.parse::<Tz>().is_ok() || self.has_source_timezone(tzid);
                 if !known {
                     self.err(Code::UnknownTimezone, path);
                 }
@@ -200,6 +202,12 @@ impl Ctx<'_> {
             }
             (Temporal::Floating { local: s }, Temporal::Floating { local: e }) => {
                 parse_local(s).zip(parse_local(e)).map(|(s, e)| e >= s)
+            }
+            _ if [start, end].iter().any(
+                |t| matches!(t, Temporal::Zoned { tzid, .. } if self.has_source_timezone(tzid)),
+            ) =>
+            {
+                None
             }
             _ => match (start.to_utc(), end.to_utc()) {
                 (Ok(Some(s)), Ok(Some(e))) => Some(e >= s),
@@ -271,21 +279,26 @@ impl Ctx<'_> {
         }
     }
 
-    fn patch(&mut self, parent: &Temporal, patch: &EventPatch, path: &str) {
-        let start = patch.start.as_ref().unwrap_or(parent);
+    fn patch(&mut self, event: &EventV1, occurrence: &Temporal, patch: &EventPatch, path: &str) {
+        let start = patch.start.as_ref().unwrap_or(occurrence);
         if let Some(s) = &patch.start {
             self.temporal(s, &format!("{path}/start"));
         }
-        let end = patch.end.as_ref().and_then(Option::as_ref);
-        let duration = patch.duration.as_ref().and_then(Option::as_deref);
-        // An override end without its own start is still anchored to the occurrence kind.
+        // Omitted fields inherit; explicit null clears the inherited value.
+        let end = patch.end.as_ref().unwrap_or(&event.end).as_ref();
+        let duration = patch
+            .duration
+            .as_ref()
+            .unwrap_or(&event.duration)
+            .as_deref();
         self.span(start, end, duration, path);
         for (i, a) in patch.alarms.iter().flatten().enumerate() {
             self.alarm(a, &format!("{path}/alarms/{i}"));
         }
     }
 
-    fn recurrence(&mut self, start: &Temporal, r: &Recurrence, path: &str) {
+    fn recurrence(&mut self, event: &EventV1, r: &Recurrence, path: &str) {
+        let start = &event.start;
         if let Some(rule) = &r.rrule {
             self.rrule(rule, &format!("{path}/rrule"));
         }
@@ -328,7 +341,7 @@ impl Ctx<'_> {
                 self.err(Code::UnsupportedRange, &format!("{p}/range"));
             }
             if let Change::Override { patch } = &e.change {
-                self.patch(start, patch, &format!("{p}/change/patch"));
+                self.patch(event, &e.recurrence_id, patch, &format!("{p}/change/patch"));
             }
         }
     }
@@ -348,7 +361,7 @@ pub fn validate_event(event: &EventV1) -> Result<(), Vec<ValidationError>> {
         "",
     );
     if let Some(r) = &event.recurrence {
-        cx.recurrence(&event.start, r, "/recurrence");
+        cx.recurrence(event, r, "/recurrence");
     }
     for (i, a) in event.alarms.iter().flatten().enumerate() {
         cx.alarm(a, &format!("/alarms/{i}"));

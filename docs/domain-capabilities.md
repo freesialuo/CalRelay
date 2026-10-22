@@ -18,7 +18,9 @@
 | RRULE 须含合法 `FREQ`，`COUNT` 与 `UNTIL` 互斥 | `UnsupportedRrule` |
 | 告警 offset / repeat_interval 语法，绝对触发须为 UTC | `InvalidDuration` 等 |
 
-zoned 值解析遵循 RFC 5545：歧义时间取第一次出现，不存在的时间使用转换前的偏移（`Temporal::to_utc`）。floating 与全天值不产生绝对时刻，由规划层配置解释时区。仅由来源 VTIMEZONE 定义的 TZID 暂不能转换为绝对时刻：保留并通过验证，但跨类型的先后比较会跳过，规划前须另行解释。
+覆盖校验以 `patch.start` 或该例外的 `recurrence_id` 为开始；`end` / `duration` 缺省继承母事件字段，显式 null 清除，继承后仍须互斥。继承的 `end` 保留原值，不在校验器中展开或平移；如其早于例外开始，须显式覆盖或清除。
+
+zoned 值解析遵循 RFC 5545：歧义时间取第一次出现，不存在的时间使用转换前的偏移（`Temporal::to_utc`）。floating 与全天值不产生绝对时刻，由规划层配置解释时区。来源 VTIMEZONE 绑定的 TZID 暂不能转换为绝对时刻，即使与 IANA 名称相同也优先保留来源定义：跨度任一端绑定来源定义时跳过绝对先后比较，规划前须另行解释。`Temporal::to_utc` 不接收来源上下文，仅用于明确采用 IANA 语义的调用。
 
 ## 库评估记录
 
