@@ -111,6 +111,8 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 源 revision 与 event revision 分开：一次快照可以修改多个事件；source_changes 是可靠规划日志。消费后按规划水位和备份保留策略清理，不在提交后立即删除。
 
+已实现的来源提交契约见 [来源同步事务](source-sync.md)：每个成功批次推进来源 CAS revision，无事件内容变化时不新增事件修订或变化日志；事件/墓碑、日志及 checkpoint 原子提交。不完整快照和未批准的大规模删除整批拒绝。
+
 提醒 generation 是每个逻辑投递的单调任务版本；event/rule/output 的修订分别记录，不能把三者简单拼成可排序整数。租约写入和结果提交都检查 owner/token。作废中的在途请求记录真实返回结果，但不能复活旧任务或覆盖新 generation。
 
 ### 必要索引与约束

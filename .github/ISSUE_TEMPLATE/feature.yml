@@ -6,14 +6,14 @@ body:
     id: goal
     attributes:
       label: 目标
-      description: 用户需要什么，以及解决哪个问题。
+      description: 作为谁，希望什么，以便获得什么结果。父项可保留整体目标，实现项按可独立验收的结果拆分。
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
       label: 验收标准
-      description: 用可验证的结果列出完成条件。
+      description: 使用 AC 编号及 Given/When/Then 描述正常、失败和边界场景；为每个 AC 写出对应测试或演练的可观测结果。
     validations:
       required: true
   - type: textarea
@@ -21,3 +21,8 @@ body:
     attributes:
       label: 依赖与范围
       description: 关联 Issue、前置条件和明确排除的工作。
+  - type: textarea
+    id: verification
+    attributes:
+      label: V-Model 与开发准入
+      description: 对应需求与验收、系统约束与系统测试、接口与集成测试、规则与单元测试。开始前核对依赖已合并，实现采用 Red/Green/Refactor 并保留实际结果。
