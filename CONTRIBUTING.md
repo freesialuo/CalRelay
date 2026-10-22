@@ -20,7 +20,7 @@ PR 标题采用 `type(scope): description`，scope 可省略；正文写改动�
 - 使用现有 GPG/YubiKey 配置进行 `git commit -S`；签名前逐次取得明确 Yes，提醒准备触摸 YubiKey。失败后停止，不自动重试，不使用无签名提交。
 - 不强推。更新分支优先使用经确认的签名 merge 提交；如需重写历史，必须事先单独授权并遵守签名规则。
 - 运行 `git diff --check`，安装 `requirements/ci.txt`，运行 `python3 -m unittest discover -s tests -v` 和 `python3 scripts/check_repository.py`。
-- 当前 CI 只验证事件 JSON Schema、示例、契约拒绝案例、PR 约定与仓库结构；尚无 Rust/前端运行代码，不声称运行了应用测试。
+- CI 运行事件 JSON Schema、示例、契约拒绝案例、PR 约定与仓库结构检查，以及 Rust workspace 的 `cargo fmt --check`、Clippy（`-D warnings`）和 `cargo test`；尚无前端运行代码，不声称运行了前端测试。
 - Rust workspace 首次实现的同一 PR 必须接入 `cargo fmt --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings` 和适当的 `cargo test`；前端首次实现同样接入类型、构建与有价值的测试。所有检查纳入固定 `quality-gate`。
 - 核心日历逻辑优先黄金样例/性质测试；数据库事务与故障恢复做集成测试，Bark 用模拟服务验证。不得用真实外部发送代替自动测试。
 

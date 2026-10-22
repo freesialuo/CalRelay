@@ -56,10 +56,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check_pr.py
 
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: cargo --version && rustc --version
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features --locked
+
   quality-gate:
     name: quality-gate
     if: ${{ always() }}
-    needs: [contracts, pr-policy]
+    needs: [contracts, pr-policy, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -67,6 +84,8 @@ jobs:
         env:
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           PR_POLICY_RESULT: ${{ needs.pr-policy.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$PR_POLICY_RESULT" = success
+          test "$RUST_RESULT" = success

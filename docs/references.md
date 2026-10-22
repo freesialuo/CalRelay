@@ -15,6 +15,7 @@
 | --- | --- |
 | [SQLx SQLite 连接参数](https://docs.rs/sqlx/latest/sqlx/sqlite/struct.SqliteConnectOptions.html) | Context7 `/websites/rs_sqlx`：显式配置 WAL、外键、busy_timeout 与同步级别，避免隐式依赖默认值 |
 | [SQLx 源码](https://github.com/launchbadge/sqlx) | 异步数据库访问和迁移的实现参考；正式使用前锁版本 |
+| [Serde 字段属性](https://serde.rs/field-attrs.html) | Context7 `/websites/serde_rs`：核对 `default` 与 `deserialize_with`，覆盖补丁保留缺省继承与显式 null 清除的区别（#13、#14） |
 | [Bark 推送文档](https://github.com/Finb/Bark/blob/master/docs/tutorial.md) | JSON POST、设备 key 与输出配置的依据 |
 | [bark-server API V2](https://github.com/Finb/bark-server/blob/master/docs/API_V2.md) | 对接主动推送，应用响应需检查；不从其文档推导端到端去重或设备回执保证 |
 
