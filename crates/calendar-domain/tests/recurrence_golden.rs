@@ -675,3 +675,51 @@ fn inherited_timed_ends_keep_exact_duration_across_dst() {
         );
     }
 }
+
+#[test]
+fn generated_years_outside_temporal_range_return_typed_errors() {
+    for start in [
+        json!({"kind": "utc", "value": "2026-01-31T09:00:00Z"}),
+        json!({"kind": "zoned", "local": "2026-01-31T09:00:00", "tzid": "America/Vancouver"}),
+        json!({"kind": "floating", "local": "2026-01-31T09:00:00"}),
+        json!({"kind": "date", "date": "2026-01-31"}),
+    ] {
+        for rule in [
+            "FREQ=YEARLY;INTERVAL=10000;COUNT=2",
+            "FREQ=MONTHLY;INTERVAL=120000;COUNT=2",
+            "FREQ=WEEKLY;INTERVAL=600000;COUNT=2",
+            "FREQ=DAILY;INTERVAL=4000000;COUNT=2",
+        ] {
+            let event = event_with(json!({
+                "start": start,
+                "duration": null,
+                "recurrence": {"rrule": rule}
+            }));
+            validate_event(&event).unwrap();
+            let mut options = default_options("2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z");
+            options.calendar_tzid = Some("UTC");
+            assert_eq!(
+                expand_occurrences(&event, &options),
+                Err(ExpansionError::InvalidWindow),
+                "{start}: {rule}"
+            );
+        }
+    }
+}
+
+#[test]
+fn recurrence_year_limit_keeps_last_supported_year() {
+    let mut event = event_with(json!({
+        "start": {"kind": "utc", "value": "9998-01-31T09:00:00Z"},
+        "recurrence": {"rrule": "FREQ=YEARLY;COUNT=2"}
+    }));
+    let options = default_options("9998-01-01T00:00:00Z", "9999-12-01T00:00:00Z");
+    let out = expand_occurrences(&event, &options).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[1].start_utc, utc_dt("9999-01-31T09:00:00Z"));
+    event.recurrence.as_mut().unwrap().rrule = Some("FREQ=YEARLY;COUNT=3".to_owned());
+    assert_eq!(
+        expand_occurrences(&event, &options),
+        Err(ExpansionError::InvalidWindow)
+    );
+}

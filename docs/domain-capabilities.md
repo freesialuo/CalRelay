@@ -74,6 +74,8 @@ TDD 记录：
 - `validate_event` 仍只校验时长语法与符号；展开时数值解析、运算、Chrono 时长构造或日期范围溢出均返回 `ExpansionError::InvalidDuration`，不 panic。日历日相加后的年份须保持 Temporal 的四位格式。
 - AC1/AC2 回归：`inherited_explicit_ends_preserve_every_instance_span_and_overlap`、`explicit_occurrence_ends_remain_absolute_and_cleared_ends_use_defaults`、`inherited_timed_ends_keep_exact_duration_across_dst`、`yearly_month_days_expand_all_months_unless_restricted`、`unrepresentable_durations_return_errors_for_all_span_sources`。
 - Red：新增首批 4 项测试后，10 项中 7 通过、3 失败，分别复现一天实例缩为零、年度规则漏月及超大时长 panic。Green/Refactor：区分继承与显式结束时间，按年扩展月份，使用 checked 运算并合并日历日相加逻辑；补充跨 DST 回归后 11 项全部通过。
+- 第二轮 review（AC2）：在候选日期转为 `Temporal` 并解析 UTC 之前检查四位年份范围，越界返回 `ExpansionError::InvalidWindow`；即使查询窗口很窄，也不会先解析五位年份而 panic。选择显式错误，不返回不完整集合。
+- 回归 `generated_years_outside_temporal_range_return_typed_errors` 覆盖 `utc`/`zoned`/`floating`/`date` 和四种已支持频率的大 `INTERVAL`；`recurrence_year_limit_keeps_last_supported_year` 验证 9999 年可展开、10000 年被拒绝。Red：13 项中 11 通过、2 项均在 UTC 解析处 panic；Green：加上年份检查后 13 项全部通过。
 
 ## 测试
 

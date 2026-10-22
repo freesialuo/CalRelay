@@ -31,6 +31,8 @@
 | [RFC 5545 §3.3.10](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.3.10)、[§3.8.5.3](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.8.5.3) | 核对 `YEARLY` 下 `BYMONTHDAY` 的 Expand 语义，以及重复实例继承结束时间时的跨度保持与例外独立跨度 |
 | [Chrono 0.4.45 TimeDelta](https://docs.rs/chrono/0.4.45/chrono/struct.TimeDelta.html#method.try_seconds)、[DateTime](https://docs.rs/chrono/0.4.45/chrono/struct.DateTime.html#method.checked_add_signed)、[NaiveDate](https://docs.rs/chrono/0.4.45/chrono/struct.NaiveDate.html#method.checked_add_days) | `try_seconds`、`checked_add_signed`、`checked_add_days` 的越界返回值用于类型化错误；源码核对 `src/time_delta.rs` 与 `src/datetime/mod.rs` |
 
+第二轮 review 通过同一 Context7 库核对 [NaiveDate::from_ymd_opt](https://docs.rs/chrono/0.4.45/chrono/struct.NaiveDate.html#method.from_ymd_opt) 和 [Datelike::year](https://docs.rs/chrono/0.4.45/chrono/trait.Datelike.html#tymethod.year)：Chrono 的可表示年份宽于本项目 Temporal 的四位格式，因此候选日期必须先检查项目范围再格式化与解析。
+
 ## 安全与运行文档
 
 | 来源 | 本项目采用方式 |

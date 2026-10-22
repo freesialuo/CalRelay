@@ -72,7 +72,7 @@ impl fmt::Display for ExpansionError {
             Self::InvalidDuration => {
                 write!(f, "occurrence duration is outside the supported range")
             }
-            Self::InvalidWindow => write!(f, "expansion window or budget is invalid"),
+            Self::InvalidWindow => write!(f, "expansion window, date range or budget is invalid"),
             Self::UnsupportedRrule(reason) => write!(f, "unsupported RRULE: {reason}"),
             Self::OccurrenceLimitExceeded { max_occurrences } => {
                 write!(f, "occurrence limit ({max_occurrences}) exceeded")
@@ -920,6 +920,10 @@ fn generate_rrule_candidates<'a>(
             let Some(date) = maybe_date else {
                 continue;
             };
+            // Chrono permits expanded years, but Temporal requires four-digit years.
+            if !(0..=9999).contains(&date.year()) {
+                return Err(ExpansionError::InvalidWindow);
+            }
             let candidate_temporal = temporal_on_date(&event.start, date);
             let (candidate_utc, _, _) = resolver.resolve_temporal(&candidate_temporal)?;
 
