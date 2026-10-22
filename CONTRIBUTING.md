@@ -25,7 +25,7 @@ PR 标题采用 `type(scope): description`，scope 可省略；正文写改动�
 - 运行 `git diff --check`，安装 `requirements/ci.txt`，运行 `python3 -m unittest discover -s tests -v` 和 `python3 scripts/check_repository.py`。
 - CI 运行事件 JSON Schema、示例、契约拒绝案例、PR 约定与仓库结构检查，以及 Rust workspace 的 `cargo fmt --check`、Clippy（`-D warnings`）和 `cargo test`；尚无前端运行代码，不声称运行了前端测试。
 - Rust workspace 首次实现的同一 PR 必须接入 `cargo fmt --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings` 和适当的 `cargo test`；前端首次实现同样接入类型、构建与有价值的测试。所有检查纳入固定 `quality-gate`。
-- 重复展开局部规则运行固定版本 Kani 证明及故障注入，见 [形式验证](docs/formal-verification.md)；`kani` 与现有检查共同纳入 `quality-gate`。
+- Kani 是独立的可选工作流：相关路径改动时自动运行，也可手动触发；不纳入 `quality-gate` 或必需状态检查。范围与运行方式见 [形式验证](docs/formal-verification.md)。
 - 核心日历逻辑优先黄金样例/性质测试；数据库事务与故障恢复做集成测试，Bark 用模拟服务验证。不得用真实外部发送代替自动测试。
 
 ## Review 与合并
