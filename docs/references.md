@@ -30,6 +30,17 @@
 | [SQLite WAL](https://sqlite.org/wal.html) | 同主机持久卷、短事务、checkpoint；不用于多节点共享网络文件系统 |
 | [SQLite Online Backup API](https://sqlite.org/backup.html) | 一致性备份；运行中不只复制主数据库文件 |
 
+## SQLite 存储实现
+
+Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，再核对下载的 SQLx 0.8.6 公共源码中的版本/校验和检查；未复制第三方实现。
+
+| 来源 | 采用方式 |
+| --- | --- |
+| [SQLx 0.8.6 SQLite 连接选项](https://docs.rs/sqlx/0.8.6/sqlx/sqlite/struct.SqliteConnectOptions.html) | 显式设置文件路径、建库、WAL、FULL、外键和 busy timeout，避免依赖默认值 |
+| [SQLx 0.8.6 migrate 宏](https://docs.rs/sqlx/0.8.6/sqlx/macro.migrate.html) | 内嵌版本迁移；build script 追踪新迁移文件 |
+| [SQLx 0.8.6 Migrator 公共源码](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-core/src/migrate/migrator.rs) | 核对未完成、未知版本与 checksum 不匹配的失败路径；失败时关闭新池，不重建数据库 |
+| [SQLite STRICT 表](https://sqlite.org/stricttables.html) | 核心表使用严格类型，最低 SQLite 3.37；实际随 SQLx bundled SQLite 构建 |
+
 ## 选型前需要补齐的验证
 
 - 通过 Context7 或 Exa 检索候选 Rust ICS/重复/时区库的官方文档和公共测试代码，逐项核对能力；当前不指定未经验证的库。

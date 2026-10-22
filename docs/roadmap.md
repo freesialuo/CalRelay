@@ -12,6 +12,21 @@
 | [#6](https://github.com/freesialuo/CalRelay/issues/6) | TypeScript 管理面与 Cloudflare 安全 |
 | [#7](https://github.com/freesialuo/CalRelay/issues/7) | Docker、健康监督与备份恢复 |
 
+## 可独立验收的后续工作
+
+父项保留整体目标，子项通过 GitHub 原生层级关联，具体依赖及验收标准以各 Issue 为准。#11–#14、#16 已由 #17 合并；#2 的兼容性评估仍未完成。
+
+| 父项 | 子项与交付结果 |
+| --- | --- |
+| #15 库评估 | [#18 ICS](https://github.com/freesialuo/CalRelay/issues/18)、[#19 时区](https://github.com/freesialuo/CalRelay/issues/19)、[#20 重复展开](https://github.com/freesialuo/CalRelay/issues/20) |
+| #4 存储与调度 | [#21 连接/迁移/约束](https://github.com/freesialuo/CalRelay/issues/21)、[#22 来源原子提交](https://github.com/freesialuo/CalRelay/issues/22)、[#23 规划水位](https://github.com/freesialuo/CalRelay/issues/23)、[#24 租约与恢复](https://github.com/freesialuo/CalRelay/issues/24) |
+| #3 接入 | [#25 ICS 归一化](https://github.com/freesialuo/CalRelay/issues/25)、[#28 安全 HTTP](https://github.com/freesialuo/CalRelay/issues/28)、[#29 同步协调](https://github.com/freesialuo/CalRelay/issues/29)、[#30 标准接入 API](https://github.com/freesialuo/CalRelay/issues/30) |
+| #5 输出 | [#31 ICS 渲染](https://github.com/freesialuo/CalRelay/issues/31)、[#32 订阅权限与缓存](https://github.com/freesialuo/CalRelay/issues/32)、[#33 Bark 适配器](https://github.com/freesialuo/CalRelay/issues/33) |
+| #6 服务、安全与管理 | [#26 凭据/token](https://github.com/freesialuo/CalRelay/issues/26)、[#27 服务生命周期](https://github.com/freesialuo/CalRelay/issues/27)、[#34 管理鉴权](https://github.com/freesialuo/CalRelay/issues/34)、[#35 管理闭环](https://github.com/freesialuo/CalRelay/issues/35) |
+| #7 运行与恢复 | [#36 健康监督](https://github.com/freesialuo/CalRelay/issues/36)、[#37 备份恢复](https://github.com/freesialuo/CalRelay/issues/37)、[#38 容器部署](https://github.com/freesialuo/CalRelay/issues/38) |
+
+当前选取 #21：仅依赖已合并 workspace/领域基线，不等待 ICS 或重复展开选型。它为 #22、#26、#27 解锁持久化基础。验收/设计/测试对应和 TDD 过程见 [存储基础](storage-foundation.md)。#9 的分支归档流程保持独立，不与存储实现混合。
+
 ## 决策基线
 
 | 编号 | 决策 | 原因与代价 |

@@ -79,7 +79,7 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 ## 7. SQLite 逻辑表
 
-这是建表依据，不是已执行的迁移。正式迁移须补齐列类型、CHECK、外键、唯一约束与数据库版本要求。
+以下为完整目标模型。`calendar-storage` 的首个迁移已实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes` 的核心字段及约束；连接、类型、失败保护和验收见 [存储基础](storage-foundation.md)。其他表与凭据关联仍待后续迁移，不代表已实现。
 
 | 表 | 关键字段与约束 |
 | --- | --- |
