@@ -67,6 +67,14 @@ TDD 记录：
 - Green：实现受限 `RRULE` 解析、候选日生成、`EXDATE`/`RDATE PERIOD`/例外合并及预算检查；修正测试夹具中全天闰日事件误带 `PT1H` 的夹具设置（按开发方法不计作需求红灯），6 项测试全部通过。
 - Refactor：增加 `DTSTART` 与 `BYDAY`/`BYMONTHDAY`/`BYMONTH` 同步性检查，并接入仓库示例 [event-v1.json](../examples/event-v1.json) 的完整展开断言。
 
+### PR #42 review 修复
+
+- 继承母事件 `end` 的每个实例均平移跨度：全天事件保持日历天数，定时事件保持准确时长；显式例外 `end` 与 `RDATE PERIOD` 保留独立跨度，显式 null 仍清除继承。
+- `YEARLY;BYMONTHDAY` 未指定 `BYMONTH` 时遍历全年月份；指定 `BYMONTH` 时只遍历所选月份，无两者时继承开始月份。
+- `validate_event` 仍只校验时长语法与符号；展开时数值解析、运算、Chrono 时长构造或日期范围溢出均返回 `ExpansionError::InvalidDuration`，不 panic。日历日相加后的年份须保持 Temporal 的四位格式。
+- AC1/AC2 回归：`inherited_explicit_ends_preserve_every_instance_span_and_overlap`、`explicit_occurrence_ends_remain_absolute_and_cleared_ends_use_defaults`、`inherited_timed_ends_keep_exact_duration_across_dst`、`yearly_month_days_expand_all_months_unless_restricted`、`unrepresentable_durations_return_errors_for_all_span_sources`。
+- Red：新增首批 4 项测试后，10 项中 7 通过、3 失败，分别复现一天实例缩为零、年度规则漏月及超大时长 panic。Green/Refactor：区分继承与显式结束时间，按年扩展月份，使用 checked 运算并合并日历日相加逻辑；补充跨 DST 回归后 11 项全部通过。
+
 ## 测试
 
 `cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs`、`crates/calendar-domain/tests/timezone_golden.rs` 与 `crates/calendar-domain/tests/recurrence_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返、校验与重复展开验证。无网络通知。

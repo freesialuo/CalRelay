@@ -50,6 +50,7 @@ pub enum ExpansionError {
     UnsupportedTimezone,
     MissingCalendarTimezone,
     InvalidWindow,
+    InvalidDuration,
     UnsupportedRrule(String),
     OccurrenceLimitExceeded { max_occurrences: usize },
     IterationLimitExceeded { max_iterations: usize },
@@ -67,6 +68,9 @@ impl fmt::Display for ExpansionError {
                     f,
                     "date and floating events require a valid IANA calendar_tzid"
                 )
+            }
+            Self::InvalidDuration => {
+                write!(f, "occurrence duration is outside the supported range")
             }
             Self::InvalidWindow => write!(f, "expansion window or budget is invalid"),
             Self::UnsupportedRrule(reason) => write!(f, "unsupported RRULE: {reason}"),
@@ -468,60 +472,19 @@ impl<'a> Resolver<'a> {
         let day_shifted_utc = if dur.days == 0 {
             start_utc
         } else {
-            let shifted_temporal = match start {
-                Temporal::Date { date } => {
-                    let d = parse_date(date)
-                        .unwrap()
-                        .checked_add_days(Days::new(dur.days))
-                        .ok_or(ExpansionError::InvalidWindow)?;
-                    Temporal::Date {
-                        date: d.format("%Y-%m-%d").to_string(),
-                    }
-                }
-                Temporal::Floating { local } => {
-                    let dt = parse_local(local).unwrap();
-                    let d = dt
-                        .date()
-                        .checked_add_days(Days::new(dur.days))
-                        .ok_or(ExpansionError::InvalidWindow)?;
-                    Temporal::Floating {
-                        local: d
-                            .and_time(dt.time())
-                            .format("%Y-%m-%dT%H:%M:%S")
-                            .to_string(),
-                    }
-                }
-                Temporal::Zoned { local, tzid } => {
-                    let dt = parse_local(local).unwrap();
-                    let d = dt
-                        .date()
-                        .checked_add_days(Days::new(dur.days))
-                        .ok_or(ExpansionError::InvalidWindow)?;
-                    Temporal::Zoned {
-                        local: d
-                            .and_time(dt.time())
-                            .format("%Y-%m-%dT%H:%M:%S")
-                            .to_string(),
-                        tzid: tzid.clone(),
-                    }
-                }
-                Temporal::Utc { value } => {
-                    let dt = parse_utc(value).unwrap().naive_utc();
-                    let d = dt
-                        .date()
-                        .checked_add_days(Days::new(dur.days))
-                        .ok_or(ExpansionError::InvalidWindow)?;
-                    Temporal::Utc {
-                        value: d
-                            .and_time(dt.time())
-                            .format("%Y-%m-%dT%H:%M:%SZ")
-                            .to_string(),
-                    }
-                }
-            };
+            let (date, _) = extract_start_date_time(start);
+            let shifted_date = date
+                .checked_add_days(Days::new(dur.days))
+                // Temporal values use four-digit years, even though Chrono supports more.
+                .filter(|date| (0..=9999).contains(&date.year()))
+                .ok_or(ExpansionError::InvalidDuration)?;
+            let shifted_temporal = temporal_on_date(start, shifted_date);
             self.resolve_temporal(&shifted_temporal)?.0
         };
-        Ok(day_shifted_utc + Duration::seconds(dur.seconds))
+        let seconds = Duration::try_seconds(dur.seconds).ok_or(ExpansionError::InvalidDuration)?;
+        day_shifted_utc
+            .checked_add_signed(seconds)
+            .ok_or(ExpansionError::InvalidDuration)
     }
 }
 
@@ -594,11 +557,6 @@ pub fn expand_occurrences(
 
     let resolver = Resolver::new(event, options)?;
     let (master_start_utc, _, _) = resolver.resolve_temporal(&event.start)?;
-    let master_explicit_end_utc = match &event.end {
-        Some(end) => Some(resolver.resolve_temporal(end)?.0),
-        None => None,
-    };
-
     let Some(recurrence) = &event.recurrence else {
         let end_utc = resolve_span_end(
             &resolver,
@@ -606,8 +564,7 @@ pub fn expand_occurrences(
             master_start_utc,
             event.end.as_ref(),
             event.duration.as_deref(),
-            master_start_utc,
-            master_explicit_end_utc,
+            false,
         )?;
         let (_, local_date, resolved_tzid) = resolver.resolve_temporal(&event.start)?;
         if !overlaps_window(
@@ -745,8 +702,7 @@ pub fn expand_occurrences(
             start_utc,
             effective_end,
             effective_duration,
-            master_start_utc,
-            master_explicit_end_utc,
+            end_override.is_none(),
         )?;
 
         if overlaps_window(start_utc, end_utc, options.window_start, options.window_end) {
@@ -813,19 +769,18 @@ fn resolve_span_end(
     start_utc: DateTime<Utc>,
     explicit_end: Option<&Temporal>,
     duration: Option<&str>,
-    master_start_utc: DateTime<Utc>,
-    master_explicit_end_utc: Option<DateTime<Utc>>,
+    inherited_end: bool,
 ) -> Result<DateTime<Utc>, ExpansionError> {
     if let Some(dur_str) = duration {
-        let dur = parse_calendar_duration(dur_str).expect("validated duration");
+        let dur = parse_calendar_duration(dur_str).ok_or(ExpansionError::InvalidDuration)?;
         return resolver.add_duration(start, start_utc, dur);
     }
     if let Some(end_temp) = explicit_end {
         let (end_utc, _, _) = resolver.resolve_temporal(end_temp)?;
-        if end_utc >= start_utc {
+        if !inherited_end {
             return Ok(end_utc);
         }
-        // When a non-overridden recurring instance inherits the master's `end`, preserve the master span.
+        // Inherited ends describe the master's span; occurrence overrides are absolute.
         if let (Temporal::Date { date: s }, Temporal::Date { date: e }) =
             (&resolver.event.start, end_temp)
         {
@@ -841,9 +796,10 @@ fn resolve_span_end(
                 );
             }
         }
-        if let Some(master_end) = master_explicit_end_utc {
-            return Ok(start_utc + (master_end - master_start_utc));
-        }
+        let master_start_utc = resolver.resolve_temporal(&resolver.event.start)?.0;
+        return start_utc
+            .checked_add_signed(end_utc - master_start_utc)
+            .ok_or(ExpansionError::InvalidDuration);
     }
     if matches!(start, Temporal::Date { .. }) {
         resolver.add_duration(
@@ -932,10 +888,13 @@ fn generate_rrule_candidates<'a>(
                             .map_err(|_| ExpansionError::InvalidWindow)?,
                     )
                     .ok_or(ExpansionError::InvalidWindow)?;
-                let months = rrule
-                    .by_month
-                    .clone()
-                    .unwrap_or_else(|| vec![start_date.month()]);
+                let months = rrule.by_month.clone().unwrap_or_else(|| {
+                    if rrule.by_month_day.is_some() {
+                        (1..=12).collect()
+                    } else {
+                        vec![start_date.month()]
+                    }
+                });
                 let doms = rrule
                     .by_month_day
                     .clone()

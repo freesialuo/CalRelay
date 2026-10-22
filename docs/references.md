@@ -22,6 +22,15 @@
 | [Bark 推送文档](https://github.com/Finb/Bark/blob/master/docs/tutorial.md) | JSON POST、设备 key 与输出配置的依据 |
 | [bark-server API V2](https://github.com/Finb/bark-server/blob/master/docs/API_V2.md) | 对接主动推送，应用响应需检查；不从其文档推导端到端去重或设备回执保证 |
 
+## 重复展开 review 修复（PR #42）
+
+2026-10-22 通过 Context7 `/websites/rs_chrono_chrono` 核对 Chrono checked 运算文档，并检查本地已锁定 0.4.45 公共源码；未复制第三方实现。
+
+| 来源 | 采用方式 |
+| --- | --- |
+| [RFC 5545 §3.3.10](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.3.10)、[§3.8.5.3](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.8.5.3) | 核对 `YEARLY` 下 `BYMONTHDAY` 的 Expand 语义，以及重复实例继承结束时间时的跨度保持与例外独立跨度 |
+| [Chrono 0.4.45 TimeDelta](https://docs.rs/chrono/0.4.45/chrono/struct.TimeDelta.html#method.try_seconds)、[DateTime](https://docs.rs/chrono/0.4.45/chrono/struct.DateTime.html#method.checked_add_signed)、[NaiveDate](https://docs.rs/chrono/0.4.45/chrono/struct.NaiveDate.html#method.checked_add_days) | `try_seconds`、`checked_add_signed`、`checked_add_days` 的越界返回值用于类型化错误；源码核对 `src/time_delta.rs` 与 `src/datetime/mod.rs` |
+
 ## 安全与运行文档
 
 | 来源 | 本项目采用方式 |

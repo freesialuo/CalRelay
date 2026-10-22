@@ -511,3 +511,167 @@ fn ac3_unverified_rrule_clauses_and_ranges_are_explicitly_rejected_without_widen
         Err(ExpansionError::Validation(errs)) if errs.iter().any(|e| e.code == Code::UnsupportedRange)
     ));
 }
+
+#[test]
+fn inherited_explicit_ends_preserve_every_instance_span_and_overlap() {
+    let event = event_with(json!({
+        "start": {"kind": "date", "date": "2026-01-01"},
+        "end": {"kind": "date", "date": "2026-01-02"},
+        "duration": null,
+        "recurrence": {"rrule": "FREQ=DAILY;COUNT=3"}
+    }));
+    let mut options = default_options("2026-01-01T00:00:00Z", "2026-01-05T00:00:00Z");
+    options.calendar_tzid = Some("UTC");
+    let out = expand_occurrences(&event, &options).unwrap();
+    assert_eq!(out.len(), 3);
+    for occurrence in out {
+        assert_eq!(
+            occurrence.end_utc - occurrence.start_utc,
+            chrono::Duration::days(1)
+        );
+    }
+
+    let event = event_with(json!({
+        "start": {"kind": "utc", "value": "2026-01-01T09:00:00Z"},
+        "end": {"kind": "utc", "value": "2026-01-03T09:00:00Z"},
+        "duration": null,
+        "recurrence": {"rrule": "FREQ=DAILY;COUNT=3"}
+    }));
+    let out = expand_occurrences(
+        &event,
+        &default_options("2026-01-03T12:00:00Z", "2026-01-03T13:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(out.len(), 2);
+    for occurrence in out {
+        assert_eq!(
+            occurrence.end_utc - occurrence.start_utc,
+            chrono::Duration::days(2)
+        );
+    }
+}
+
+#[test]
+fn explicit_occurrence_ends_remain_absolute_and_cleared_ends_use_defaults() {
+    let event = event_with(json!({
+        "start": {"kind": "utc", "value": "2026-01-01T09:00:00Z"},
+        "end": {"kind": "utc", "value": "2026-01-05T09:00:00Z"},
+        "duration": null,
+        "recurrence": {
+            "rrule": "FREQ=DAILY;COUNT=3",
+            "rdates": [{"kind": "period", "start": {"kind": "utc", "value": "2026-01-04T09:00:00Z"}, "end": {"kind": "utc", "value": "2026-01-04T11:00:00Z"}}],
+            "exceptions": [
+                {"recurrence_id": {"kind": "utc", "value": "2026-01-02T09:00:00Z"}, "range": "single", "change": {"kind": "override", "patch": {"end": {"kind": "utc", "value": "2026-01-02T10:00:00Z"}}}},
+                {"recurrence_id": {"kind": "utc", "value": "2026-01-03T09:00:00Z"}, "range": "single", "change": {"kind": "override", "patch": {"end": null}}}
+            ]
+        }
+    }));
+    let out = expand_occurrences(
+        &event,
+        &default_options("2026-01-01T00:00:00Z", "2026-01-10T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(out.len(), 4);
+    assert_eq!(out[1].end_utc, utc_dt("2026-01-02T10:00:00Z"));
+    assert_eq!(out[2].end_utc, out[2].start_utc);
+    assert_eq!(out[3].end_utc, utc_dt("2026-01-04T11:00:00Z"));
+}
+
+#[test]
+fn yearly_month_days_expand_all_months_unless_restricted() {
+    for (rule, expected) in [
+        (
+            "FREQ=YEARLY;BYMONTHDAY=15;COUNT=3",
+            vec![
+                "2026-01-15T09:00:00Z",
+                "2026-02-15T09:00:00Z",
+                "2026-03-15T09:00:00Z",
+            ],
+        ),
+        (
+            "FREQ=YEARLY;BYMONTHDAY=15;BYMONTH=1,3;COUNT=3",
+            vec![
+                "2026-01-15T09:00:00Z",
+                "2026-03-15T09:00:00Z",
+                "2027-01-15T09:00:00Z",
+            ],
+        ),
+        (
+            "FREQ=YEARLY;COUNT=3",
+            vec![
+                "2026-01-15T09:00:00Z",
+                "2027-01-15T09:00:00Z",
+                "2028-01-15T09:00:00Z",
+            ],
+        ),
+    ] {
+        let event = event_with(json!({
+            "start": {"kind": "utc", "value": "2026-01-15T09:00:00Z"},
+            "recurrence": {"rrule": rule}
+        }));
+        let out = expand_occurrences(
+            &event,
+            &default_options("2026-01-01T00:00:00Z", "2029-01-01T00:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(
+            out.iter().map(|o| o.start_utc).collect::<Vec<_>>(),
+            expected.into_iter().map(utc_dt).collect::<Vec<_>>(),
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn unrepresentable_durations_return_errors_for_all_span_sources() {
+    for duration in [
+        "PT2562047788015215H31M",         // numeric accumulation
+        "P3000000D",                      // exceeds the Temporal four-digit year range
+        "PT9223372036854775807H",         // numeric multiplication
+        "PT9223372036854775807S",         // Chrono duration construction
+        "PT9223372036854775S",            // datetime addition
+        "P18446744073709551615W",         // week multiplication
+        "P18446744073709551615D",         // calendar addition
+        "PT999999999999999999999999999S", // numeric parsing
+    ] {
+        for extra in [
+            json!({"duration": duration}),
+            json!({"duration": duration, "recurrence": {"rrule": "FREQ=DAILY;COUNT=2"}}),
+            json!({"recurrence": {"rdates": [{"kind": "period", "start": {"kind": "utc", "value": "2026-02-01T09:00:00Z"}, "duration": duration}]}}),
+            json!({"recurrence": {"rrule": "FREQ=DAILY;COUNT=2", "exceptions": [{"recurrence_id": {"kind": "utc", "value": "2026-02-01T09:00:00Z"}, "range": "single", "change": {"kind": "override", "patch": {"duration": duration}}}]}}),
+        ] {
+            let event = event_with(extra);
+            validate_event(&event).unwrap();
+            assert_eq!(
+                expand_occurrences(
+                    &event,
+                    &default_options("2026-01-01T00:00:00Z", "2026-03-01T00:00:00Z")
+                ),
+                Err(ExpansionError::InvalidDuration),
+                "{duration}"
+            );
+        }
+    }
+}
+
+#[test]
+fn inherited_timed_ends_keep_exact_duration_across_dst() {
+    let event = event_with(json!({
+        "start": {"kind": "zoned", "local": "2026-03-07T09:00:00", "tzid": "America/Vancouver"},
+        "end": {"kind": "zoned", "local": "2026-03-09T09:00:00", "tzid": "America/Vancouver"},
+        "duration": null,
+        "recurrence": {"rrule": "FREQ=DAILY;COUNT=3"}
+    }));
+    let out = expand_occurrences(
+        &event,
+        &default_options("2026-03-07T00:00:00Z", "2026-03-12T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(out.len(), 3);
+    for occurrence in out {
+        assert_eq!(
+            occurrence.end_utc - occurrence.start_utc,
+            chrono::Duration::hours(47)
+        );
+    }
+}
