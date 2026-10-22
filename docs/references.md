@@ -73,3 +73,5 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 - [Rulesets REST API](https://docs.github.com/en/rest/repos/rules)：保护配置格式与检查来源绑定。
 - [批准 PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews)：作者不能批准自己的 PR；独立 reviewer 需要实际权限。
 - [actions/checkout](https://github.com/actions/checkout)、[actions/setup-python](https://github.com/actions/setup-python)：核对官方发布并解析固定 commit SHA，避免可变 Action 标签。
+
+第五轮 review 核对本地锁定的 Chrono 0.4.45 公共源码（`src/datetime/mod.rs` 的 `checked_add_signed` 与加法运算实现、`src/naive/date/mod.rs` 的 `from_ymd_opt` / `checked_add_days`）：窗口缓冲和日期生成用 checked 运算；月份中不存在的日期与表示范围越界分开处理。

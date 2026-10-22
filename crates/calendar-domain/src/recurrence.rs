@@ -26,7 +26,7 @@ pub struct ExpansionOptions<'a> {
     pub calendar_tzid: Option<&'a str>,
     /// Maximum number of occurrences allowed within `[window_start, window_end)`.
     pub max_occurrences: usize,
-    /// Maximum number of candidate steps evaluated before aborting with a budget error.
+    /// Maximum RRULE candidate steps plus RDATE entries, including duplicates and exclusions.
     pub max_iterations: usize,
 }
 
@@ -85,6 +85,23 @@ impl fmt::Display for ExpansionError {
 }
 
 impl std::error::Error for ExpansionError {}
+
+struct IterationBudget {
+    remaining: usize,
+    max_iterations: usize,
+}
+
+impl IterationBudget {
+    fn consume(&mut self) -> Result<(), ExpansionError> {
+        self.remaining =
+            self.remaining
+                .checked_sub(1)
+                .ok_or(ExpansionError::IterationLimitExceeded {
+                    max_iterations: self.max_iterations,
+                })?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CalendarDuration {
@@ -594,12 +611,16 @@ pub fn expand_occurrences(
         .collect();
 
     let mut exceptions_by_key: HashMap<String, &RecurrenceException> = HashMap::new();
-    let mut stop_horizon = options.window_end + Duration::days(2);
+    let mut stop_horizon = options
+        .window_end
+        .checked_add_signed(Duration::days(2))
+        .ok_or(ExpansionError::InvalidWindow)?;
     for exc in recurrence.exceptions.iter().flatten() {
         let (rid_utc, _, _) = resolver.resolve_temporal(&exc.recurrence_id)?;
-        if rid_utc + Duration::days(2) > stop_horizon {
-            stop_horizon = rid_utc + Duration::days(2);
-        }
+        let exception_horizon = rid_utc
+            .checked_add_signed(Duration::days(2))
+            .ok_or(ExpansionError::InvalidWindow)?;
+        stop_horizon = stop_horizon.max(exception_horizon);
         if let Change::Override { patch } = &exc.change {
             if let Some(s) = &patch.start {
                 resolver.resolve_temporal(s)?;
@@ -613,6 +634,10 @@ pub fn expand_occurrences(
 
     // Map from original_key -> (base Temporal, optional Period override)
     let mut candidates: CandidateMap<'_> = BTreeMap::new();
+    let mut budget = IterationBudget {
+        remaining: options.max_iterations,
+        max_iterations: options.max_iterations,
+    };
 
     if let Some(rrule_str) = &recurrence.rrule {
         let parsed = parse_verified_rrule(rrule_str, &event.start)?;
@@ -621,7 +646,7 @@ pub fn expand_occurrences(
             &resolver,
             &parsed,
             stop_horizon,
-            options.max_iterations,
+            &mut budget,
             &mut candidates,
         )?;
     } else {
@@ -632,6 +657,7 @@ pub fn expand_occurrences(
     }
 
     for rdate in recurrence.rdates.iter().flatten() {
+        budget.consume()?;
         match rdate {
             RDate::Temporal(t) => {
                 let (utc_val, _, _) = resolver.resolve_temporal(t)?;
@@ -829,11 +855,10 @@ fn generate_rrule_candidates<'a>(
     resolver: &Resolver<'a>,
     rrule: &ParsedRrule,
     stop_horizon: DateTime<Utc>,
-    max_iterations: usize,
+    budget: &mut IterationBudget,
     candidates: &mut CandidateMap<'a>,
 ) -> Result<(), ExpansionError> {
     let (start_date, start_time) = extract_start_date_time(&event.start);
-    let mut iterations = 0usize;
     let mut generated = 0usize;
     let mut period_idx = 0u64;
 
@@ -844,7 +869,11 @@ fn generate_rrule_candidates<'a>(
                 let offset_days = period_idx
                     .checked_mul(u64::from(rrule.interval))
                     .ok_or(ExpansionError::InvalidWindow)?;
-                period_dates.push(start_date.checked_add_days(Days::new(offset_days)));
+                period_dates.push(Some(
+                    start_date
+                        .checked_add_days(Days::new(offset_days))
+                        .ok_or(ExpansionError::InvalidWindow)?,
+                ));
             }
             Freq::Weekly => {
                 let week_monday = start_date
@@ -865,18 +894,27 @@ fn generate_rrule_candidates<'a>(
                     .unwrap_or_else(|| vec![start_date.weekday()]);
                 for wd in days {
                     let d = base_monday
-                        .checked_add_days(Days::new(u64::from(wd.num_days_from_monday())));
-                    if d.is_some_and(|d| d >= start_date) {
-                        period_dates.push(d);
+                        .checked_add_days(Days::new(u64::from(wd.num_days_from_monday())))
+                        .ok_or(ExpansionError::InvalidWindow)?;
+                    if d >= start_date {
+                        period_dates.push(Some(d));
                     }
                 }
             }
             Freq::Monthly => {
-                let total_months = i64::from(start_date.year()) * 12
-                    + i64::from(start_date.month() - 1)
-                    + (period_idx as i64) * i64::from(rrule.interval);
+                let month_offset = period_idx
+                    .checked_mul(u64::from(rrule.interval))
+                    .and_then(|offset| i64::try_from(offset).ok())
+                    .ok_or(ExpansionError::InvalidWindow)?;
+                let total_months = (i64::from(start_date.year()) * 12
+                    + i64::from(start_date.month() - 1))
+                .checked_add(month_offset)
+                .ok_or(ExpansionError::InvalidWindow)?;
                 let year = i32::try_from(total_months.div_euclid(12))
                     .map_err(|_| ExpansionError::InvalidWindow)?;
+                if !(0..=9999).contains(&year) {
+                    return Err(ExpansionError::InvalidWindow);
+                }
                 let month = (total_months.rem_euclid(12) + 1) as u32;
                 let doms = rrule
                     .by_month_day
@@ -893,10 +931,15 @@ fn generate_rrule_candidates<'a>(
                 let year = start_date
                     .year()
                     .checked_add(
-                        i32::try_from(period_idx * u64::from(rrule.interval))
-                            .map_err(|_| ExpansionError::InvalidWindow)?,
+                        period_idx
+                            .checked_mul(u64::from(rrule.interval))
+                            .and_then(|offset| i32::try_from(offset).ok())
+                            .ok_or(ExpansionError::InvalidWindow)?,
                     )
                     .ok_or(ExpansionError::InvalidWindow)?;
+                if !(0..=9999).contains(&year) {
+                    return Err(ExpansionError::InvalidWindow);
+                }
                 let months = rrule.by_month.clone().unwrap_or_else(|| {
                     if rrule.by_month_day.is_some() {
                         (1..=12).collect()
@@ -920,10 +963,7 @@ fn generate_rrule_candidates<'a>(
         }
 
         for maybe_date in period_dates {
-            iterations += 1;
-            if iterations > max_iterations {
-                return Err(ExpansionError::IterationLimitExceeded { max_iterations });
-            }
+            budget.consume()?;
             // RFC 5545 Section 3.3.10: nonexistent calendar dates (e.g., Feb 31 or non-leap Feb 29)
             // are ignored and not counted toward COUNT.
             let Some(date) = maybe_date else {
@@ -962,6 +1002,8 @@ fn generate_rrule_candidates<'a>(
             }
         }
 
-        period_idx += 1;
+        period_idx = period_idx
+            .checked_add(1)
+            .ok_or(ExpansionError::InvalidWindow)?;
     }
 }

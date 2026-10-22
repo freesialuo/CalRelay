@@ -53,7 +53,7 @@ TDD 记录：
 - 核对 `rrule 0.14.0`（`fmeringdal/rust-rrule`）官方文档与公共源码发现：其 `src/iter/counter_date.rs::fix_day` 在闰日 `YEARLY` 递增时将 `2020-02-29` 偏移为 `2021-03-01`；`src/iter/utils.rs::add_time_to_date` 在午夜发生 DST 跳变（如 `America/Havana`）时因 `00:00:00` 非单一时刻而静默丢弃实例；`RRuleSet` 仅接受 `DateTime<Tz>` 的 `RDATE`，不支持 `RDATE;VALUE=PERIOD` 独立时长，也不含 `RECURRENCE-ID` 单次取消/覆盖补丁与 `original_key` 保持；`RRuleSet::all(limit)` 通过布尔标记截断而非返回类型化超限错误。
 - 因此采用 `calendar-domain` 内置受限展开（`expand_occurrences`），在本地日历坐标生成候选日期，再统一经 `EventV1::resolve_utc` 与显式日历时区解析 UTC 区间：
   - 已验证档位：`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`、正整数 `INTERVAL`、`COUNT`、与 `start` 同族的 `UNTIL`、`WEEKLY` 无序号 `BYDAY`、`MONTHLY`/`YEARLY` 正数 `BYMONTHDAY`、`YEARLY` `BYMONTH`（均须与 `DTSTART` 同步），以及 `EXDATE`、`RDATE`（含 `Period` 独立跨度）与 `range=single` 的 `Cancelled`/`Override` 例外。
-  - 显式拒绝策略（不扩大 `validate_event` 的 `RRULE` 校验声明）：`SECONDLY`/`MINUTELY`/`HOURLY`、带序号 `BYDAY`、负数 `BYMONTHDAY`、`BYSETPOS`、`BYYEARDAY`、`BYWEEKNO`、未同步 `DTSTART` 等返回 `Err(ExpansionError::UnsupportedRrule)`；`range=this_and_future` 返回 `UnsupportedRange`；来源 `VTIMEZONE` 返回 `UnsupportedTimezone`；缺少日历时区的 `date`/`floating` 返回 `MissingCalendarTimezone`；超过 `max_occurrences` 或 `max_iterations` 显式返回预算错误，不静默截断。
+  - 显式拒绝策略（不扩大 `validate_event` 的 `RRULE` 校验声明）：`SECONDLY`/`MINUTELY`/`HOURLY`、带序号 `BYDAY`、负数 `BYMONTHDAY`、`BYSETPOS`、`BYYEARDAY`、`BYWEEKNO`、未同步 `DTSTART` 等返回 `Err(ExpansionError::UnsupportedRrule)`；`range=this_and_future` 返回 `ExpansionError::Validation`，其中包含 `Code::UnsupportedRange`；来源 `VTIMEZONE` 返回 `UnsupportedTimezone`；缺少日历时区的 `date`/`floating` 返回 `MissingCalendarTimezone`；超过 `max_occurrences` 或 `max_iterations` 显式返回预算错误，不静默截断。
 
 | 验收条件 | 设计与边界 | 可执行验证（`tests/recurrence_golden.rs`） |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ TDD 记录：
 
 - 继承母事件 `end` 的每个实例均平移跨度：全天事件保持日历天数，定时事件保持准确时长；显式例外 `end` 与 `RDATE PERIOD` 保留独立跨度，显式 null 仍清除继承。
 - `YEARLY;BYMONTHDAY` 未指定 `BYMONTH` 时遍历全年月份；指定 `BYMONTH` 时只遍历所选月份，无两者时继承开始月份。
-- `validate_event` 仍只校验时长语法与符号；展开时数值解析、运算、Chrono 时长构造或日期范围溢出均返回 `ExpansionError::InvalidDuration`，不 panic。日历日相加后的年份须保持 Temporal 的四位格式。
+- `validate_event` 仍只校验时长语法与符号；展开时的时长数值解析、时长运算、Chrono 时长构造或时长相加导致的日期范围溢出返回 `ExpansionError::InvalidDuration`，不 panic。日历日相加后的年份须保持 Temporal 的四位格式。
 - AC1/AC2 回归：`inherited_explicit_ends_preserve_every_instance_span_and_overlap`、`explicit_occurrence_ends_remain_absolute_and_cleared_ends_use_defaults`、`inherited_timed_ends_keep_exact_duration_across_dst`、`yearly_month_days_expand_all_months_unless_restricted`、`unrepresentable_durations_return_errors_for_all_span_sources`。
 - Red：新增首批 4 项测试后，10 项中 7 通过、3 失败，分别复现一天实例缩为零、年度规则漏月及超大时长 panic。Green/Refactor：区分继承与显式结束时间，按年扩展月份，使用 checked 运算并合并日历日相加逻辑；补充跨 DST 回归后 11 项全部通过。
 - 第二轮 review（AC2）：在候选日期转为 `Temporal` 并解析 UTC 之前检查四位年份范围，越界返回 `ExpansionError::InvalidWindow`；即使查询窗口很窄，也不会先解析五位年份而 panic。选择显式错误，不返回不完整集合。
@@ -81,6 +81,9 @@ TDD 记录：
 - 回归 `exception_spans_override_period_spans_without_shadowing` 覆盖显式结束/时长、null 和元数据补丁；`calendar_timezone_is_validated_only_for_temporals_that_need_it` 覆盖四种时间类型、缺省/未知/来源自定义日历时区。Red：15 项中 13 通过、2 失败，分别返回 11:00 而非显式 12:00、UTC 事件因未知日历时区报错；Green：修复后 15 项全部通过。
 
 - 第四轮 review（AC1/AC2）：合并 PERIOD 与例外后，显式绝对结束若早于有效开始，返回 `ExpansionError::InvalidDuration`，不输出倒置区间；有效的绝对结束保持原值，定时事件开始等于结束仍允许。回归 `rescheduled_period_spans_are_checked_after_combining_overrides` 覆盖 UTC/floating/zoned 的无效改期，以及有效改期和相等边界。Red：16 项中 15 通过、1 失败，复现 12:00 开始、11:00 结束；Green：加上最终先后检查后 16 项全部通过。
+
+- 第五轮 review（AC2）：窗口和例外标识的两天缓冲使用 checked 加法，溢出返回 `ExpansionError::InvalidWindow`。四种频率生成候选时的表示范围溢出同样返回 `InvalidWindow`；MONTHLY/YEARLY 在构造日期前检查年份，只有支持年份中的不存在日期才按 RFC 跳过。`max_iterations` 统一计算 RRULE 候选步数和每条 RDATE（包括重复项及被 EXDATE 排除的项）。
+- 回归 `horizon_overflow_returns_invalid_window`、`unrepresentable_candidates_fail_before_invalid_date_skipping`、`rdates_share_the_rrule_iteration_budget_even_when_duplicated_or_excluded`：Red 为 19 项中 16 通过、3 失败，分别复现窗口 panic、越界误报预算、RDATE 预算未执行；Green 为 19 项全部通过。时长范围错误仍为 `InvalidDuration`，候选日期和窗口范围错误为 `InvalidWindow`。
 
 ## 测试
 

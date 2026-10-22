@@ -36,6 +36,73 @@ fn default_options(window_start: &str, window_end: &str) -> ExpansionOptions<'st
     }
 }
 
+#[test]
+fn horizon_overflow_returns_invalid_window() {
+    let event = event_with(json!({
+        "recurrence": {"rrule": "FREQ=DAILY;COUNT=1"}
+    }));
+    let mut options = default_options("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
+    options.window_end = DateTime::<Utc>::MAX_UTC;
+    assert_eq!(
+        expand_occurrences(&event, &options),
+        Err(ExpansionError::InvalidWindow)
+    );
+    options.window_end = DateTime::<Utc>::MAX_UTC - chrono::Duration::days(1);
+    assert_eq!(
+        expand_occurrences(&event, &options),
+        Err(ExpansionError::InvalidWindow)
+    );
+    options.window_end = DateTime::<Utc>::MAX_UTC - chrono::Duration::days(2);
+    assert_eq!(expand_occurrences(&event, &options).unwrap().len(), 1);
+}
+
+#[test]
+fn unrepresentable_candidates_fail_before_invalid_date_skipping() {
+    for rule in [
+        "FREQ=DAILY;INTERVAL=4294967295;COUNT=2",
+        "FREQ=WEEKLY;INTERVAL=4294967295;COUNT=2",
+        "FREQ=MONTHLY;INTERVAL=4294967295;COUNT=2",
+        "FREQ=YEARLY;INTERVAL=1000000;COUNT=2",
+    ] {
+        let event = event_with(json!({"recurrence": {"rrule": rule}}));
+        validate_event(&event).unwrap();
+        assert_eq!(
+            expand_occurrences(
+                &event,
+                &default_options("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
+            ),
+            Err(ExpansionError::InvalidWindow),
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn rdates_share_the_rrule_iteration_budget_even_when_duplicated_or_excluded() {
+    for rule in [None, Some("FREQ=DAILY;COUNT=1")] {
+        let start = json!({"kind": "utc", "value": "2026-01-31T09:00:00Z"});
+        let event = event_with(json!({
+            "recurrence": {
+                "rrule": rule,
+                "rdates": [start.clone(), {"kind": "period", "start": start, "duration": "PT2H"}],
+                "exdates": [start]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let mut options = default_options("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
+        let required_steps = if rule.is_some() { 3 } else { 2 };
+        options.max_iterations = required_steps;
+        assert!(expand_occurrences(&event, &options).unwrap().is_empty());
+        options.max_iterations = required_steps - 1;
+        assert_eq!(
+            expand_occurrences(&event, &options),
+            Err(ExpansionError::IterationLimitExceeded {
+                max_iterations: required_steps - 1
+            })
+        );
+    }
+}
+
 fn summary(items: &[ExpandedOccurrence]) -> Vec<(String, String, String, bool)> {
     items
         .iter()
