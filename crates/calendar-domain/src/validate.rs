@@ -21,6 +21,7 @@ pub enum Code {
     NegativeDuration,
     DateDurationHasTime,
     UnknownTimezone,
+    UnsupportedTimezone,
     RecurrenceTypeMismatch,
     DuplicateException,
     UnsupportedRange,
@@ -125,7 +126,11 @@ impl Ctx<'_> {
     fn has_source_timezone(&self, tzid: &str) -> bool {
         self.timezones
             .iter()
-            .any(|z| z.tzid == tzid && !z.vtimezone.is_empty())
+            .any(|z| z.tzid == tzid && !z.vtimezone.trim().is_empty())
+    }
+
+    fn has_any_source_timezone_entry(&self, tzid: &str) -> bool {
+        self.timezones.iter().any(|z| z.tzid == tzid)
     }
 
     fn err(&mut self, code: Code, path: &str) {
@@ -142,7 +147,11 @@ impl Ctx<'_> {
             Temporal::Utc { value } => parse_utc(value).is_some(),
             Temporal::Floating { local } => parse_local(local).is_some(),
             Temporal::Zoned { local, tzid } => {
-                let known = tzid.parse::<Tz>().is_ok() || self.has_source_timezone(tzid);
+                let known = if self.has_any_source_timezone_entry(tzid) {
+                    self.has_source_timezone(tzid)
+                } else {
+                    tzid.parse::<Tz>().is_ok()
+                };
                 if !known {
                     self.err(Code::UnknownTimezone, path);
                 }
@@ -203,13 +212,10 @@ impl Ctx<'_> {
             (Temporal::Floating { local: s }, Temporal::Floating { local: e }) => {
                 parse_local(s).zip(parse_local(e)).map(|(s, e)| e >= s)
             }
-            _ if [start, end].iter().any(
-                |t| matches!(t, Temporal::Zoned { tzid, .. } if self.has_source_timezone(tzid)),
-            ) =>
-            {
-                None
-            }
-            _ => match (start.to_utc(), end.to_utc()) {
+            _ => match (
+                start.to_utc_with_timezones(self.timezones),
+                end.to_utc_with_timezones(self.timezones),
+            ) {
                 (Ok(Some(s)), Ok(Some(e))) => Some(e >= s),
                 // Malformed values are reported elsewhere; source-defined zones are not comparable.
                 _ => None,

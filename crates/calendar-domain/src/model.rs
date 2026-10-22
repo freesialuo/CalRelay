@@ -59,29 +59,54 @@ fn resolve_zoned(local: NaiveDateTime, tz: Tz) -> DateTime<Utc> {
         LocalResult::Single(t) => t.with_timezone(&Utc),
         LocalResult::Ambiguous(first, _) => first.with_timezone(&Utc),
         LocalResult::None => {
-            let before = local - chrono::Duration::hours(24);
-            let offset = match tz.from_local_datetime(&before) {
-                LocalResult::Single(t) | LocalResult::Ambiguous(t, _) => t.offset().fix(),
-                LocalResult::None => tz.offset_from_utc_datetime(&before).fix(),
-            };
+            let offset = chrono_tz::GapInfo::new(&local, &tz)
+                .and_then(|gap| gap.begin.map(|(_, before_offset)| before_offset.fix()))
+                .unwrap_or_else(|| tz.offset_from_utc_datetime(&local).fix());
             (local - chrono::Duration::seconds(i64::from(offset.local_minus_utc()))).and_utc()
         }
     }
 }
 
 impl Temporal {
-    /// Absolute instant for `utc` and IANA-zoned values.
+    /// Absolute instant for `utc` and IANA-zoned values when no source `VTIMEZONE` definitions apply.
     ///
-    /// `Ok(None)` means no instant is available without outside context (all-day, floating, or
-    /// a zone only defined by the source's own VTIMEZONE). `Err` means the value is malformed or
-    /// names an unknown zone.
+    /// `Ok(None)` means no instant is available without calendar-level interpretation (`date` or
+    /// `floating`). `Err` means the value is malformed (`Code::InvalidTemporal`) or names an
+    /// unknown zone (`Code::UnknownTimezone`).
     pub fn to_utc(&self) -> Result<Option<DateTime<Utc>>, Code> {
+        self.to_utc_with_timezones(&[])
+    }
+
+    /// Absolute instant for `utc` and IANA-zoned values, considering source `VTIMEZONE` definitions.
+    ///
+    /// Source `timezones` take precedence over same-name IANA identifiers. Because custom
+    /// `VTIMEZONE` rules are not interpreted in v1, any zoned value bound to a non-empty source
+    /// definition is rejected with [`Code::UnsupportedTimezone`] rather than falling back to IANA
+    /// or the host time zone.
+    pub fn to_utc_with_timezones(
+        &self,
+        timezones: &[Timezone],
+    ) -> Result<Option<DateTime<Utc>>, Code> {
         match self {
-            Temporal::Date { .. } | Temporal::Floating { .. } => Ok(None),
+            Temporal::Date { date } => parse_date(date).map(|_| None).ok_or(Code::InvalidTemporal),
+            Temporal::Floating { local } => parse_local(local)
+                .map(|_| None)
+                .ok_or(Code::InvalidTemporal),
             Temporal::Utc { value } => parse_utc(value).map(Some).ok_or(Code::InvalidTemporal),
             Temporal::Zoned { local, tzid } => {
                 let local = parse_local(local).ok_or(Code::InvalidTemporal)?;
-                Ok(tzid.parse::<Tz>().ok().map(|tz| resolve_zoned(local, tz)))
+                let mut saw_source_tzid = false;
+                for tz in timezones.iter().filter(|z| z.tzid == *tzid) {
+                    saw_source_tzid = true;
+                    if !tz.vtimezone.trim().is_empty() {
+                        return Err(Code::UnsupportedTimezone);
+                    }
+                }
+                if saw_source_tzid {
+                    return Err(Code::UnknownTimezone);
+                }
+                let tz = tzid.parse::<Tz>().map_err(|_| Code::UnknownTimezone)?;
+                Ok(Some(resolve_zoned(local, tz)))
             }
         }
     }
@@ -403,6 +428,11 @@ pub struct EventV1 {
 }
 
 impl EventV1 {
+    /// Resolve a temporal value to a UTC instant using this event's source `timezones` context.
+    pub fn resolve_utc(&self, temporal: &Temporal) -> Result<Option<DateTime<Utc>>, Code> {
+        temporal.to_utc_with_timezones(self.timezones.as_deref().unwrap_or(&[]))
+    }
+
     /// Key identifying an occurrence of this event: `single` for non-recurring events, else the
     /// canonical key of the original `RECURRENCE-ID` (never the rescheduled start).
     pub fn original_recurrence_key(&self, recurrence_id: Option<&Temporal>) -> String {
