@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "external_uid": "weekly-review@example.invalid",
+  "title": "每周项目复盘",
+  "description": "检查日历同步和提醒投递状态。",
+  "status": "confirmed",
+  "classification": "private",
+  "transparency": "opaque",
+  "start": {
+    "kind": "zoned",
+    "local": "2026-11-02T09:00:00",
+    "tzid": "America/Vancouver"
+  },
+  "duration": "PT30M",
+  "recurrence": {
+    "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=8",
+    "exdates": [
+      {
+        "kind": "zoned",
+        "local": "2026-11-16T09:00:00",
+        "tzid": "America/Vancouver"
+      }
+    ],
+    "exceptions": [
+      {
+        "recurrence_id": {
+          "kind": "zoned",
+          "local": "2026-11-09T09:00:00",
+          "tzid": "America/Vancouver"
+        },
+        "range": "single",
+        "change": {
+          "kind": "override",
+          "patch": {
+            "start": {
+              "kind": "zoned",
+              "local": "2026-11-10T10:00:00",
+              "tzid": "America/Vancouver"
+            },
+            "title": "本周复盘（改期）"
+          }
+        }
+      }
+    ]
+  },
+  "organizer": {
+    "address": "mailto:owner@example.invalid",
+    "display_name": "项目维护者"
+  },
+  "alarms": [
+    {
+      "id": "before-10m",
+      "action": "display",
+      "trigger": {
+        "kind": "relative",
+        "related": "start",
+        "offset": "-PT10M"
+      },
+      "description": "复盘将在十分钟后开始。"
+    }
+  ],
+  "source_sequence": 2,
+  "source_modified_at": "2026-10-21T20:00:00Z",
+  "timezones": [],
+  "extensions": [
+    {
+      "name": "X-CALRELAY-EXAMPLE",
+      "parameters": {},
+      "value": "architecture-draft"
+    }
+  ]
+}

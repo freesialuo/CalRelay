@@ -1,0 +1,23 @@
+name: 需求
+description: 定义功能、架构或工程改进
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 用户需要什么，以及解决哪个问题。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 用可验证的结果列出完成条件。
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与范围
+      description: 关联 Issue、前置条件和明确排除的工作。

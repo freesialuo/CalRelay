@@ -1,0 +1,752 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:calrelay:schema:event:1.0",
+  "title": "CalRelay EventV1 (architecture draft)",
+  "description": "Normalized source event. Server assigns source identity and revision. Structural validation does not replace domain validation. See docs/event-model.md.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "external_uid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "location": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "status": {
+      "enum": [
+        "tentative",
+        "confirmed",
+        "cancelled"
+      ]
+    },
+    "classification": {
+      "enum": [
+        "public",
+        "private",
+        "confidential"
+      ]
+    },
+    "transparency": {
+      "enum": [
+        "opaque",
+        "transparent"
+      ]
+    },
+    "start": {
+      "$ref": "#/$defs/temporal"
+    },
+    "end": {
+      "$ref": "#/$defs/temporal"
+    },
+    "duration": {
+      "$ref": "#/$defs/duration"
+    },
+    "organizer": {
+      "$ref": "#/$defs/person"
+    },
+    "attendees": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/person"
+      }
+    },
+    "alarms": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/alarm"
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/attachment"
+      }
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/extension"
+      }
+    },
+    "recurrence": {
+      "$ref": "#/$defs/recurrence"
+    },
+    "source_sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_modified_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "timezones": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/timezone"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "external_uid",
+    "title",
+    "status",
+    "start"
+  ],
+  "additionalProperties": false,
+  "not": {
+    "required": [
+      "end",
+      "duration"
+    ]
+  },
+  "$defs": {
+    "utc": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "utc"
+        },
+        "value": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^[+-]?P(?=\\d|T\\d)(?:\\d+W|(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?)$"
+    },
+    "temporal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "date"
+            },
+            "date": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "required": [
+            "kind",
+            "date"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/utc"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "zoned"
+            },
+            "local": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
+            },
+            "tzid": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "kind",
+            "local",
+            "tzid"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "floating"
+            },
+            "local": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
+            }
+          },
+          "required": [
+            "kind",
+            "local"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "extension": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "name",
+        "parameters",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "person": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string",
+          "format": "uri"
+        },
+        "display_name": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "role": {
+          "enum": [
+            "chair",
+            "required",
+            "optional",
+            "non_participant"
+          ]
+        },
+        "participation": {
+          "enum": [
+            "needs_action",
+            "accepted",
+            "declined",
+            "tentative",
+            "delegated"
+          ]
+        },
+        "rsvp": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/extension"
+          }
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "additionalProperties": false
+    },
+    "attachment": {
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "period": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "period"
+        },
+        "start": {
+          "$ref": "#/$defs/temporal"
+        },
+        "end": {
+          "$ref": "#/$defs/temporal"
+        },
+        "duration": {
+          "$ref": "#/$defs/duration"
+        }
+      },
+      "required": [
+        "kind",
+        "start"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "end"
+          ],
+          "not": {
+            "required": [
+              "duration"
+            ]
+          }
+        },
+        {
+          "required": [
+            "duration"
+          ],
+          "not": {
+            "required": [
+              "end"
+            ]
+          }
+        }
+      ]
+    },
+    "alarm": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "action": {
+          "enum": [
+            "display",
+            "audio",
+            "email"
+          ]
+        },
+        "trigger": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "relative"
+                },
+                "related": {
+                  "enum": [
+                    "start",
+                    "end"
+                  ]
+                },
+                "offset": {
+                  "$ref": "#/$defs/duration"
+                }
+              },
+              "required": [
+                "kind",
+                "related",
+                "offset"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "absolute"
+                },
+                "at": {
+                  "$ref": "#/$defs/utc"
+                }
+              },
+              "required": [
+                "kind",
+                "at"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repeat_interval": {
+          "$ref": "#/$defs/duration"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "attendees": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/person"
+          },
+          "minItems": 1
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attachment"
+          }
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/extension"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "trigger"
+      ],
+      "additionalProperties": false,
+      "dependentRequired": {
+        "repeat": [
+          "repeat_interval"
+        ],
+        "repeat_interval": [
+          "repeat"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "display"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "description"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "email"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "description",
+              "summary",
+              "attendees"
+            ]
+          }
+        }
+      ]
+    },
+    "exception": {
+      "type": "object",
+      "properties": {
+        "recurrence_id": {
+          "$ref": "#/$defs/temporal"
+        },
+        "range": {
+          "enum": [
+            "single",
+            "this_and_future"
+          ]
+        },
+        "change": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cancelled"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "override"
+                },
+                "patch": {
+                  "$ref": "#/$defs/eventPatch"
+                }
+              },
+              "required": [
+                "kind",
+                "patch"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "recurrence_id",
+        "range",
+        "change"
+      ],
+      "additionalProperties": false
+    },
+    "recurrence": {
+      "type": "object",
+      "properties": {
+        "rrule": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "rdates": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/temporal"
+              },
+              {
+                "$ref": "#/$defs/period"
+              }
+            ]
+          }
+        },
+        "exdates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/temporal"
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/exception"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "rrule"
+          ]
+        },
+        {
+          "required": [
+            "rdates"
+          ]
+        },
+        {
+          "required": [
+            "exdates"
+          ]
+        },
+        {
+          "required": [
+            "exceptions"
+          ]
+        }
+      ]
+    },
+    "timezone": {
+      "type": "object",
+      "properties": {
+        "tzid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "vtimezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        }
+      },
+      "required": [
+        "tzid",
+        "vtimezone"
+      ],
+      "additionalProperties": false
+    },
+    "eventPatch": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 65536
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 65536
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uri"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "status": {
+          "enum": [
+            "tentative",
+            "confirmed",
+            "cancelled"
+          ]
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "private",
+            "confidential"
+          ]
+        },
+        "transparency": {
+          "enum": [
+            "opaque",
+            "transparent"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/temporal"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/temporal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "organizer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/person"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attendees": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/person"
+          }
+        },
+        "alarms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/alarm"
+          }
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attachment"
+          }
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/extension"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    }
+  }
+}
