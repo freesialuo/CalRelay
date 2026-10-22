@@ -118,6 +118,132 @@ fn summary(items: &[ExpandedOccurrence]) -> Vec<(String, String, String, bool)> 
 }
 
 #[test]
+fn combined_period_and_exception_span_types_are_revalidated() {
+    let utc_start = json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"});
+    let utc_end = json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"});
+    let floating_start = json!({"kind": "floating", "local": "2026-02-01T09:00:00"});
+    let floating_end = json!({"kind": "floating", "local": "2026-02-01T11:00:00"});
+    let date = json!({"kind": "date", "date": "2026-02-01"});
+    for (start, period_span, moved, expected) in [
+        (
+            utc_start.clone(),
+            json!({"end": utc_end}),
+            date.clone(),
+            Code::EndTypeMismatch,
+        ),
+        (
+            utc_start.clone(),
+            json!({"duration": "PT2H"}),
+            date.clone(),
+            Code::DateDurationHasTime,
+        ),
+        (
+            utc_start.clone(),
+            json!({"duration": "P1DT0H"}),
+            date.clone(),
+            Code::DateDurationHasTime,
+        ),
+        (
+            utc_start.clone(),
+            json!({"end": utc_end}),
+            floating_start.clone(),
+            Code::EndTypeMismatch,
+        ),
+        (
+            floating_start.clone(),
+            json!({"end": floating_end}),
+            utc_start.clone(),
+            Code::EndTypeMismatch,
+        ),
+        (
+            date.clone(),
+            json!({"end": {"kind": "date", "date": "2026-02-02"}}),
+            utc_start.clone(),
+            Code::EndTypeMismatch,
+        ),
+    ] {
+        let mut period = period_span;
+        period["kind"] = json!("period");
+        period["start"] = start.clone();
+        let event = event_with(json!({
+            "start": start,
+            "duration": null,
+            "recurrence": {
+                "rdates": [period],
+                "exceptions": [{
+                    "recurrence_id": start, "range": "single",
+                    "change": {"kind": "override", "patch": {"start": moved}}
+                }]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let mut options = default_options("2026-02-01T00:00:00Z", "2026-02-03T00:00:00Z");
+        options.calendar_tzid = Some("UTC");
+        match expand_occurrences(&event, &options) {
+            Err(ExpansionError::Validation(errors)) => {
+                assert!(errors.iter().any(|e| e.code == expected), "{errors:?}")
+            }
+            result => panic!("expected {expected:?} for {moved}, got {result:?}"),
+        }
+    }
+}
+
+#[test]
+fn compatible_period_span_type_changes_and_explicit_clears_remain_valid() {
+    let start = json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"});
+    let end = json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"});
+    let date = json!({"kind": "date", "date": "2026-02-01"});
+    for (span, patch, expected_end) in [
+        (
+            json!({"duration": "P1D"}),
+            json!({"start": date}),
+            "2026-02-02T00:00:00Z",
+        ),
+        (
+            json!({"duration": "PT2H"}),
+            json!({"start": date, "duration": null}),
+            "2026-02-02T00:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"start": date, "end": null}),
+            "2026-02-02T00:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"start": date, "end": {"kind": "date", "date": "2026-02-02"}}),
+            "2026-02-02T00:00:00Z",
+        ),
+        (
+            json!({"end": end}),
+            json!({"start": {"kind": "zoned", "local": "2026-02-01T09:00:00", "tzid": "UTC"}}),
+            "2026-02-01T11:00:00Z",
+        ),
+    ] {
+        let mut period = span;
+        period["kind"] = json!("period");
+        period["start"] = start.clone();
+        let event = event_with(json!({
+            "start": start, "duration": null,
+            "recurrence": {
+                "rdates": [period],
+                "exceptions": [{
+                    "recurrence_id": start, "range": "single",
+                    "change": {"kind": "override", "patch": patch}
+                }]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let mut options = default_options("2026-02-01T00:00:00Z", "2026-02-03T00:00:00Z");
+        options.calendar_tzid = Some("UTC");
+        let out = expand_occurrences(&event, &options).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].end_utc, utc_dt(expected_end), "{patch}");
+        assert_eq!(out[0].original_key, "utc:2026-02-01T09:00:00Z");
+    }
+}
+
+#[test]
 fn ac1_month_end_and_leap_day_skip_invalid_dates_without_drift_or_count_loss() {
     // RFC 5545 Section 3.3.10: invalid calendar dates (Feb 31, Apr 31) are ignored and not counted toward COUNT.
     let monthly_end = event_with(json!({

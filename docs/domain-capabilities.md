@@ -85,6 +85,9 @@ TDD 记录：
 - 第五轮 review（AC2）：窗口和例外标识的两天缓冲使用 checked 加法，溢出返回 `ExpansionError::InvalidWindow`。四种频率生成候选时的表示范围溢出同样返回 `InvalidWindow`；MONTHLY/YEARLY 在构造日期前检查年份，只有支持年份中的不存在日期才按 RFC 跳过。`max_iterations` 统一计算 RRULE 候选步数和每条 RDATE（包括重复项及被 EXDATE 排除的项）。
 - 回归 `horizon_overflow_returns_invalid_window`、`unrepresentable_candidates_fail_before_invalid_date_skipping`、`rdates_share_the_rrule_iteration_budget_even_when_duplicated_or_excluded`：Red 为 19 项中 16 通过、3 失败，分别复现窗口 panic、越界误报预算、RDATE 预算未执行；Green 为 19 项全部通过。时长范围错误仍为 `InvalidDuration`，候选日期和窗口范围错误为 `InvalidWindow`。
 
+- 第六轮 review（AC1/AC2）：将跨度字段形状校验从完整跨度校验中提取并复用，在 PERIOD 与例外补丁合并后、解析结束时间之前检查有效开始/结束的时间族及全天时长限制。不兼容组合返回 `ExpansionError::Validation`，包含 `Code::EndTypeMismatch` 或 `Code::DateDurationHasTime`；继承结束时间仍按既有规则平移，不在平移前做绝对先后比较。
+- 回归 `combined_period_and_exception_span_types_are_revalidated` 覆盖 UTC/date/floating 的不兼容跨度及 `PT2H` / `P1DT0H` 全天时长；`compatible_period_span_type_changes_and_explicit_clears_remain_valid` 覆盖日历日时长、显式清除/替换跨度和 UTC/zoned 同时间族转换，保持 `original_key`。Red：21 项中 20 通过、1 失败，复现全天实例在当天 11:00 结束；Green：21 项全部通过。
+
 ## 测试
 
 `cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs`、`crates/calendar-domain/tests/timezone_golden.rs` 与 `crates/calendar-domain/tests/recurrence_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返、校验与重复展开验证。无网络通知。

@@ -802,6 +802,8 @@ fn resolve_span_end(
     duration: Option<&str>,
     inherited_end: bool,
 ) -> Result<DateTime<Utc>, ExpansionError> {
+    crate::validate::validate_span_shape(start, explicit_end, duration)
+        .map_err(ExpansionError::Validation)?;
     if let Some(dur_str) = duration {
         let dur = parse_calendar_duration(dur_str).ok_or(ExpansionError::InvalidDuration)?;
         return resolver.add_duration(start, start_utc, dur);
