@@ -73,10 +73,25 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features --locked
 
+  kani:
+    name: kani
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Kani
+        run: |
+          cargo install --locked kani-verifier --version "=$(cat scripts/kani-version)"
+          cargo kani setup
+      - name: Prove boundaries and detect injected defects
+        run: python3 scripts/check_kani.py
+
   quality-gate:
     name: quality-gate
     if: ${{ always() }}
-    needs: [contracts, pr-policy, rust]
+    needs: [contracts, pr-policy, rust, kani]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -84,8 +99,10 @@ jobs:
         env:
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           PR_POLICY_RESULT: ${{ needs.pr-policy.result }}
+          KANI_RESULT: ${{ needs.kani.result }}
           RUST_RESULT: ${{ needs.rust.result }}
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$PR_POLICY_RESULT" = success
           test "$RUST_RESULT" = success
+          test "$KANI_RESULT" = success
