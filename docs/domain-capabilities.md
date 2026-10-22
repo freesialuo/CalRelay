@@ -29,7 +29,7 @@ zoned 值解析遵循 RFC 5545：歧义时间取第一次出现，不存在的�
 | --- | --- |
 | 时区数据库 | 锁定 `chrono = "=0.4.45"`、`chrono-tz = "=0.10.4"`（编译期嵌入 IANA 数据，公开 `TZDB_VERSION = "2025b"`）。覆盖南北半球与午夜 DST 间隙/重叠、30/45 分钟偏移及 30 分钟 DST 跳变、跨日/跨月/闰日/整日国际日期变更线跳变与同名 `VTIMEZONE` 冲突；数据库更新需重规划未来实例（见 [event-model.md](event-model.md)）。 |
 | ICS 解析 | 未选型，不在本 Issue 范围；由 [#18](https://github.com/freesialuo/CalRelay/issues/18) 依据 [event-model.md](event-model.md) 的黄金样例清单评估。 |
-| RRULE 展开 | 未选型；本阶段只做语法层面的最小拒绝。在 [#20](https://github.com/freesialuo/CalRelay/issues/20) 展开能力评估通过前，不得声称支持任何超出 `FREQ` 校验的规则语义。 |
+| RRULE 展开 | 评估候选 `rrule = 0.14.0`（`fmeringdal/rust-rrule`）后，选定由 `calendar-domain::recurrence` 基于已锁定 `chrono 0.4.45` / `chrono-tz 0.10.4` 实现受限日历坐标展开，不引入 `rrule` 外部依赖。输入边界 `validate_event` 保持原有语法级最小拒绝，不扩大校验能力声明；展开入口 `expand_occurrences` 仅执行已验证档位，显式拒绝未验证规则与超预算展开。 |
 | 自定义 VTIMEZONE | 仅保存与非空存在性校验，不解释其规则；规划/实例解析遇到来源 `VTIMEZONE`（含同名 IANA 冲突）显式返回 `UnsupportedTimezone`。 |
 
 ## 时区兼容性验证（Issue #19）
@@ -46,6 +46,27 @@ TDD 记录：
 - Green：在 `Temporal::to_utc_with_timezones` 与 `validate_event` 中优先判定来源 `timezones`（非空返回 `UnsupportedTimezone`，空白定义或未知 TZID 返回 `UnknownTimezone`），并使用 `chrono_tz::GapInfo` 解析不存在的本地时间，6 项测试全部通过。
 - Refactor：补充跨 45 分钟偏移时区（`Asia/Kathmandu` 与 `Australia/Eucla`）的跨度先后校验，统一 `validate_event` 的跨度比较入口并运行全工作区回归检查。
 
+## 重复展开评估与支持边界（Issue #20）
+
+候选对比结论：
+
+- 核对 `rrule 0.14.0`（`fmeringdal/rust-rrule`）官方文档与公共源码发现：其 `src/iter/counter_date.rs::fix_day` 在闰日 `YEARLY` 递增时将 `2020-02-29` 偏移为 `2021-03-01`；`src/iter/utils.rs::add_time_to_date` 在午夜发生 DST 跳变（如 `America/Havana`）时因 `00:00:00` 非单一时刻而静默丢弃实例；`RRuleSet` 仅接受 `DateTime<Tz>` 的 `RDATE`，不支持 `RDATE;VALUE=PERIOD` 独立时长，也不含 `RECURRENCE-ID` 单次取消/覆盖补丁与 `original_key` 保持；`RRuleSet::all(limit)` 通过布尔标记截断而非返回类型化超限错误。
+- 因此采用 `calendar-domain` 内置受限展开（`expand_occurrences`），在本地日历坐标生成候选日期，再统一经 `EventV1::resolve_utc` 与显式日历时区解析 UTC 区间：
+  - 已验证档位：`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`、正整数 `INTERVAL`、`COUNT`、与 `start` 同族的 `UNTIL`、`WEEKLY` 无序号 `BYDAY`、`MONTHLY`/`YEARLY` 正数 `BYMONTHDAY`、`YEARLY` `BYMONTH`（均须与 `DTSTART` 同步），以及 `EXDATE`、`RDATE`（含 `Period` 独立跨度）与 `range=single` 的 `Cancelled`/`Override` 例外。
+  - 显式拒绝策略（不扩大 `validate_event` 的 `RRULE` 校验声明）：`SECONDLY`/`MINUTELY`/`HOURLY`、带序号 `BYDAY`、负数 `BYMONTHDAY`、`BYSETPOS`、`BYYEARDAY`、`BYWEEKNO`、未同步 `DTSTART` 等返回 `Err(ExpansionError::UnsupportedRrule)`；`range=this_and_future` 返回 `UnsupportedRange`；来源 `VTIMEZONE` 返回 `UnsupportedTimezone`；缺少日历时区的 `date`/`floating` 返回 `MissingCalendarTimezone`；超过 `max_occurrences` 或 `max_iterations` 显式返回预算错误，不静默截断。
+
+| 验收条件 | 设计与边界 | 可执行验证（`tests/recurrence_golden.rs`） |
+| --- | --- | --- |
+| AC1：月末、闰日、`COUNT`/`UNTIL`、`EXDATE`、`RDATE PERIOD` 与例外 | 不存在日历日跳过且不扣减 `COUNT`；`RDATE PERIOD` 保留独立时长；例外按 `original_key` 取消或改期 | `ac1_month_end_and_leap_day_skip_invalid_dates_without_drift_or_count_loss`、`ac1_count_and_until_boundaries_with_exdate_and_rdate_period`、`ac1_exceptions_cancel_or_reschedule_by_original_recurrence_key` |
+| AC2：无效重复实例、时区绑定与有限窗口/数量预算 | 跨 DST（含午夜跳变）保持当地时间；`floating`/`date` 须提供 `calendar_tzid`；窗口/次数/步数超限显式报错 | `ac2_dst_transitions_and_timezone_bindings_preserve_local_wall_clock`、`ac2_finite_window_and_quantity_or_iteration_budgets_fail_explicitly` |
+| AC3：记录选型及未通过项显式拒绝，不扩大当前 `RRULE` 校验声明 | `validate_event` 边界不变，`expand_occurrences` 对未验证子句返回 `UnsupportedRrule` | `ac3_unverified_rrule_clauses_and_ranges_are_explicitly_rejected_without_widening_validator` |
+
+TDD 记录：
+
+- Red：先定义 `expand_occurrences` 入口与 `tests/recurrence_golden.rs` 6 项测试，占位实现仅返回单次母事件；运行 `cargo test -p calendar-domain --test recurrence_golden --locked`，0 通过、6 失败（未展开候选序列、未应用 `EXDATE`/`RDATE PERIOD`/例外、未拒绝 `FREQ=HOURLY` 与超预算请求）。
+- Green：实现受限 `RRULE` 解析、候选日生成、`EXDATE`/`RDATE PERIOD`/例外合并及预算检查；修正测试夹具中全天闰日事件误带 `PT1H` 的夹具设置（按开发方法不计作需求红灯），6 项测试全部通过。
+- Refactor：增加 `DTSTART` 与 `BYDAY`/`BYMONTHDAY`/`BYMONTH` 同步性检查，并接入仓库示例 [event-v1.json](../examples/event-v1.json) 的完整展开断言。
+
 ## 测试
 
-`cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs` 与 `crates/calendar-domain/tests/timezone_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返与验证。无网络通知。
+`cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs`、`crates/calendar-domain/tests/timezone_golden.rs` 与 `crates/calendar-domain/tests/recurrence_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返、校验与重复展开验证。无网络通知。

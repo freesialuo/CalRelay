@@ -3,9 +3,11 @@
 //! No I/O and no network access; pure data and validation.
 
 mod model;
+mod recurrence;
 mod validate;
 
 pub use model::*;
+pub use recurrence::{expand_occurrences, ExpandedOccurrence, ExpansionError, ExpansionOptions};
 pub use validate::{validate_event, Code, ValidationError};
 
 /// Embedded IANA time zone database version provided by `chrono-tz`.
