@@ -26,7 +26,7 @@ def main():
     assert 'pull_request' in workflow['on'] and 'push' in workflow['on']
     assert 'pull_request_target' not in workflow['on']
     assert workflow['permissions'] == {'contents': 'read'}
-    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust'}
+    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust', 'kani'}
     for job in workflow['jobs'].values():
         for step in job.get('steps', []):
             if 'uses' in step:

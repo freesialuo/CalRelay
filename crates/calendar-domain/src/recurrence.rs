@@ -1015,3 +1015,6 @@ fn generate_rrule_candidates<'a>(
             .ok_or(ExpansionError::InvalidWindow)?;
     }
 }
+
+#[cfg(kani)]
+mod proofs;
