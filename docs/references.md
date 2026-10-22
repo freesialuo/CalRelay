@@ -84,3 +84,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 - [Chrono DateTime::from_timestamp](https://docs.rs/chrono/0.4.45/chrono/struct.DateTime.html#method.from_timestamp)：Context7 `/websites/rs_chrono_chrono` 核对范围错误返回 None、秒/纳秒构造及闰秒限制；窗口 harness 使用小范围有效整秒 UTC，保留真实生产比较路径。
 
 #47 通过 Context7 `/websites/github_en_actions` 核对 [路径过滤](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore) 与 [手动运行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)：路径过滤与目标分支条件同时生效；跳过的工作流不应被设为必需检查；`workflow_dispatch` 需工作流已位于默认分支。
+
+## 测试、证明与质量工具（#49）
+
+官方文档和采用边界集中列于 [工具选择矩阵](verification-toolkit.md)。通过 Context7 `/proptest-rs/proptest` 核对抽样局限、shrinking 和失败持久化，通过 `/embarkstudios/cargo-deny` 核对依赖策略及例外；其余使用矩阵所链接的工具官方资料。本文档允许后续按需接入，不把工具目录当作运行证据。
