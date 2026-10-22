@@ -88,6 +88,9 @@ TDD 记录：
 - 第六轮 review（AC1/AC2）：将跨度字段形状校验从完整跨度校验中提取并复用，在 PERIOD 与例外补丁合并后、解析结束时间之前检查有效开始/结束的时间族及全天时长限制。不兼容组合返回 `ExpansionError::Validation`，包含 `Code::EndTypeMismatch` 或 `Code::DateDurationHasTime`；继承结束时间仍按既有规则平移，不在平移前做绝对先后比较。
 - 回归 `combined_period_and_exception_span_types_are_revalidated` 覆盖 UTC/date/floating 的不兼容跨度及 `PT2H` / `P1DT0H` 全天时长；`compatible_period_span_type_changes_and_explicit_clears_remain_valid` 覆盖日历日时长、显式清除/替换跨度和 UTC/zoned 同时间族转换，保持 `original_key`。Red：21 项中 20 通过、1 失败，复现全天实例在当天 11:00 结束；Green：21 项全部通过。
 
+- 第七轮 review（AC1/AC2）：对合并后的显式全天结束按日历日期检查 `end > start`，结束日期等于或早于开始均返回 `ExpansionError::InvalidDuration`；定时实例继续允许相等端点。比较日历日期而非强制 UTC 严格递增，以保持全天日期语义。
+- 回归 `merged_all_day_period_ends_are_exclusive_while_timed_ends_may_equal_start` 覆盖全天结束相等、早于、晚于开始，以及 UTC/floating/zoned 的相等端点与 `original_key`。Red：22 项中 21 通过、1 失败，复现全天零天跨度；Green：22 项全部通过。
+
 ## 测试
 
 `cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs`、`crates/calendar-domain/tests/timezone_golden.rs` 与 `crates/calendar-domain/tests/recurrence_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返、校验与重复展开验证。无网络通知。

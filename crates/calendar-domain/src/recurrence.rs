@@ -811,8 +811,14 @@ fn resolve_span_end(
     if let Some(end_temp) = explicit_end {
         let (end_utc, _, _) = resolver.resolve_temporal(end_temp)?;
         if !inherited_end {
-            // A start-only exception can move past an RDATE PERIOD's absolute end.
-            if end_utc < start_utc {
+            // A merged all-day span has an exclusive end date; timed spans may be points.
+            let ordered = match (start, end_temp) {
+                (Temporal::Date { date: s }, Temporal::Date { date: e }) => {
+                    parse_date(s).zip(parse_date(e)).is_some_and(|(s, e)| e > s)
+                }
+                _ => end_utc >= start_utc,
+            };
+            if !ordered {
                 return Err(ExpansionError::InvalidDuration);
             }
             return Ok(end_utc);

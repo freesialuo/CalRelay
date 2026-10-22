@@ -118,6 +118,76 @@ fn summary(items: &[ExpandedOccurrence]) -> Vec<(String, String, String, bool)> 
 }
 
 #[test]
+fn merged_all_day_period_ends_are_exclusive_while_timed_ends_may_equal_start() {
+    for (start, end, moved, valid) in [
+        (
+            json!({"kind": "date", "date": "2026-02-01"}),
+            json!({"kind": "date", "date": "2026-02-02"}),
+            json!({"kind": "date", "date": "2026-02-02"}),
+            false,
+        ),
+        (
+            json!({"kind": "date", "date": "2026-02-01"}),
+            json!({"kind": "date", "date": "2026-02-02"}),
+            json!({"kind": "date", "date": "2026-02-03"}),
+            false,
+        ),
+        (
+            json!({"kind": "date", "date": "2026-02-01"}),
+            json!({"kind": "date", "date": "2026-02-02"}),
+            json!({"kind": "date", "date": "2026-01-31"}),
+            true,
+        ),
+        (
+            json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            true,
+        ),
+        (
+            json!({"kind": "floating", "local": "2026-02-01T09:00:00"}),
+            json!({"kind": "floating", "local": "2026-02-01T11:00:00"}),
+            json!({"kind": "floating", "local": "2026-02-01T11:00:00"}),
+            true,
+        ),
+        (
+            json!({"kind": "zoned", "local": "2026-02-01T09:00:00", "tzid": "UTC"}),
+            json!({"kind": "zoned", "local": "2026-02-01T11:00:00", "tzid": "UTC"}),
+            json!({"kind": "zoned", "local": "2026-02-01T11:00:00", "tzid": "UTC"}),
+            true,
+        ),
+    ] {
+        let event = event_with(json!({
+            "start": start, "duration": null,
+            "recurrence": {
+                "rdates": [{"kind": "period", "start": start, "end": end}],
+                "exceptions": [{
+                    "recurrence_id": start, "range": "single",
+                    "change": {"kind": "override", "patch": {"start": moved}}
+                }]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let mut options = default_options("2026-01-30T00:00:00Z", "2026-02-04T00:00:00Z");
+        options.calendar_tzid = Some("UTC");
+        let result = expand_occurrences(&event, &options);
+        if valid {
+            let out = result.unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].start, serde_json::from_value(moved).unwrap());
+            assert_eq!(out[0].original_key, event.start.recurrence_key());
+            if matches!(out[0].start, calendar_domain::Temporal::Date { .. }) {
+                assert_eq!(out[0].end_utc, utc_dt("2026-02-02T00:00:00Z"));
+            } else {
+                assert_eq!(out[0].start_utc, out[0].end_utc);
+            }
+        } else {
+            assert_eq!(result, Err(ExpansionError::InvalidDuration), "{moved}");
+        }
+    }
+}
+
+#[test]
 fn combined_period_and_exception_span_types_are_revalidated() {
     let utc_start = json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"});
     let utc_end = json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"});
