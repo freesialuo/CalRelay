@@ -39,6 +39,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 | [SQLx 0.8.6 SQLite 连接选项](https://docs.rs/sqlx/0.8.6/sqlx/sqlite/struct.SqliteConnectOptions.html) | 显式设置文件路径、建库、WAL、FULL、外键和 busy timeout，避免依赖默认值 |
 | [SQLx 0.8.6 migrate 宏](https://docs.rs/sqlx/0.8.6/sqlx/macro.migrate.html) | 内嵌版本迁移；build script 追踪新迁移文件 |
 | [SQLx 0.8.6 Migrator 公共源码](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-core/src/migrate/migrator.rs) | 核对未完成、未知版本与 checksum 不匹配的失败路径；失败时关闭新池，不重建数据库 |
+| [SQLx 0.8.6 事务](https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html)、[SqlitePool](https://docs.rs/sqlx/0.8.6/sqlx/type.SqlitePool.html) | #22 通过 Context7 核对 begin_with、commit 与 Drop 回滚，再检查 0.8.6 公共源码；使用 BEGIN IMMEDIATE 和条件 UPDATE，以故障/并发测试验证实际原子性 |
 | [SQLite STRICT 表](https://sqlite.org/stricttables.html) | 核心表使用严格类型，最低 SQLite 3.37；实际随 SQLx bundled SQLite 构建 |
 
 ## 选型前需要补齐的验证

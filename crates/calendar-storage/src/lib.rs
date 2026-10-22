@@ -1,4 +1,7 @@
-//! SQLite persistence for CalRelay. Business transactions belong to later Issues.
+//! SQLite persistence and atomic source synchronization for CalRelay.
+
+mod sync;
+pub use sync::SyncError;
 
 use std::path::Path;
 use std::time::Duration;

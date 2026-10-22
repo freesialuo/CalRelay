@@ -2,6 +2,8 @@
 
 范围：[Issue #21](https://github.com/freesialuo/CalRelay/issues/21)，父项 [#4](https://github.com/freesialuo/CalRelay/issues/4)。`calendar-storage` 仅提供文件连接、版本迁移及五张事件核心表；同步事务、规划和投递在后续 Issue 交付。
 
+本文记录 #21 的交付边界；后续 #22 的原子同步实现另见 [来源同步事务](source-sync.md)。
+
 ## 需求、设计与验证
 
 需求分析先确定持久化、隔离和失败保护的可观测结果，再将系统设计分配到连接池、迁移与关系约束，按对应层级验证。测试均使用临时文件数据库，不以仅内存测试代替重开验证。

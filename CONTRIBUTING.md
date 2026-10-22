@@ -11,6 +11,8 @@ Issue（范围与验收）→ 分支 → 实现与本地检查 → 签名提交 
 
 先检索现有 Issue，避免重复。需求写目标、验收标准和依赖；缺陷写复现、实际行为和预期行为。不把尚未合并的依赖当作主线已具备的能力。
 
+需求使用用户故事和 AC 编号，将验收场景对应到 V-Model 验证层级；实现按 TDD 的 Red → Green → Refactor 记录实际结果。准入、完成及 Rust 质量约定见 [开发方法](docs/development-method.md)。
+
 从最新 `origin/main` 创建分支：`<type>/<issue>-<slug>`，type 为 `feat`、`fix`、`docs`、`test`、`ci`、`chore` 或 `refactor`，例如 `feat/12-ics-ingestion`。分支号必须是本仓库对应的 Issue。
 
 PR 标题采用 `type(scope): description`，scope 可省略；正文写改动结果、实际验证与必要限制，并使用 `Closes #12`、`Fixes #12` 或 `Resolves #12` 关联同一 Issue。工作未完成时开 Draft PR。
