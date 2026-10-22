@@ -69,7 +69,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 
 通过 Context7 `/github/docs` 查询评审与 ruleset 参数，并核对以下官方文档：
 
-- [Ruleset 可用规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)：PR、独立审批、失效审批、签名与状态检查；私有仓库可用性受套餐限制。
+- [Ruleset 可用规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)：PR、独立审批、失效审批与状态检查；私有仓库可用性受套餐限制。
 - [Rulesets REST API](https://docs.github.com/en/rest/repos/rules)：保护配置格式与检查来源绑定。
 - [批准 PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews)：作者不能批准自己的 PR；独立 reviewer 需要实际权限。
 - [actions/checkout](https://github.com/actions/checkout)、[actions/setup-python](https://github.com/actions/setup-python)：核对官方发布并解析固定 commit SHA，避免可变 Action 标签。

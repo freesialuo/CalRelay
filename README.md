@@ -29,7 +29,7 @@ flowchart LR
 | [运行与安全](docs/operations.md) | Cloudflare、Docker、健康检查、备份与恢复 |
 | [实施路线](docs/roadmap.md) | 分阶段范围与验收条件 |
 | [项目参考](docs/references.md) | 官方规范、文档、公共代码及采用理由 |
-| [贡献指南](CONTRIBUTING.md) | Issue、分支、签名、PR、CI、评审与合并约定 |
+| [贡献指南](CONTRIBUTING.md) | Issue、分支、PR、CI、评审与合并约定 |
 | [事件结构草案](schemas/event-v1.schema.json) | JSON Schema Draft 2020-12，待实现的 v1 契约 |
 | [事件示例](examples/event-v1.json) | 带时区的重复会议及单次改期 |
 
