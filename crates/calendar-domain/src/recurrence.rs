@@ -783,6 +783,10 @@ fn resolve_span_end(
     if let Some(end_temp) = explicit_end {
         let (end_utc, _, _) = resolver.resolve_temporal(end_temp)?;
         if !inherited_end {
+            // A start-only exception can move past an RDATE PERIOD's absolute end.
+            if end_utc < start_utc {
+                return Err(ExpansionError::InvalidDuration);
+            }
             return Ok(end_utc);
         }
         // Inherited ends describe the master's span; occurrence overrides are absolute.

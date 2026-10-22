@@ -821,3 +821,64 @@ fn calendar_timezone_is_validated_only_for_temporals_that_need_it() {
         }
     }
 }
+
+#[test]
+fn rescheduled_period_spans_are_checked_after_combining_overrides() {
+    for (start, end, moved, valid, expected) in [
+        (
+            json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T12:00:00Z"}),
+            false,
+            "2026-02-01T11:00:00Z",
+        ),
+        (
+            json!({"kind": "floating", "local": "2026-02-01T09:00:00"}),
+            json!({"kind": "floating", "local": "2026-02-01T11:00:00"}),
+            json!({"kind": "floating", "local": "2026-02-01T12:00:00"}),
+            false,
+            "2026-02-01T11:00:00Z",
+        ),
+        (
+            json!({"kind": "zoned", "local": "2026-02-01T09:00:00", "tzid": "America/Vancouver"}),
+            json!({"kind": "zoned", "local": "2026-02-01T11:00:00", "tzid": "America/Vancouver"}),
+            json!({"kind": "zoned", "local": "2026-02-01T12:00:00", "tzid": "America/Vancouver"}),
+            false,
+            "2026-02-01T19:00:00Z",
+        ),
+        (
+            json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T10:00:00Z"}),
+            true,
+            "2026-02-01T11:00:00Z",
+        ),
+        (
+            json!({"kind": "utc", "value": "2026-02-01T09:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            json!({"kind": "utc", "value": "2026-02-01T11:00:00Z"}),
+            true,
+            "2026-02-01T11:00:00Z",
+        ),
+    ] {
+        let event = event_with(json!({
+            "start": start,
+            "duration": null,
+            "recurrence": {
+                "rdates": [{"kind": "period", "start": start, "end": end}],
+                "exceptions": [{"recurrence_id": start, "range": "single", "change": {"kind": "override", "patch": {"start": moved}}}]
+            }
+        }));
+        validate_event(&event).unwrap();
+        let mut options = default_options("2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z");
+        options.calendar_tzid = Some("UTC");
+        let result = expand_occurrences(&event, &options);
+        if valid {
+            let out = result.unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].end_utc, utc_dt(expected));
+        } else {
+            assert_eq!(result, Err(ExpansionError::InvalidDuration), "{moved}");
+        }
+    }
+}

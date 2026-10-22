@@ -80,6 +80,8 @@ TDD 记录：
 - 第三轮 review（AC1/AC2）：例外显式设置非 null `end`/`duration` 时清除原有相反跨度字段，避免 `RDATE PERIOD` 时长遮蔽显式结束；null 只清除对应字段，纯元数据补丁保留 PERIOD 跨度。仅在实际解析 `date`/`floating` 值时校验日历时区，UTC/zoned 值忽略无关配置。
 - 回归 `exception_spans_override_period_spans_without_shadowing` 覆盖显式结束/时长、null 和元数据补丁；`calendar_timezone_is_validated_only_for_temporals_that_need_it` 覆盖四种时间类型、缺省/未知/来源自定义日历时区。Red：15 项中 13 通过、2 失败，分别返回 11:00 而非显式 12:00、UTC 事件因未知日历时区报错；Green：修复后 15 项全部通过。
 
+- 第四轮 review（AC1/AC2）：合并 PERIOD 与例外后，显式绝对结束若早于有效开始，返回 `ExpansionError::InvalidDuration`，不输出倒置区间；有效的绝对结束保持原值，定时事件开始等于结束仍允许。回归 `rescheduled_period_spans_are_checked_after_combining_overrides` 覆盖 UTC/floating/zoned 的无效改期，以及有效改期和相等边界。Red：16 项中 15 通过、1 失败，复现 12:00 开始、11:00 结束；Green：加上最终先后检查后 16 项全部通过。
+
 ## 测试
 
 `cargo test -p calendar-domain` 的黄金样例位于 `crates/calendar-domain/tests/validation.rs`、`crates/calendar-domain/tests/timezone_golden.rs` 与 `crates/calendar-domain/tests/recurrence_golden.rs`，包含仓库示例 [event-v1.json](../examples/event-v1.json) 的往返、校验与重复展开验证。无网络通知。
