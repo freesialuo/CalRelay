@@ -1,10 +1,9 @@
-//! Issue #23 acceptance tests; production planner deliberately not implemented here.
+//! Issue #23 acceptance tests for persistent reminder reconciliation.
 //!
-//! Proposed application API: `ReminderPlanner::reconcile(request, &clock)` on Storage.
+//! Application API: `ReminderPlanner::reconcile(request, &clock)` on Storage.
 //! Clock supplies UTC Unix milliseconds and an independent monotonic millisecond counter.
 //! Request identifies a persisted rule/output and expected source/rule/output revisions.
 //! Limits apply to the entire reconciliation, not separately to each event.
-//! Missing production imports are an integration blocker, NOT a behavioral TDD Red.
 //! References: docs/event-model.md, docs/architecture.md and Context7-retrieved
 //! https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html (rollback boundaries).
 
@@ -835,6 +834,226 @@ async fn ac3_scope_components_with_colons_keep_separate_legacy_watermarks() -> R
             .fetch_one(db.pool())
             .await?;
     assert_eq!(legacy_id, "s:r:o:o");
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_timezone_changes_cancel_jobs_that_leave_either_window_edge() -> Result {
+    for (start, target_zone, now) in [
+        ("2026-11-02T09:00:00", "UTC", NOW + 12 * 3_600_000),
+        ("2026-12-01T09:00:00", "Pacific/Honolulu", NOW),
+    ] {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        // Second case uses a shorter window so the timezone change moves past its right edge.
+        let mut req = request(1);
+        if now == NOW {
+            req.horizon_ms = 29 * DAY + 18 * 3_600_000;
+        }
+        commit(
+            &db,
+            0,
+            vec![event(json!({"start":{"kind":"floating","local":start}}))],
+        )
+        .await?;
+        let clock = FakeClock::fixed();
+        clock.utc.store(now, Ordering::SeqCst);
+        db.reconcile(req.clone(), &clock).await?;
+        assert_eq!(jobs(&db).await?.len(), 1);
+        sqlx::query("UPDATE calendars SET timezone_policy=json_object('tzid',?) WHERE id='c'")
+            .bind(target_zone)
+            .execute(db.pool())
+            .await?;
+        db.reconcile(req, &clock).await?;
+        assert!(
+            jobs(&db).await?.is_empty(),
+            "stale reminder after timezone change to {target_zone}"
+        );
+        let state: String = sqlx::query_scalar("SELECT state FROM delivery_jobs")
+            .fetch_one(db.pool())
+            .await?;
+        assert_eq!(state, "cancelled");
+        db.close().await;
+    }
+    Ok(())
+}
+
+struct ExhaustingClock {
+    reads: AtomicU64,
+    exhaust_at: u64,
+}
+impl Clock for ExhaustingClock {
+    fn utc_now_ms(&self) -> i64 {
+        NOW
+    }
+    fn monotonic_now_ms(&self) -> u64 {
+        if self.reads.fetch_add(1, Ordering::SeqCst) >= self.exhaust_at {
+            1_000
+        } else {
+            0
+        }
+    }
+}
+
+#[tokio::test]
+async fn ac2_reconciliation_budget_rolls_back_loading_persistence_and_watermark() -> Result {
+    // Move the deterministic deadline across successive checkpoints, including the final
+    // persistence checkpoint. The clock records whether its deadline was actually observed.
+    let mut completed = false;
+    for exhaust_at in 1..80 {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        commit(
+            &db,
+            0,
+            vec![event(json!({})), event(json!({"external_uid":"b"}))],
+        )
+        .await?;
+        let clock = ExhaustingClock {
+            reads: AtomicU64::new(0),
+            exhaust_at,
+        };
+        let result = db.reconcile(request(1), &clock).await;
+        let reads = clock.reads.load(Ordering::SeqCst);
+        if reads > exhaust_at && exhaust_at > 0 {
+            assert!(matches!(result,Err(PlanningError::TimeBudgetExceeded)),"deadline observed at checkpoint {exhaust_at} but reconciliation returned {result:?}");
+            for table in [
+                "occurrences",
+                "logical_deliveries",
+                "delivery_jobs",
+                "planning_watermarks",
+            ] {
+                assert_eq!(
+                    count(&db, table).await?,
+                    0,
+                    "partial {table} at checkpoint {exhaust_at}"
+                );
+            }
+        } else if result.is_ok() {
+            completed = true;
+            assert_eq!(jobs(&db).await?.len(), 2);
+            assert_eq!(watermark(&db).await?.0, 1);
+            db.close().await;
+            break;
+        }
+        db.close().await;
+    }
+    assert!(completed, "generous budget never completed");
+    Ok(())
+}
+
+struct DatabaseClock(std::sync::Arc<AtomicU64>);
+impl Clock for DatabaseClock {
+    fn utc_now_ms(&self) -> i64 {
+        NOW
+    }
+    fn monotonic_now_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[tokio::test]
+async fn ac2_budget_expiring_during_sql_writes_rolls_back_even_the_watermark() -> Result {
+    for table in [
+        "occurrences",
+        "logical_deliveries",
+        "delivery_jobs",
+        "planning_watermarks",
+    ] {
+        let dir = tempdir()?;
+        let path = dir.path().join("db");
+        let db = Storage::open(&path).await?;
+        seed(&db).await?;
+        commit(&db, 0, vec![event(json!({}))]).await?;
+        let elapsed = std::sync::Arc::new(AtomicU64::new(0));
+        // Register on every connection. A real SQLite trigger advances the injected clock
+        // during persistence, after pure calculation has completed. No wall-clock sleeps.
+        let mut connections = Vec::new();
+        for _ in 0..4 {
+            let mut connection = db.pool().acquire().await?;
+            let elapsed = elapsed.clone();
+            connection
+                .lock_handle()
+                .await?
+                .create_collation("exhaust_budget", move |a, b| {
+                    elapsed.store(1_000, Ordering::SeqCst);
+                    a.cmp(b)
+                })?;
+            connections.push(connection);
+        }
+        drop(connections);
+        sqlx::raw_sql(&format!("CREATE TRIGGER exhaust_budget AFTER INSERT ON {table} BEGIN SELECT 'a' COLLATE exhaust_budget = 'b'; END;"))
+            .execute(db.pool()).await?;
+        let result = db
+            .reconcile(request(1), &DatabaseClock(elapsed.clone()))
+            .await;
+        assert_eq!(
+            elapsed.load(Ordering::SeqCst),
+            1_000,
+            "clock trigger did not execute at {table}"
+        );
+        assert!(
+            matches!(result, Err(PlanningError::TimeBudgetExceeded)),
+            "expired during {table}: {result:?}"
+        );
+        db.close().await;
+        let db = Storage::open(&path).await?;
+        for affected in [
+            "occurrences",
+            "logical_deliveries",
+            "delivery_jobs",
+            "planning_watermarks",
+        ] {
+            assert_eq!(
+                count(&db, affected).await?,
+                0,
+                "partial {affected} after expiry at {table}"
+            );
+        }
+        assert_eq!(count(&db, "source_changes").await?, 1);
+        db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_job_timezone_context_is_independent_of_other_outputs_and_window_movement() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    sqlx::raw_sql("INSERT INTO outputs(id,kind) VALUES ('p','bark'); INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','p');")
+        .execute(db.pool()).await?;
+    commit(
+        &db,
+        0,
+        vec![event(
+            json!({"start":{"kind":"floating","local":"2026-11-02T09:00:00"}}),
+        )],
+    )
+    .await?;
+    let mut other = request(1);
+    other.output_id = "p".into();
+    let clock = FakeClock::fixed();
+    db.reconcile(request(1), &clock).await?;
+    db.reconcile(other.clone(), &clock).await?;
+    // Ordinary time passing must preserve valid pending reminders for scheduler catch-up.
+    clock.utc.store(START + 3_600_000, Ordering::SeqCst);
+    db.reconcile(other.clone(), &clock).await?;
+    assert_eq!(jobs(&db).await?.len(), 2);
+    // Another output refreshes the shared occurrence in the new timezone first.
+    clock.utc.store(NOW, Ordering::SeqCst);
+    sqlx::query("UPDATE calendars SET timezone_policy='{\"tzid\":\"UTC\"}' WHERE id='c'")
+        .execute(db.pool())
+        .await?;
+    db.reconcile(request(1), &clock).await?;
+    clock.utc.store(NOW + 12 * 3_600_000, Ordering::SeqCst);
+    db.reconcile(other, &clock).await?;
+    let state:String=sqlx::query_scalar("SELECT j.state FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id WHERE l.output_id='p'")
+        .fetch_one(db.pool()).await?;
+    assert_eq!(state, "cancelled");
     db.close().await;
     Ok(())
 }

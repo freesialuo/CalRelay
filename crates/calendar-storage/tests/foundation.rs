@@ -89,7 +89,7 @@ async fn migrations_are_repeatable_and_committed_data_survives_reopen() -> Resul
             sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success=1")
                 .fetch_one(db.pool())
                 .await?;
-        assert_eq!(migrations, 2);
+        assert_eq!(migrations, 3);
         let health: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(db.pool())
             .await?;
@@ -242,7 +242,8 @@ async fn invalid_paths_and_corrupt_files_are_reported_without_replacement() -> R
 }
 
 #[tokio::test]
-async fn upgrades_v1_database_to_v2_preserving_history_and_enforcing_planning_schema() -> Result {
+async fn upgrades_v1_database_to_latest_preserving_history_and_enforcing_planning_schema() -> Result
+{
     let dir = tempdir()?;
     let ref_path = dir.path().join("ref.sqlite");
     let ref_db = Storage::open(&ref_path).await?;
@@ -338,7 +339,7 @@ async fn upgrades_v1_database_to_v2_preserving_history_and_enforcing_planning_sc
     )
     .fetch_all(db.pool())
     .await?;
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
     let event_row: (String, i64, String) =
         sqlx::query_as("SELECT external_uid, revision, content_hash FROM events WHERE id = 'e1'")
             .fetch_one(db.pool())
@@ -358,5 +359,68 @@ async fn upgrades_v1_database_to_v2_preserving_history_and_enforcing_planning_sc
     )
     .await;
     db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn upgrades_v2_jobs_to_nullable_planning_context_without_losing_history() -> Result {
+    let dir = tempdir()?;
+    let historical = tempdir()?;
+    std::fs::write(
+        historical.path().join("0001_event_core.sql"),
+        include_str!("../migrations/0001_event_core.sql"),
+    )?;
+    std::fs::write(
+        historical.path().join("0002_reminder_planning.sql"),
+        include_str!("../migrations/0002_reminder_planning.sql"),
+    )?;
+    let path = dir.path().join("v2.sqlite");
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true),
+    )
+    .await?;
+    sqlx::migrate::Migrator::new(historical.path())
+        .await?
+        .run(&mut conn)
+        .await?;
+    sqlx::raw_sql(
+        "INSERT INTO sources(id,kind) VALUES ('s','ics');
+         INSERT INTO calendars(id,source_id,external_id) VALUES ('c','s','main');
+         INSERT INTO events(id,source_id,calendar_id,external_uid,revision,document_json,content_hash)
+           VALUES ('e','s','c','a',1,'{}','h');
+         INSERT INTO reminder_rules(id) VALUES ('r');
+         INSERT INTO outputs(id,kind) VALUES ('o','bark');
+         INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o');
+         INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id,accepted_at)
+           VALUES ('l','e','single','r','o',123);
+         INSERT INTO delivery_jobs(id,logical_delivery_id,generation,event_revision,rule_revision,output_revision,due_at,state,next_attempt_at)
+           VALUES ('j','l',1,1,1,1,100,'accepted',100);"
+    ).execute(&mut conn).await?;
+    conn.close().await?;
+    for _ in 0..2 {
+        let db = Storage::open(&path).await?;
+        let row:(String,String,Option<String>,i64)=sqlx::query_as(
+            "SELECT j.id,j.state,j.planning_context,l.accepted_at FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id"
+        ).fetch_one(db.pool()).await?;
+        assert_eq!(row, ("j".into(), "accepted".into(), None, 123));
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(db.pool())
+                .await?;
+        assert_eq!(versions, vec![1, 2, 3]);
+        rejected(
+            &db,
+            "UPDATE delivery_jobs SET planning_context='invalid json' WHERE id='j'",
+            "275",
+        )
+        .await;
+        assert!(sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(db.pool())
+            .await?
+            .is_empty());
+        db.close().await;
+    }
     Ok(())
 }

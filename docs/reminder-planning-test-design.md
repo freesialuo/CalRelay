@@ -85,6 +85,17 @@ Review 回归：`ac4_terminal_jobs_are_not_reissued_without_a_planning_change` �
 并保留旧格式 scope_id。两项在修复前均出现行为断言失败；修复后通过。
 水位 upsert 使用 `(source_id, rule_id, output_id)` 唯一键，新 scope_id 使用不透明随机 ID，不修改历史迁移。
 
+PR #52 第一轮远端 review 的两项 P2 均先复现，再修复：
+
+- `ac2_timezone_changes_cancel_jobs_that_leave_either_window_edge` 覆盖时区变更移出窗口左右端；
+  每个任务记录解释时区与 tzdata 版本，避免另一输出更新共享实例后掩盖旧任务。
+  `0003` 增加可空 `planning_context`；旧任务在重新核验后补齐，无上下文且不在当前结果中的活动任务保守取消。
+  `0002 -> 0003` 真实升级/重开保留任务、accepted 历史及旧迁移 checksum。
+- `ac2_budget_expiring_during_sql_writes_rolls_back_even_the_watermark` 通过 SQLite trigger + 自定义 collation
+  在实例、逻辑提醒、任务及水位写入时推进假单调时钟；修复前出现 `Ok(())`，修复后返回超时且所有规划写入回滚。
+  预算从仓储 reconcile 入口开始，在读取、循环、写入及 commit 前检查；SQL 单次调用和 commit 本身不被抢占，
+  因此这是协作式截止检查，不宣称严格实时超时。候选展开原有数量/步数限制保持不变。
+
 ## 待确认的设计取值
 
 - 采用既有建议：未来 30 天、每 5 分钟延展、最大提前量 7 天、全天本地 09:00；作为可配置默认值。
@@ -98,4 +109,5 @@ Review 回归：`ac4_terminal_jobs_are_not_reissued_without_a_planning_change` �
 
 - [SQLx 0.8.6 Transaction](https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html)：未提交事务的 drop 回滚；不能替代进程终止恢复测试。
 - [SQLx 0.8.6 SQLite options](https://docs.rs/sqlx/0.8.6/sqlx/sqlite/struct.SqliteConnectOptions.html)：复用仓库 WAL、外键及 busy timeout 配置。
+- [SQLx 0.8.6 LockedSqliteHandle](https://docs.rs/sqlx/0.8.6/sqlx/sqlite/struct.LockedSqliteHandle.html)：通过 Context7 查阅 `lock_handle` / `create_collation`，并核对本地固定版本源码，用于确定性注入数据库阶段的时钟变化。
 - [验证工具选择](verification-toolkit.md)、[V-Model / TDD](development-method.md)：按风险选择测试并保留真实证据。
