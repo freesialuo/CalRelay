@@ -29,6 +29,8 @@
 
 [#45](https://github.com/freesialuo/CalRelay/issues/45) 为已合并 #42 引入局部 Kani 证明与故障注入检查，范围和执行见 [形式验证](formal-verification.md)。
 
+#18 的 ICS 候选评估见 [解析库评估](ics-parser-evaluation.md)：选择 `ical 0.11.0` 作为后续 #25 的低层解析候选，尚未实现生产接入器。
+
 ## 决策基线
 
 | 编号 | 决策 | 原因与代价 |

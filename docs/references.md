@@ -60,7 +60,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 
 ## 选型前需要补齐的验证
 
-- 通过 Context7 或 Exa 检索候选 Rust ICS/重复/时区库的官方文档和公共测试代码，逐项核对能力；当前不指定未经验证的库。
+- ICS、重复与时区的已验证档位见 [领域能力](domain-capabilities.md)；ICS #18 的固定版本、官方文档/源码、Context7 检索限制及选型依据见 [解析库评估](ics-parser-evaluation.md)。后续新增能力继续逐项验证。
 - Turnstile 站点、Access 管理员策略、域名、Tunnel 与宿主机监督按实际部署环境补齐。
 - Bark 版本差异、响应字段、限流、自托管端点及客户端通知权限需要实机联调。
 - 每次重大依赖升级核对迁移、时区与日历语义变化；本文件保留稳定官方链接以便持续复查。
