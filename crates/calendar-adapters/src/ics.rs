@@ -1272,22 +1272,11 @@ fn normalize_events(
             });
         }
 
-        let mut max_sequence = master.sequence;
-        let mut max_last_modified = master.last_modified.clone();
         let mut exceptions: Vec<RecurrenceException> = Vec::with_capacity(ex_list.len());
         let mut cancelled_probes: Vec<EventV1> = Vec::new();
 
         for ex in ex_list {
             budget.step()?;
-            if let Some(seq) = ex.sequence {
-                max_sequence = Some(max_sequence.map_or(seq, |cur| cur.max(seq)));
-            }
-            if let Some(lm) = &ex.last_modified {
-                match &max_last_modified {
-                    Some(cur) if cur >= lm => {}
-                    _ => max_last_modified = Some(lm.clone()),
-                }
-            }
             let (recurrence_id, range) = ex.recurrence_id.expect("checked is_some");
             let change = if ex.status == Some(Status::Cancelled) {
                 cancelled_probes.push(EventV1 {
@@ -1413,8 +1402,8 @@ fn normalize_events(
             attendees: master.attendees,
             alarms: master.alarms,
             attachments: master.attachments,
-            source_sequence: max_sequence,
-            source_modified_at: max_last_modified,
+            source_sequence: master.sequence,
+            source_modified_at: master.last_modified,
             timezones: None,
             extensions: master.extensions,
         };

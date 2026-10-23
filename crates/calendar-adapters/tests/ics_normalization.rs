@@ -437,7 +437,7 @@ fn ac1_golden_recurrence_exceptions_and_cancellations_preserve_recurrence_id_and
             attendees: None,
             alarms: None,
             attachments: None,
-            source_sequence: Some(3),
+            source_sequence: None,
             source_modified_at: None,
             timezones: None,
             extensions: None,
@@ -649,6 +649,54 @@ END:VCALENDAR\r\n";
         normalize_ics(bad_uid_escape, &IcsLimits::default()),
         Err(IcsError::Malformed { .. })
     ));
+
+    // PR #54 review round 2 regression: removing a detached exception with a higher SEQUENCE
+    // must not decrease the normalized event's `source_sequence` (which tracks the master VEVENT).
+    let snap_with_high_ex_seq = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+PRODID:-//CalRelay//Issue 25 Master Sequence//EN\r\n\
+BEGIN:VEVENT\r\n\
+UID:seq-series@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+SEQUENCE:1\r\n\
+DTSTART:20261102T170000Z\r\n\
+DURATION:PT1H\r\n\
+RRULE:FREQ=DAILY;COUNT=3\r\n\
+SUMMARY:Master at seq 1\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+UID:seq-series@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+RECURRENCE-ID:20261103T170000Z\r\n\
+SEQUENCE:5\r\n\
+DTSTART:20261103T180000Z\r\n\
+DURATION:PT1H\r\n\
+SUMMARY:Override at seq 5\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+    let snap_after_ex_removed = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+PRODID:-//CalRelay//Issue 25 Master Sequence//EN\r\n\
+BEGIN:VEVENT\r\n\
+UID:seq-series@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+SEQUENCE:1\r\n\
+DTSTART:20261102T170000Z\r\n\
+DURATION:PT1H\r\n\
+RRULE:FREQ=DAILY;COUNT=3\r\n\
+SUMMARY:Master at seq 1\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+    let before_removal =
+        normalize_ics(snap_with_high_ex_seq, &IcsLimits::default()).expect("snap 1 normalizes");
+    let after_removal =
+        normalize_ics(snap_after_ex_removed, &IcsLimits::default()).expect("snap 2 normalizes");
+    assert_eq!(before_removal.events[0].source_sequence, Some(1));
+    assert_eq!(after_removal.events[0].source_sequence, Some(1));
 }
 
 #[test]
