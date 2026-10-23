@@ -618,3 +618,28 @@ async fn sync_plan_deliver_and_replan_keep_real_logical_dedup() -> Result {
     db.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn repeated_prepare_after_cancellation_must_not_erase_inflight_outcome() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    let time = Time::at(1000);
+    let p = policy();
+    let lease = db.claim("a", &p, &time).await?.unwrap();
+    db.prepare(&lease, &p, &time).await?.unwrap();
+    sqlx::query("UPDATE delivery_jobs SET state='cancelled'")
+        .execute(db.pool())
+        .await?;
+    assert!(matches!(
+        db.prepare(&lease, &p, &time).await,
+        Err(DeliveryError::StaleLease)
+    ));
+    db.finish(&lease, Outcome::Accepted, &p, &time).await?;
+    assert_eq!(
+        history(&db).await?,
+        vec![(1, Some("accepted".into()), Some("cancelled".into()))]
+    );
+    db.close().await;
+    Ok(())
+}

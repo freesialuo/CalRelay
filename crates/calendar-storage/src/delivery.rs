@@ -352,6 +352,13 @@ impl DeliveryRepository for Storage {
         if !job.owned(lease, now) {
             return Err(DeliveryError::StaleLease);
         }
+        // A second prepare must never relabel an already dispatched attempt as not_sent,
+        // even when cancellation or a planning change happened since the first prepare.
+        let unprepared: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_attempts WHERE lease_token=? AND sent_at IS NULL AND finished_at IS NULL)")
+            .bind(&lease.token).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if !unprepared {
+            return Err(DeliveryError::StaleLease);
+        }
         let valid = job.eligibility(policy, now)?;
         if job.state != "leased"
             || valid != Some("ready")
