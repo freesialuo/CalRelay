@@ -28,7 +28,7 @@ zoned 值解析遵循 RFC 5545：歧义时间取第一次出现，不存在的�
 | 能力 | 当前结论 |
 | --- | --- |
 | 时区数据库 | 锁定 `chrono = "=0.4.45"`、`chrono-tz = "=0.10.4"`（编译期嵌入 IANA 数据，公开 `TZDB_VERSION = "2025b"`）。覆盖南北半球与午夜 DST 间隙/重叠、30/45 分钟偏移及 30 分钟 DST 跳变、跨日/跨月/闰日/整日国际日期变更线跳变与同名 `VTIMEZONE` 冲突；数据库更新需重规划未来实例（见 [event-model.md](event-model.md)）。 |
-| ICS 解析 | 未选型，不在本 Issue 范围；由 [#18](https://github.com/freesialuo/CalRelay/issues/18) 依据 [event-model.md](event-model.md) 的黄金样例清单评估。 |
+| ICS 解析 | [#18 评估](ics-parser-evaluation.md) 固定 `ical 0.11.0` 与 `icalendar 0.17.6`，选择 `ical` 为后续接入器的低层解析候选；七项黄金测试覆盖四类时间、文本、重复与时区数据保留，并记录另一候选的 TEXT 解码损失。当前仅开发依赖和评估代码，生产归一化由 #25 实现。 |
 | RRULE 展开 | 评估候选 `rrule = 0.14.0`（`fmeringdal/rust-rrule`）后，选定由 `calendar-domain::recurrence` 基于已锁定 `chrono 0.4.45` / `chrono-tz 0.10.4` 实现受限日历坐标展开，不引入 `rrule` 外部依赖。输入边界 `validate_event` 保持原有语法级最小拒绝，不扩大校验能力声明；展开入口 `expand_occurrences` 仅执行已验证档位，显式拒绝未验证规则与超预算展开。 |
 | 自定义 VTIMEZONE | 仅保存与非空存在性校验，不解释其规则；规划/实例解析遇到来源 `VTIMEZONE`（含同名 IANA 冲突）显式返回 `UnsupportedTimezone`。 |
 
