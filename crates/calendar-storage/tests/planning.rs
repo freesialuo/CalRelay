@@ -1,0 +1,744 @@
+//! Issue #23 acceptance tests; production planner deliberately not implemented here.
+//!
+//! Proposed application API: `ReminderPlanner::reconcile(request, &clock)` on Storage.
+//! Clock supplies UTC Unix milliseconds and an independent monotonic millisecond counter.
+//! Request identifies a persisted rule/output and expected source/rule/output revisions.
+//! Limits apply to the entire reconciliation, not separately to each event.
+//! Missing production imports are an integration blocker, NOT a behavioral TDD Red.
+//! References: docs/event-model.md, docs/architecture.md and Context7-retrieved
+//! https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html (rollback boundaries).
+
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+use calendar_application::{
+    Clock, EventRepository, EventV1, PlanningError, PlanningLimits, PlanningRequest,
+    ReminderPlanner, SyncBatch, SyncMode, SyncRecord,
+};
+use calendar_storage::Storage;
+use serde_json::{json, Value};
+use tempfile::tempdir;
+
+type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+const NOW: i64 = 1_793_577_600_000; // 2026-11-02T00:00:00Z
+const START: i64 = 1_793_638_800_000; // 2026-11-02T17:00:00Z
+const DUE: i64 = 1_793_637_900_000; // 2026-11-02T16:45:00Z
+const DAY: i64 = 86_400_000;
+
+struct FakeClock {
+    utc: AtomicI64,
+    monotonic: AtomicU64,
+    step: u64,
+}
+
+impl FakeClock {
+    fn fixed() -> Self {
+        Self {
+            utc: AtomicI64::new(NOW),
+            monotonic: AtomicU64::new(0),
+            step: 0,
+        }
+    }
+}
+
+impl Clock for FakeClock {
+    fn utc_now_ms(&self) -> i64 {
+        self.utc.load(Ordering::SeqCst)
+    }
+
+    fn monotonic_now_ms(&self) -> u64 {
+        self.monotonic.fetch_add(self.step, Ordering::SeqCst)
+    }
+}
+
+fn request(revision: i64) -> PlanningRequest {
+    PlanningRequest {
+        source_id: "s".into(),
+        base_revision: revision,
+        rule_id: "r".into(),
+        rule_generation: 1,
+        output_id: "o".into(),
+        output_generation: 1,
+        horizon_ms: 30 * DAY,
+        max_lead_ms: 7 * DAY,
+        extension_interval_ms: 300_000,
+        tzdata_version: "2025b".into(),
+        limits: PlanningLimits {
+            max_occurrences: 100,
+            max_iterations: 1_000,
+            max_elapsed_ms: 1_000,
+        },
+    }
+}
+
+fn event(extra: Value) -> EventV1 {
+    let mut document = json!({
+        "schema_version": "1.0", "external_uid": "a", "title": "Review",
+        "status": "confirmed", "duration": "PT1H",
+        "start": {"kind": "utc", "value": "2026-11-02T17:00:00Z"}
+    });
+    for (key, value) in extra.as_object().expect("fixture object") {
+        document[key] = value.clone();
+    }
+    serde_json::from_value(document).expect("valid EventV1 fixture")
+}
+
+async fn seed(db: &Storage) -> Result {
+    // Configuration schema follows the target tables in docs/event-model.md.
+    // Reconciliation reads persisted policy; it must not trust a caller-supplied event list.
+    sqlx::raw_sql(
+        "INSERT INTO sources(id,kind) VALUES ('s','ics'),('t','ics');
+         INSERT INTO calendars(id,source_id,external_id,timezone_policy)
+           VALUES ('c','s','main','{\"tzid\":\"America/Vancouver\"}'),
+                  ('d','t','main','{\"tzid\":\"America/Vancouver\"}');
+         INSERT INTO reminder_rules(id,policy_json,generation,enabled)
+           VALUES ('r','{\"calendar_ids\":[\"c\",\"d\"],\"lead_ms\":900000,\"all_day_time\":\"09:00\"}',1,1);
+         INSERT INTO outputs(id,kind,config_json,generation,enabled)
+           VALUES ('o','bark','{}',1,1);
+         INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o');",
+    )
+    .execute(db.pool())
+    .await?;
+    Ok(())
+}
+
+async fn commit(db: &Storage, base: i64, events: Vec<EventV1>) -> Result {
+    db.commit_sync(SyncBatch {
+        source_id: "s".into(),
+        base_revision: base,
+        mode: SyncMode::Delta,
+        records: events
+            .into_iter()
+            .map(|event| SyncRecord::Upsert {
+                calendar_id: "c".into(),
+                event: Box::new(event),
+            })
+            .collect(),
+        proposed_checkpoint: Some(format!("revision-{}", base + 1)),
+        verified_at: NOW,
+    })
+    .await?;
+    Ok(())
+}
+
+// Include identity and revisions: a count-only assertion could miss identity replacement.
+type Job = (String, String, String, String, i64, i64, i64, String);
+async fn jobs(db: &Storage) -> Result<Vec<Job>> {
+    Ok(sqlx::query_as(
+        "SELECT e.source_id,l.original_key,l.rule_id,l.output_id,
+                j.generation,j.event_revision,j.due_at,j.state
+         FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id
+         JOIN events e ON e.id=l.event_id
+         WHERE j.state IN ('pending','retry_wait','leased')
+         ORDER BY e.source_id,e.external_uid,l.original_key,l.rule_id,l.output_id,j.generation",
+    )
+    .fetch_all(db.pool())
+    .await?)
+}
+
+async fn count(db: &Storage, table: &str) -> Result<i64> {
+    // table names come only from constants in this test file.
+    Ok(sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+        .fetch_one(db.pool())
+        .await?)
+}
+
+type Watermark = (i64, i64, i64, String);
+async fn watermark(db: &Storage) -> Result<Watermark> {
+    Ok(sqlx::query_as(
+        "SELECT source_revision,rule_revision,planned_until,tzdata_version
+         FROM planning_watermarks",
+    )
+    .fetch_one(db.pool())
+    .await?)
+}
+
+#[tokio::test]
+async fn ac1_utc_single_event_has_exact_identity_span_and_due_time() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    assert_eq!(
+        jobs(&db).await?,
+        vec![(
+            "s".into(),
+            "single".into(),
+            "r".into(),
+            "o".into(),
+            1,
+            1,
+            DUE,
+            "pending".into()
+        )]
+    );
+    let span: (String, i64, i64) =
+        sqlx::query_as("SELECT original_key,start_utc,end_utc FROM occurrences")
+            .fetch_one(db.pool())
+            .await?;
+    assert_eq!(span, ("single".into(), START, START + 3_600_000));
+    assert_eq!(
+        watermark(&db).await?,
+        (1, 1, NOW + 30 * DAY, "2025b".into())
+    );
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac1_all_day_and_floating_use_calendar_timezone() -> Result {
+    for (extra, expected_due) in [
+        (
+            json!({"start":{"kind":"date","date":"2026-11-02"},"duration":"P1D"}),
+            START,
+        ),
+        (
+            json!({"start":{"kind":"floating","local":"2026-11-02T09:00:00"}}),
+            DUE,
+        ),
+    ] {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        commit(&db, 0, vec![event(extra)]).await?;
+        db.reconcile(request(1), &FakeClock::fixed()).await?;
+        let actual = jobs(&db).await?;
+        assert_eq!(actual.len(), 1);
+        assert_eq!(
+            (actual[0].1.as_str(), actual[0].6),
+            ("single", expected_due)
+        );
+        db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac1_recurrence_exclusion_reschedule_and_cancellation_keep_original_keys() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({
+        "recurrence":{"rrule":"FREQ=DAILY;COUNT=4",
+            "exdates":[{"kind":"utc","value":"2026-11-03T17:00:00Z"}],
+        "exceptions":[
+            {"recurrence_id":{"kind":"utc","value":"2026-11-04T17:00:00Z"},"range":"single","change":{"kind":"override","patch":{"start":{"kind":"utc","value":"2026-11-04T19:00:00Z"}}}},
+            {"recurrence_id":{"kind":"utc","value":"2026-11-05T17:00:00Z"},"range":"single","change":{"kind":"cancelled"}}
+        ]}
+    }))]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let actual: Vec<_> = jobs(&db).await?.into_iter().map(|j| (j.1, j.6)).collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("utc:2026-11-02T17:00:00Z".into(), DUE),
+            ("utc:2026-11-04T17:00:00Z".into(), 1_793_817_900_000),
+        ]
+    );
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac1_unsupported_recurrence_rejects_the_batch_without_partial_planning() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(
+        &db,
+        0,
+        vec![
+            event(json!({})),
+            event(json!({"external_uid":"bad","recurrence":{"rrule":"FREQ=HOURLY;COUNT=2"}})),
+        ],
+    )
+    .await?;
+    assert!(matches!(
+        db.reconcile(request(1), &FakeClock::fixed()).await,
+        Err(PlanningError::UnsupportedCapability(_))
+    ));
+    for table in [
+        "occurrences",
+        "logical_deliveries",
+        "delivery_jobs",
+        "planning_watermarks",
+    ] {
+        assert_eq!(count(&db, table).await?, 0, "partial write in {table}");
+    }
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_window_must_cover_maximum_lead_plus_extension_interval() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    let mut short = request(1);
+    short.horizon_ms = 7 * DAY + 300_000 - 1;
+    assert!(matches!(
+        db.reconcile(short, &FakeClock::fixed()).await,
+        Err(PlanningError::InvalidWindow)
+    ));
+    assert_eq!(count(&db, "planning_watermarks").await?, 0);
+    let mut exact = request(1);
+    exact.horizon_ms = 7 * DAY + 300_000;
+    db.reconcile(exact, &FakeClock::fixed()).await?;
+    assert_eq!(watermark(&db).await?.2, NOW + 7 * DAY + 300_000);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_window_is_half_open_and_does_not_lose_far_future_reminders() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    sqlx::query("UPDATE reminder_rules SET policy_json=json_set(policy_json,'$.lead_ms',0)")
+        .execute(db.pool())
+        .await?;
+    commit(&db, 0, vec![
+        event(json!({"external_uid":"left","start":{"kind":"utc","value":"2026-11-02T00:00:00Z"}})),
+        event(json!({"external_uid":"inside","start":{"kind":"utc","value":"2026-12-01T23:59:59Z"}})),
+        event(json!({"external_uid":"right","start":{"kind":"utc","value":"2026-12-02T00:00:00Z"}})),
+    ]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let due: Vec<_> = jobs(&db).await?.into_iter().map(|j| j.6).collect();
+    assert_eq!(due, vec![NOW + 30 * DAY - 1_000, NOW]); // sorted by external UID
+    db.close().await;
+
+    let db = Storage::open(dir.path().join("far")).await?;
+    seed(&db).await?;
+    sqlx::query("UPDATE reminder_rules SET policy_json=json_set(policy_json,'$.lead_ms',?)")
+        .bind(7 * DAY)
+        .execute(db.pool())
+        .await?;
+    commit(
+        &db,
+        0,
+        vec![event(
+            json!({"start":{"kind":"utc","value":"2026-12-01T23:59:00Z"}}),
+        )],
+    )
+    .await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    assert_eq!(jobs(&db).await?[0].6, 1_795_564_740_000);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_occurrence_limit_is_global_and_exact_boundary_succeeds() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(
+        &db,
+        0,
+        vec![event(json!({})), event(json!({"external_uid":"b"}))],
+    )
+    .await?;
+    let mut limited = request(1);
+    limited.limits.max_occurrences = 1;
+    assert!(matches!(
+        db.reconcile(limited, &FakeClock::fixed()).await,
+        Err(PlanningError::OccurrenceLimitExceeded)
+    ));
+    assert_eq!(count(&db, "delivery_jobs").await?, 0);
+    assert_eq!(count(&db, "planning_watermarks").await?, 0);
+    let mut exact = request(1);
+    exact.limits.max_occurrences = 2;
+    db.reconcile(exact, &FakeClock::fixed()).await?;
+    assert_eq!(jobs(&db).await?.len(), 2);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_elapsed_budget_uses_monotonic_clock_without_sleeping() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    let clock = FakeClock {
+        step: 1_000,
+        ..FakeClock::fixed()
+    };
+    assert!(matches!(
+        db.reconcile(request(1), &clock).await,
+        Err(PlanningError::TimeBudgetExceeded)
+    ));
+    assert_eq!(count(&db, "delivery_jobs").await?, 0);
+    assert_eq!(count(&db, "planning_watermarks").await?, 0);
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    assert_eq!(jobs(&db).await?.len(), 1);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_timezone_change_replans_floating_without_changing_identity() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(
+        &db,
+        0,
+        vec![event(
+            json!({"start":{"kind":"floating","local":"2026-11-02T09:00:00"}}),
+        )],
+    )
+    .await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    assert_eq!(jobs(&db).await?[0].6, DUE);
+    sqlx::query(
+        "UPDATE calendars SET timezone_policy='{\"tzid\":\"America/New_York\"}' WHERE id='c'",
+    )
+    .execute(db.pool())
+    .await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let actual = jobs(&db).await?;
+    assert_eq!(actual.len(), 1);
+    assert_eq!(
+        (actual[0].1.as_str(), actual[0].4, actual[0].6),
+        ("single", 2, DUE - 3 * 3_600_000)
+    );
+    assert_eq!(count(&db, "logical_deliveries").await?, 1);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_rescheduling_supersedes_old_generation_and_preserves_logical_identity() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let logical_id: String = sqlx::query_scalar("SELECT id FROM logical_deliveries")
+        .fetch_one(db.pool())
+        .await?;
+    commit(
+        &db,
+        1,
+        vec![event(
+            json!({"start":{"kind":"utc","value":"2026-11-02T18:00:00Z"}}),
+        )],
+    )
+    .await?;
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    assert_eq!(
+        jobs(&db).await?,
+        vec![(
+            "s".into(),
+            "single".into(),
+            "r".into(),
+            "o".into(),
+            2,
+            2,
+            DUE + 3_600_000,
+            "pending".into()
+        )]
+    );
+    let unchanged_id: String = sqlx::query_scalar("SELECT id FROM logical_deliveries")
+        .fetch_one(db.pool())
+        .await?;
+    assert_eq!(unchanged_id, logical_id);
+    let old: String = sqlx::query_scalar("SELECT state FROM delivery_jobs WHERE generation=1")
+        .fetch_one(db.pool())
+        .await?;
+    assert_eq!(old, "superseded");
+    assert_eq!(watermark(&db).await?.0, 2);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_cancellation_invalidates_pending_jobs() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    commit(&db, 1, vec![event(json!({"status":"cancelled"}))]).await?;
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    assert!(jobs(&db).await?.is_empty());
+    let state: String = sqlx::query_scalar("SELECT state FROM delivery_jobs")
+        .fetch_one(db.pool())
+        .await?;
+    assert_eq!(state, "cancelled");
+    assert_eq!(watermark(&db).await?.0, 2);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_stale_source_revision_cannot_publish_or_advance_watermark() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    commit(&db, 1, vec![event(json!({"title":"updated"}))]).await?;
+    assert!(matches!(
+        db.reconcile(request(1), &FakeClock::fixed()).await,
+        Err(PlanningError::Conflict)
+    ));
+    assert_eq!(count(&db, "delivery_jobs").await?, 0);
+    assert_eq!(count(&db, "planning_watermarks").await?, 0);
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    assert_eq!(watermark(&db).await?.0, 2);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_write_failures_roll_back_occurrences_jobs_and_watermark_together() -> Result {
+    // Reject each write boundary through SQLite itself, rather than mocking transaction success.
+    for table in [
+        "occurrences",
+        "logical_deliveries",
+        "delivery_jobs",
+        "planning_watermarks",
+    ] {
+        let dir = tempdir()?;
+        let path = dir.path().join("db");
+        let db = Storage::open(&path).await?;
+        seed(&db).await?;
+        commit(&db, 0, vec![event(json!({}))]).await?;
+        sqlx::raw_sql(&format!("CREATE TRIGGER fail_plan BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected planning failure'); END;")).execute(db.pool()).await?;
+        assert!(matches!(
+            db.reconcile(request(1), &FakeClock::fixed()).await,
+            Err(PlanningError::Database(_))
+        ));
+        db.close().await;
+        let db = Storage::open(&path).await?;
+        for affected in [
+            "occurrences",
+            "logical_deliveries",
+            "delivery_jobs",
+            "planning_watermarks",
+        ] {
+            assert_eq!(
+                count(&db, affected).await?,
+                0,
+                "failure at {table}: partial {affected}"
+            );
+        }
+        let source: (i64, String) =
+            sqlx::query_as("SELECT revision,committed_checkpoint FROM sources WHERE id='s'")
+                .fetch_one(db.pool())
+                .await?;
+        assert_eq!(source, (1, "revision-1".into()));
+        assert_eq!(count(&db, "source_changes").await?, 1);
+        sqlx::raw_sql("DROP TRIGGER fail_plan")
+            .execute(db.pool())
+            .await?;
+        db.reconcile(request(1), &FakeClock::fixed()).await?;
+        assert_eq!(jobs(&db).await?.len(), 1);
+        db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac4_reopen_before_planning_and_replay_after_commit_are_idempotent() -> Result {
+    let dir = tempdir()?;
+    let path = dir.path().join("db");
+    let db = Storage::open(&path).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    db.close().await;
+    let db = Storage::open(&path).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let expected = jobs(&db).await?;
+    assert_eq!(expected.len(), 1);
+    db.close().await;
+    let db = Storage::open(&path).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    commit(&db, 1, vec![event(json!({}))]).await?; // new source CAS, same event content
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    assert_eq!(jobs(&db).await?, expected);
+    assert_eq!(count(&db, "logical_deliveries").await?, 1);
+    assert_eq!(count(&db, "delivery_jobs").await?, 1);
+    assert_eq!(watermark(&db).await?.0, 2);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac4_accepted_identity_is_not_reissued_after_rescheduling_and_reopen() -> Result {
+    let dir = tempdir()?;
+    let path = dir.path().join("db");
+    let db = Storage::open(&path).await?;
+    seed(&db).await?;
+    commit(
+        &db,
+        0,
+        vec![event(json!({})), event(json!({"external_uid":"b"}))],
+    )
+    .await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    // Accepted state is a fixture for #23; delivery/attempt processing belongs to #24.
+    let accepted_id: String = sqlx::query_scalar("SELECT l.id FROM logical_deliveries l JOIN events e ON e.id=l.event_id WHERE e.external_uid='a'").fetch_one(db.pool()).await?;
+    let mut tx = db.pool().begin().await?;
+    sqlx::query("UPDATE logical_deliveries SET accepted_at=? WHERE id=?")
+        .bind(NOW)
+        .bind(&accepted_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE delivery_jobs SET state='accepted' WHERE logical_delivery_id=?")
+        .bind(&accepted_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    commit(
+        &db,
+        1,
+        vec![event(
+            json!({"start":{"kind":"utc","value":"2026-11-02T18:00:00Z"}}),
+        )],
+    )
+    .await?;
+    db.close().await;
+    let db = Storage::open(&path).await?;
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    let accepted: (String, i64) =
+        sqlx::query_as("SELECT id,accepted_at FROM logical_deliveries WHERE id=?")
+            .bind(&accepted_id)
+            .fetch_one(db.pool())
+            .await?;
+    assert_eq!(accepted, (accepted_id.clone(), NOW));
+    let accepted_jobs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM delivery_jobs WHERE logical_delivery_id=?")
+            .bind(&accepted_id)
+            .fetch_one(db.pool())
+            .await?;
+    assert_eq!(
+        accepted_jobs, 1,
+        "accepted identity received a new generation"
+    );
+    let pending_uids: Vec<String> = sqlx::query_scalar("SELECT e.external_uid FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id JOIN events e ON e.id=l.event_id WHERE j.state IN ('pending','retry_wait','leased')").fetch_all(db.pool()).await?;
+    assert_eq!(pending_uids, vec!["b"]);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac4_concurrent_replay_leaves_one_consistent_plan() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    let clock = FakeClock::fixed();
+    let (a, b) = tokio::join!(
+        db.reconcile(request(1), &clock),
+        db.reconcile(request(1), &clock)
+    );
+    assert!(a.is_ok() || b.is_ok());
+    for result in [a, b] {
+        if let Err(error) = result {
+            assert!(
+                matches!(error, PlanningError::Conflict),
+                "unexpected competing result: {error}"
+            );
+        }
+    }
+    assert_eq!(count(&db, "logical_deliveries").await?, 1);
+    assert_eq!(count(&db, "delivery_jobs").await?, 1);
+    assert_eq!(jobs(&db).await?[0].6, DUE);
+    assert_eq!(
+        watermark(&db).await?,
+        (1, 1, NOW + 30 * DAY, "2025b".into())
+    );
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac2_iteration_limit_counts_excluded_and_duplicate_rdates() -> Result {
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({"recurrence":{
+        "rrule":"FREQ=DAILY;COUNT=1",
+        "rdates":[{"kind":"utc","value":"2026-11-02T17:00:00Z"},{"kind":"utc","value":"2026-11-02T17:00:00Z"}],
+        "exdates":[{"kind":"utc","value":"2026-11-02T17:00:00Z"}]
+    }}))]).await?;
+    let mut limited = request(1);
+    limited.limits.max_iterations = 2;
+    assert!(matches!(
+        db.reconcile(limited, &FakeClock::fixed()).await,
+        Err(PlanningError::IterationLimitExceeded)
+    ));
+    assert_eq!(count(&db, "planning_watermarks").await?, 0);
+    let mut exact = request(1);
+    exact.limits.max_iterations = 3;
+    db.reconcile(exact, &FakeClock::fixed()).await?;
+    assert!(jobs(&db).await?.is_empty());
+    assert_eq!(watermark(&db).await?.0, 1);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac1_missing_calendar_timezone_and_source_vtimezone_do_not_fall_back() -> Result {
+    for (extra, policy) in [
+        (
+            json!({"start":{"kind":"floating","local":"2026-11-02T09:00:00"}}),
+            "{}",
+        ),
+        (
+            json!({"start":{"kind":"zoned","local":"2026-11-02T09:00:00","tzid":"America/Vancouver"},
+            "timezones":[{"tzid":"America/Vancouver","vtimezone":"BEGIN:VTIMEZONE\r\nTZID:America/Vancouver\r\nEND:VTIMEZONE"}]}),
+            "{\"tzid\":\"America/Vancouver\"}",
+        ),
+    ] {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        sqlx::query("UPDATE calendars SET timezone_policy=? WHERE id='c'")
+            .bind(policy)
+            .execute(db.pool())
+            .await?;
+        commit(&db, 0, vec![event(extra)]).await?;
+        assert!(matches!(
+            db.reconcile(request(1), &FakeClock::fixed()).await,
+            Err(PlanningError::UnsupportedCapability(_))
+        ));
+        assert_eq!(count(&db, "delivery_jobs").await?, 0);
+        assert_eq!(count(&db, "planning_watermarks").await?, 0);
+        db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_rule_and_output_generations_are_checked_before_publishing() -> Result {
+    for table in ["reminder_rules", "outputs"] {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        commit(&db, 0, vec![event(json!({}))]).await?;
+        sqlx::query(&format!("UPDATE {table} SET generation=2"))
+            .execute(db.pool())
+            .await?;
+        assert!(matches!(
+            db.reconcile(request(1), &FakeClock::fixed()).await,
+            Err(PlanningError::Conflict)
+        ));
+        assert_eq!(count(&db, "delivery_jobs").await?, 0);
+        assert_eq!(count(&db, "planning_watermarks").await?, 0);
+        let mut current = request(1);
+        if table == "reminder_rules" {
+            current.rule_generation = 2;
+        } else {
+            current.output_generation = 2;
+        }
+        db.reconcile(current, &FakeClock::fixed()).await?;
+        assert_eq!(jobs(&db).await?.len(), 1);
+        db.close().await;
+    }
+    Ok(())
+}

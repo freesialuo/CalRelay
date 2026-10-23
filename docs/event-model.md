@@ -79,7 +79,7 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 ## 7. SQLite 逻辑表
 
-以下为完整目标模型。`calendar-storage` 的首个迁移已实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes` 的核心字段及约束；连接、类型、失败保护和验收见 [存储基础](storage-foundation.md)。其他表与凭据关联仍待后续迁移，不代表已实现。
+以下为完整目标模型。`calendar-storage` 已通过迁移实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes`（见 [存储基础](storage-foundation.md)、[来源同步](source-sync.md)）以及 `outputs`、`reminder_rules`、`rule_outputs`、`planning_watermarks`、`occurrences`、`logical_deliveries`、`delivery_jobs`（见 [提醒规划](reminder-planning-test-design.md)）。其他表与凭据关联仍待后续迁移，不代表已实现。
 
 | 表 | 关键字段与约束 |
 | --- | --- |

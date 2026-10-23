@@ -1,5 +1,6 @@
 //! SQLite persistence and atomic source synchronization for CalRelay.
 
+mod planning;
 mod sync;
 pub use sync::SyncError;
 
