@@ -88,3 +88,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 ## 测试、证明与质量工具（#49）
 
 官方文档和采用边界集中列于 [工具选择矩阵](verification-toolkit.md)。通过 Context7 `/proptest-rs/proptest` 核对抽样局限、shrinking 和失败持久化，通过 `/embarkstudios/cargo-deny` 核对依赖策略及例外；其余使用矩阵所链接的工具官方资料。本文档允许后续按需接入，不把工具目录当作运行证据。
+
+## 投递租约与恢复（#24）
+
+Context7 查询、锁定 SQLx 0.8.6 公共源码与采用边界见 [投递恢复实现参考](delivery-recovery.md#实现参考)。事务提交/回滚、busy 错误及旧版本迁移均通过真实 SQLite 集成测试核对。
