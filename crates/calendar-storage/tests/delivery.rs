@@ -643,3 +643,43 @@ async fn repeated_prepare_after_cancellation_must_not_erase_inflight_outcome() -
     db.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn ac4_backward_clock_between_claim_and_prepare_defers_until_due_or_retry_after() -> Result {
+    for retry in [false, true] {
+        let dir = tempdir()?;
+        let db = Storage::open(dir.path().join("db")).await?;
+        seed(&db).await?;
+        let time = Time::at(1000);
+        let p = policy();
+        if retry {
+            let first = db.claim("a", &p, &time).await?.unwrap();
+            db.prepare(&first, &p, &time).await?;
+            db.finish(
+                &first,
+                Outcome::Retryable {
+                    retry_after_ms: Some(500),
+                },
+                &p,
+                &time,
+            )
+            .await?;
+            time.set(1500);
+        }
+        let lease = db.claim("a", &p, &time).await?.unwrap();
+        time.set(if retry { 1200 } else { 0 });
+        assert!(
+            db.prepare(&lease, &p, &time).await?.is_none(),
+            "UTC rollback must not send before the persisted scheduling lower bound"
+        );
+        assert_eq!(state(&db).await?, "retry_wait");
+        let attempts = history(&db).await?;
+        assert_eq!(attempts.last().unwrap().1.as_deref(), Some("not_sent"));
+        assert!(db.claim("b", &p, &time).await?.is_none());
+        time.set(if retry { 1500 } else { 1000 });
+        assert!(deliver_one(&db, &FakeOutput(&db), "b", &p, &time).await?);
+        assert_eq!(state(&db).await?, "accepted");
+        db.close().await;
+    }
+    Ok(())
+}

@@ -27,6 +27,7 @@ struct Job {
     rule_revision: i64,
     output_revision: i64,
     due_at: i64,
+    next_attempt_at: i64,
     deadline_at: Option<i64>,
     lease_owner: Option<String>,
     lease_token: Option<String>,
@@ -57,7 +58,7 @@ struct Job {
     occurrence_cancelled: bool,
 }
 const JOB_SELECT: &str = "SELECT j.id,j.logical_delivery_id AS logical_id,j.state,
- j.event_revision,j.rule_revision,j.output_revision,j.due_at,j.deadline_at,j.lease_owner,j.lease_token,j.lease_until,j.planning_context,
+ j.event_revision,j.rule_revision,j.output_revision,j.due_at,j.next_attempt_at,j.deadline_at,j.lease_owner,j.lease_token,j.lease_until,j.planning_context,
  l.accepted_at,e.document_json,e.deleted_at,e.revision AS current_event,
  s.enabled AS source_enabled,s.revision AS source_revision,s.last_verified_at,
  r.enabled AS rule_enabled,r.generation AS current_rule,o.enabled AS output_enabled,o.generation AS current_output,
@@ -362,6 +363,8 @@ impl DeliveryRepository for Storage {
         let valid = job.eligibility(policy, now)?;
         if job.state != "leased"
             || valid != Some("ready")
+            || now < job.due_at
+            || now < job.next_attempt_at
             || now >= job.deadline_at.unwrap_or(i64::MIN)
         {
             let state = if job.state != "leased" {

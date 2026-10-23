@@ -5,7 +5,7 @@
 ## 事务与状态
 
 1. `claim` 使用 `BEGIN IMMEDIATE`，先回收最多 64 个过期租约，再扫描最多 64 个到期候选。暂停的规划/时区/陈旧来源在 SQL 中筛掉，避免挡住其他来源。领取条件 UPDATE、随机 owner/token 租约和 `delivery_attempts` 记录同事务提交。
-2. `prepare` 复核 owner/token/未过期租约、任务状态、最新 generation、事件/来源/规则/输出、日历选择、实例取消、解释时区、tzdata、规划水位与来源新鲜度。旧修订作废、取消不发送、陈旧或待规划任务暂停；截止时间等号即过期。记录 `sent_at` 与随机 `request_id`，重新延长租约后释放事务。重复 prepare 被拒绝，即使首次 prepare 后发生取消，也保留原在途结果。
+2. `prepare` 复核 owner/token/未过期租约、任务状态、最新 generation、事件/来源/规则/输出、日历选择、实例取消、解释时区、tzdata、规划水位与来源新鲜度。旧修订作废、取消不发送、陈旧或待规划任务暂停；截止时间等号即过期；在领取后的 UTC 后跳中，再次检查 due_at 与 next_attempt_at，尚未到期记 not_sent 并延期。记录 `sent_at` 与随机 `request_id`，重新延长租约后释放事务。重复 prepare 被拒绝，即使首次 prepare 后发生取消，也保留原在途结果。
 3. 事务外执行输出，Tokio 单调计时器约束请求总超时；超时分类为 `unknown`。适配器必须能被取消且不能阻塞执行器。默认请求超时 30 秒，租约 60 秒；配置强制租约长于超时，不支持无界长请求。
 4. `finish` 在短事务中再次检查 owner/token 和租约，原子写入 attempt 结果、job 状态及逻辑 `accepted_at`。过期/旧 token 回写被拒绝。取消或 superseded 的在途请求仍记录真实 outcome，不复活旧 job；真实 accepted 保留逻辑去重并作废同一逻辑身份的新任务。
 
@@ -30,10 +30,10 @@
 | AC1 | 多连接竞争只有一个 owner；错误/旧 token、重复 prepare/finish、租约到期边界拒绝 |
 | AC2 | Retry-After 下界、重试上限、截止、取消、修订变化、待规划、时区版本、65 个暂停任务不饿死 ready 任务 |
 | AC3 | 领取与 accepted 的 SQLite trigger 故障回滚；重开保持 job/attempt/accepted 一致；取消竞争和新 generation 去重 |
-| AC4 | 模拟输出期间真实 SQLite 写入；输出超时；真实子进程 prepare 后强制终止并恢复；短 busy timeout；UTC 前后跳 |
+| AC4 | 模拟输出期间真实 SQLite 写入；输出超时；真实子进程 prepare 后强制终止并恢复；短 busy timeout；UTC 前后跳（包含 claim 与 prepare 之间后跳及 Retry-After 下界） |
 | 迁移 | 合成 v1/v2/v3 → latest、v3 冲突迁移失败保留历史、重开和外键检查 |
 
-有效 Red：发送后取消再重复 prepare 曾将结果误记为 not_sent，回归先失败再修复；在原实现中测试因缺少持久化 attempt 表失败；初版扫描在 65 个暂停任务前返回空，回归在修复后通过。受控移除租约到期校验后，旧 token 回写回归产生断言失败；恢复生产实现后通过。同步→规划→模拟投递→重规划的集成验证确认真实逻辑去重。迁移与并发测试使用真实文件库；进程测试通过准备完成文件协调，10 秒仅作为测试失败上限。未运行形式证明、真实网络投递或服务进程的生命周期装配。
+有效 Red：领取后 UTC 后跳曾提前发送，回归先失败再修复；发送后取消再重复 prepare 曾将结果误记为 not_sent，回归先失败再修复；在原实现中测试因缺少持久化 attempt 表失败；初版扫描在 65 个暂停任务前返回空，回归在修复后通过。受控移除租约到期校验后，旧 token 回写回归产生断言失败；恢复生产实现后通过。同步→规划→模拟投递→重规划的集成验证确认真实逻辑去重。迁移与并发测试使用真实文件库；进程测试通过准备完成文件协调，10 秒仅作为测试失败上限。未运行形式证明、真实网络投递或服务进程的生命周期装配。
 
 运行：`cargo test -p calendar-storage --test delivery`；迁移：`cargo test -p calendar-storage --test foundation`；完整检查遵守 [贡献指南](../CONTRIBUTING.md)。
 
