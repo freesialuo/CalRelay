@@ -77,6 +77,14 @@ Issue：[持久化实例与提醒规划水位](https://github.com/freesialuo/Cal
 - Green：在 `calendar-application::plan_events` 实现纯窗口、单调时钟耗时预算、跨事件累计实例数/候选步数上限及全天/相对偏移触发计算；在 `calendar-storage` 以 `BEGIN IMMEDIATE` 事务校核 source/rule/output 版本、持久化 `occurrences`/`logical_deliveries`/`delivery_jobs`/`planning_watermarks`，保留 `original_key` 与 `accepted_at` 去重并作废旧 generation。19 项存储规划测试、3 项应用契约测试及 `0001 -> 0002` 历史升级测试全部通过。
 - 关键断言检出验证：受控移除 `accepted_at` 去重、将 `original_key` 替换为改期后时间、将水位更新移出实例/任务事务，分别触发 `ac4_accepted_identity_is_not_reissued_after_rescheduling_and_reopen`、`ac3_rescheduling_supersedes_old_generation_and_preserves_logical_identity`、`ac3_write_failures_roll_back_occurrences_jobs_and_watermark_together` 的预期断言失败；恢复后全量回归通过。
 
+## Review 回归
+
+Review 回归：`ac4_terminal_jobs_are_not_reissued_without_a_planning_change` 验证
+`failed_permanent`/`expired` 在重开、重复规划及无内容变化同步后不重建任务，实际事件变化仍可生成新 generation。
+`ac3_scope_components_with_colons_keep_separate_legacy_watermarks` 验证含冒号的不同来源/规则组合不共享水位，
+并保留旧格式 scope_id。两项在修复前均出现行为断言失败；修复后通过。
+水位 upsert 使用 `(source_id, rule_id, output_id)` 唯一键，新 scope_id 使用不透明随机 ID，不修改历史迁移。
+
 ## 待确认的设计取值
 
 - 采用既有建议：未来 30 天、每 5 分钟延展、最大提前量 7 天、全天本地 09:00；作为可配置默认值。

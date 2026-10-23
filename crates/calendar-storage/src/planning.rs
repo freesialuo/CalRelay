@@ -279,8 +279,10 @@ impl ReminderPlanner for Storage {
                 None => 1,
                 Some((_, _, _, _, _, ref state)) if state == "accepted" => continue,
                 Some((_, ev_rev, r_rev, o_rev, due, ref state))
-                    if matches!(state.as_str(), "pending" | "retry_wait" | "leased")
-                        && ev_rev == occ.event_revision
+                    if matches!(
+                        state.as_str(),
+                        "pending" | "retry_wait" | "leased" | "failed_permanent" | "expired"
+                    ) && ev_rev == occ.event_revision
                         && r_rev == request.rule_generation
                         && o_rev == request.output_generation
                         && due == occ.due_at =>
@@ -352,15 +354,12 @@ impl ReminderPlanner for Storage {
             }
         }
 
-        let scope_id = format!(
-            "{}:{}:{}",
-            request.source_id, request.rule_id, request.output_id
-        );
+        // The component tuple is the identity; preserve existing opaque scope IDs on replay.
         sqlx::query(
             "INSERT INTO planning_watermarks(
                  scope_id, source_id, rule_id, output_id, source_revision, rule_revision, output_revision, planned_until, tzdata_version, last_error
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-             ON CONFLICT(scope_id) DO UPDATE SET
+             ) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(source_id, rule_id, output_id) DO UPDATE SET
                  source_revision = excluded.source_revision,
                  rule_revision = excluded.rule_revision,
                  output_revision = excluded.output_revision,
@@ -368,7 +367,6 @@ impl ReminderPlanner for Storage {
                  tzdata_version = excluded.tzdata_version,
                  last_error = NULL",
         )
-        .bind(&scope_id)
         .bind(&request.source_id)
         .bind(&request.rule_id)
         .bind(&request.output_id)

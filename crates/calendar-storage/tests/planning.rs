@@ -742,3 +742,99 @@ async fn ac3_rule_and_output_generations_are_checked_before_publishing() -> Resu
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn ac4_terminal_jobs_are_not_reissued_without_a_planning_change() -> Result {
+    for terminal in ["failed_permanent", "expired"] {
+        let dir = tempdir()?;
+        let path = dir.path().join("db");
+        let db = Storage::open(&path).await?;
+        seed(&db).await?;
+        commit(&db, 0, vec![event(json!({}))]).await?;
+        db.reconcile(request(1), &FakeClock::fixed()).await?;
+        sqlx::query("UPDATE delivery_jobs SET state=?")
+            .bind(terminal)
+            .execute(db.pool())
+            .await?;
+        db.close().await;
+        let db = Storage::open(&path).await?;
+        db.reconcile(request(1), &FakeClock::fixed()).await?;
+        commit(&db, 1, vec![event(json!({}))]).await?;
+        db.reconcile(request(2), &FakeClock::fixed()).await?;
+        assert!(jobs(&db).await?.is_empty(), "requeued {terminal}");
+        let history: Vec<(i64, String)> =
+            sqlx::query_as("SELECT generation,state FROM delivery_jobs ORDER BY generation")
+                .fetch_all(db.pool())
+                .await?;
+        assert_eq!(history, vec![(1, terminal.into())]);
+        // A real event change may create a new generation; a replay must not reset retries.
+        commit(
+            &db,
+            2,
+            vec![event(
+                json!({"start":{"kind":"utc","value":"2026-11-02T18:00:00Z"}}),
+            )],
+        )
+        .await?;
+        db.reconcile(request(3), &FakeClock::fixed()).await?;
+        let active = jobs(&db).await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            (active[0].4, active[0].5, active[0].6),
+            (2, 2, DUE + 3_600_000)
+        );
+        db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac3_scope_components_with_colons_keep_separate_legacy_watermarks() -> Result {
+    let dir = tempdir()?;
+    let path = dir.path().join("db");
+    let db = Storage::open(&path).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    sqlx::raw_sql(
+        "INSERT INTO sources(id,kind) VALUES ('s:r','ics');
+         INSERT INTO reminder_rules(id,policy_json,generation,enabled)
+           SELECT 'r:o',policy_json,1,1 FROM reminder_rules WHERE id='r';
+         INSERT INTO reminder_rules(id,policy_json,generation,enabled)
+           SELECT 'o',policy_json,1,1 FROM reminder_rules WHERE id='r';
+         INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r:o','o'),('o','o');",
+    )
+    .execute(db.pool())
+    .await?;
+    let mut first = request(1);
+    first.rule_id = "r:o".into();
+    db.reconcile(first.clone(), &FakeClock::fixed()).await?;
+    // Existing databases can retain IDs created by the previous colon-joined format.
+    sqlx::query("UPDATE planning_watermarks SET scope_id='s:r:o:o'")
+        .execute(db.pool())
+        .await?;
+    db.close().await;
+    let db = Storage::open(&path).await?;
+    let mut second = request(0);
+    second.source_id = "s:r".into();
+    second.rule_id = "o".into();
+    db.reconcile(second.clone(), &FakeClock::fixed()).await?;
+    db.reconcile(first, &FakeClock::fixed()).await?;
+    db.reconcile(second, &FakeClock::fixed()).await?;
+    let scopes: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT source_id,rule_id,output_id,source_revision FROM planning_watermarks ORDER BY source_id"
+    ).fetch_all(db.pool()).await?;
+    assert_eq!(
+        scopes,
+        vec![
+            ("s".into(), "r:o".into(), "o".into(), 1),
+            ("s:r".into(), "o".into(), "o".into(), 0),
+        ]
+    );
+    let legacy_id: String =
+        sqlx::query_scalar("SELECT scope_id FROM planning_watermarks WHERE source_id='s'")
+            .fetch_one(db.pool())
+            .await?;
+    assert_eq!(legacy_id, "s:r:o:o");
+    db.close().await;
+    Ok(())
+}
