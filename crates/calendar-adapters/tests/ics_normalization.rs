@@ -550,6 +550,105 @@ END:VCALENDAR\r\n";
         IcsError::DomainValidation { ref errors, .. }
             if errors.iter().any(|e| e.code == Code::EndBeforeStart)
     ));
+
+    // PR #54 review regression 1: Master with DTEND and an override exception on a later date
+    // that omits both DTEND and DURATION must inherit the master's effective span rather than
+    // failing domain validation with EndBeforeStart against the master's absolute DTEND.
+    let inherited_dtend_span_ics = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+PRODID:-//CalRelay//Issue 25 Inherited DTEND Span//EN\r\n\
+BEGIN:VEVENT\r\n\
+UID:meeting\\,team\\;ops@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+DTSTART:20261102T170000Z\r\n\
+DTEND:20261102T180000Z\r\n\
+RRULE:FREQ=DAILY;COUNT=2\r\n\
+SUMMARY:Daily with DTEND\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+UID:meeting\\,team\\;ops@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+RECURRENCE-ID:20261103T170000Z\r\n\
+DTSTART:20261103T190000Z\r\n\
+SUMMARY:Rescheduled without explicit DTEND or DURATION\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+UID:allday-dtend@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+DTSTART;VALUE=DATE:20261102\r\n\
+DTEND;VALUE=DATE:20261104\r\n\
+RRULE:FREQ=DAILY;COUNT=2\r\n\
+SUMMARY:All-day two-day master\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+UID:allday-dtend@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+RECURRENCE-ID;VALUE=DATE:20261103\r\n\
+DTSTART;VALUE=DATE:20261105\r\n\
+SUMMARY:Rescheduled all-day without DTEND\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+    let inherited_norm = normalize_ics(inherited_dtend_span_ics, &IcsLimits::default())
+        .expect("override omitting DTEND/DURATION on a DTEND master normalizes");
+    assert_eq!(inherited_norm.events.len(), 2);
+    // PR #54 review regression 2: UID TEXT escapes must be decoded into external_uid.
+    assert_eq!(
+        inherited_norm.events[0].external_uid,
+        "meeting,team;ops@example.test"
+    );
+    let inherited_occs = expand_occurrences(
+        &inherited_norm.events[0],
+        &ExpansionOptions {
+            window_start,
+            window_end,
+            calendar_tzid: None,
+            max_occurrences: 10,
+            max_iterations: 10,
+        },
+    )
+    .expect("timed inherited DTEND override expands cleanly");
+    assert_eq!(inherited_occs.len(), 2);
+    assert_eq!(
+        (inherited_occs[1].end_utc - inherited_occs[1].start_utc).num_minutes(),
+        60,
+        "rescheduled exception without DTEND/DURATION preserves master 1-hour span"
+    );
+
+    let allday_occs = expand_occurrences(
+        &inherited_norm.events[1],
+        &ExpansionOptions {
+            window_start,
+            window_end,
+            calendar_tzid: Some("UTC"),
+            max_occurrences: 10,
+            max_iterations: 10,
+        },
+    )
+    .expect("all-day inherited DTEND override expands cleanly");
+    assert_eq!(allday_occs.len(), 2);
+    assert_eq!(
+        (allday_occs[1].end_utc - allday_occs[1].start_utc).num_days(),
+        2,
+        "rescheduled all-day exception without DTEND/DURATION preserves master 2-day span"
+    );
+
+    let bad_uid_escape = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+PRODID:-//CalRelay//Issue 25 Bad UID Escape//EN\r\n\
+BEGIN:VEVENT\r\n\
+UID:bad\\qescape@example.test\r\n\
+DTSTAMP:20261022T120000Z\r\n\
+DTSTART:20261102T170000Z\r\n\
+SUMMARY:Bad UID escape\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+    assert!(matches!(
+        normalize_ics(bad_uid_escape, &IcsLimits::default()),
+        Err(IcsError::Malformed { .. })
+    ));
 }
 
 #[test]

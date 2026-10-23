@@ -940,10 +940,8 @@ fn validate_vcalendar_properties(properties: &[ParsedProperty]) -> Result<(), Ic
             }
             "PRODID" => {
                 prop.check_allowed_params("VCALENDAR", None, &["VALUE", "LANGUAGE"], false)?;
-                if prodid.is_some()
-                    || prop.value.is_empty()
-                    || prop.value.len() > MAX_SHORT_STRING_LEN
-                {
+                let decoded = unescape_text(prop, &prop.value)?;
+                if prodid.is_some() || decoded.is_empty() || decoded.len() > MAX_SHORT_STRING_LEN {
                     return Err(IcsError::Malformed {
                         location: prop.location(),
                         reason: "missing, duplicate or oversized PRODID in VCALENDAR".to_owned(),
@@ -1166,14 +1164,14 @@ fn build_retained_diagnostics(retained: &[RetainedBlock]) -> Result<Vec<IcsDiagn
         let mut uid: Option<String> = None;
         for prop in &block.properties {
             if prop.name == "UID" {
-                if uid.is_some() || prop.value.is_empty() || prop.value.len() > MAX_SHORT_STRING_LEN
-                {
+                let decoded = unescape_text(prop, &prop.value)?;
+                if uid.is_some() || decoded.is_empty() || decoded.len() > MAX_SHORT_STRING_LEN {
                     return Err(IcsError::Malformed {
                         location: prop.location(),
                         reason: "invalid or duplicate UID in retained component".to_owned(),
                     });
                 }
-                uid = Some(prop.value.clone());
+                uid = Some(decoded);
             }
         }
         diagnostics.push(IcsDiagnostic {
@@ -1336,7 +1334,22 @@ fn normalize_events(
                         },
                         Some(Some(d)),
                     ),
-                    (None, None) => (None, None),
+                    (None, None) => {
+                        if let Some(ref master_end) = master.dtend {
+                            if let Some(d) = derive_inherited_duration(
+                                &master.dtstart,
+                                master_end,
+                                &ex.dtstart,
+                                timezone_defs,
+                            ) {
+                                (Some(None), Some(Some(d)))
+                            } else {
+                                (None, None)
+                            }
+                        } else {
+                            (None, None)
+                        }
+                    }
                 };
                 Change::Override {
                     patch: Box::new(EventPatch {
@@ -1453,6 +1466,116 @@ fn normalize_events(
     Ok(normalized_events)
 }
 
+fn same_temporal_family(a: &Temporal, b: &Temporal) -> bool {
+    matches!(
+        (a, b),
+        (Temporal::Date { .. }, Temporal::Date { .. })
+            | (Temporal::Floating { .. }, Temporal::Floating { .. })
+            | (
+                Temporal::Utc { .. } | Temporal::Zoned { .. },
+                Temporal::Utc { .. } | Temporal::Zoned { .. }
+            )
+    )
+}
+
+fn format_seconds_duration(secs: i64) -> String {
+    if secs <= 0 {
+        return "PT0S".to_owned();
+    }
+    let hours = secs / 3600;
+    let rem = secs % 3600;
+    let mins = rem / 60;
+    let s = rem % 60;
+    let mut out = String::from("PT");
+    if hours > 0 {
+        out.push_str(&format!("{hours}H"));
+    }
+    if mins > 0 {
+        out.push_str(&format!("{mins}M"));
+    }
+    if s > 0 {
+        out.push_str(&format!("{s}S"));
+    }
+    out
+}
+
+fn derive_inherited_duration(
+    base_start: &Temporal,
+    base_end: &Temporal,
+    ex_start: &Temporal,
+    timezone_defs: &[Timezone],
+) -> Option<String> {
+    if !same_temporal_family(base_start, base_end) || !same_temporal_family(ex_start, base_end) {
+        return None;
+    }
+    match (base_start, base_end) {
+        (Temporal::Date { date: s }, Temporal::Date { date: e }) => {
+            let s_utc = (Temporal::Utc {
+                value: format!("{s}T00:00:00Z"),
+            })
+            .to_utc()
+            .ok()??;
+            let e_utc = (Temporal::Utc {
+                value: format!("{e}T00:00:00Z"),
+            })
+            .to_utc()
+            .ok()??;
+            let days = (e_utc - s_utc).num_days();
+            (days > 0).then(|| format!("P{days}D"))
+        }
+        (Temporal::Floating { local: s }, Temporal::Floating { local: e }) => {
+            let s_utc = (Temporal::Utc {
+                value: format!("{s}Z"),
+            })
+            .to_utc()
+            .ok()??;
+            let e_utc = (Temporal::Utc {
+                value: format!("{e}Z"),
+            })
+            .to_utc()
+            .ok()??;
+            let secs = (e_utc - s_utc).num_seconds();
+            (secs >= 0).then(|| format_seconds_duration(secs))
+        }
+        _ => {
+            if let (Ok(Some(s_utc)), Ok(Some(e_utc))) = (
+                base_start.to_utc_with_timezones(timezone_defs),
+                base_end.to_utc_with_timezones(timezone_defs),
+            ) {
+                let secs = (e_utc - s_utc).num_seconds();
+                return (secs >= 0).then(|| format_seconds_duration(secs));
+            }
+            if let (
+                Temporal::Zoned {
+                    local: s,
+                    tzid: tz_a,
+                },
+                Temporal::Zoned {
+                    local: e,
+                    tzid: tz_b,
+                },
+            ) = (base_start, base_end)
+            {
+                if tz_a == tz_b {
+                    let s_utc = (Temporal::Utc {
+                        value: format!("{s}Z"),
+                    })
+                    .to_utc()
+                    .ok()??;
+                    let e_utc = (Temporal::Utc {
+                        value: format!("{e}Z"),
+                    })
+                    .to_utc()
+                    .ok()??;
+                    let secs = (e_utc - s_utc).num_seconds();
+                    return (secs >= 0).then(|| format_seconds_duration(secs));
+                }
+            }
+            None
+        }
+    }
+}
+
 fn collect_referenced_tzids(event: &EventV1) -> HashSet<String> {
     let mut set = HashSet::new();
     let mut add = |t: &Temporal| {
@@ -1502,7 +1625,7 @@ fn extract_vevent(
         .properties
         .iter()
         .find(|p| p.name == "UID")
-        .map(|p| p.value.clone());
+        .map(|p| unescape_text(p, &p.value).unwrap_or_else(|_| p.value.clone()));
 
     let mut uid: Option<String> = None;
     let mut dtstamp: Option<String> = None;
@@ -1542,14 +1665,14 @@ fn extract_vevent(
                         });
                     }
                 }
-                if uid.is_some() || prop.value.is_empty() || prop.value.len() > MAX_SHORT_STRING_LEN
-                {
+                let decoded = unescape_text(prop, &prop.value)?;
+                if uid.is_some() || decoded.is_empty() || decoded.len() > MAX_SHORT_STRING_LEN {
                     return Err(IcsError::Malformed {
                         location: prop.location(),
                         reason: "missing, duplicate or oversized UID in VEVENT".to_owned(),
                     });
                 }
-                uid = Some(prop.value.clone());
+                uid = Some(decoded);
             }
             "DTSTAMP" => {
                 prop.check_allowed_params("VEVENT", uid_ref, &["VALUE"], false)?;

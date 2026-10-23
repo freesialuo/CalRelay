@@ -16,9 +16,9 @@
 | --- | --- | --- |
 | `VCALENDAR` | 单一顶层 `VCALENDAR`、`VERSION:2.0`、`PRODID`、可选 `CALSCALE:GREGORIAN`、`METHOD:PUBLISH`、`X-*` | 缺失/重复 `VERSION` 或 `PRODID`、非 `2.0` 版本、`METHOD:REQUEST` 等 iTIP 方法、非 `GREGORIAN` 历法、多顶层日历或未知属性 |
 | 时间与跨度 | `DATE`、`UTC`、`floating`、`TZID` 绑定本地时间；`DTEND` 或 `DURATION`；`RDATE`（含 `VALUE=PERIOD` 的显式结束或独立时长）、`EXDATE` | `UTC` 或 `DATE` 附带 `TZID`、同时指定 `DTEND` 与 `DURATION`、结束早于开始、跨度类型不匹配、非法日期或时长 |
-| 重复与例外 | 单条 `RRULE`；同一文件内关联母事件的 `RECURRENCE-ID`（默认/`SINGLE`）单次覆盖（`Change::Override`）或 `STATUS:CANCELLED` 单次取消（`Change::Cancelled`）；母事件 `DTEND` 与例外 `DURATION` 互换时自动将相反继承字段置为显式 `null` | 孤立 `RECURRENCE-ID`、非重复母事件附带例外、例外 `VEVENT` 自带 `RRULE`/`RDATE`/`EXDATE`、同一 `VEVENT` 多条 `RRULE`、`RANGE=THISANDFUTURE`（映射后由 `validate_event` 返回 `Code::UnsupportedRange`） |
+| 重复与例外 | 单条 `RRULE`；同一文件内关联母事件的 `RECURRENCE-ID`（默认/`SINGLE`）单次覆盖（`Change::Override`）或 `STATUS:CANCELLED` 单次取消（`Change::Cancelled`）；母事件使用 `DTEND` 而例外省略 `DTEND`/`DURATION` 时按母事件有效跨度归一化为 `duration` 并清除继承 `end`，母事件 `DTEND` 与例外 `DURATION` 互换时同样将相反继承字段置为显式 `null` | 孤立 `RECURRENCE-ID`、非重复母事件附带例外、例外 `VEVENT` 自带 `RRULE`/`RDATE`/`EXDATE`、同一 `VEVENT` 多条 `RRULE`、`RANGE=THISANDFUTURE`（映射后由 `validate_event` 返回 `Code::UnsupportedRange`） |
 | `VTIMEZONE` | 包含至少一个 `STANDARD`/`DAYLIGHT` 子组件及 `TZID`/`DTSTART`/`TZOFFSETFROM`/`TZOFFSETTO`；按事件实际引用的 `TZID` 保存原始块到 `EventV1.timezones` | 缺失 `TZID` 或观测子组件、同一 `TZID` 定义冲突、未知子组件；规划/UTC 解析遇到非空来源 `VTIMEZONE` 仍显式返回 `Code::UnsupportedTimezone` |
-| 文本、参与者、附件与告警 | 单遍 RFC 5545 TEXT 解码（`\\`、`\n`/`\N`、`\,`、`\;`）；`SUMMARY`、`DESCRIPTION`、`LOCATION`、`URL`、`CATEGORIES`、`STATUS`、`CLASS`、`TRANSP`、`SEQUENCE`、`LAST-MODIFIED`、`ORGANIZER`、`ATTENDEE`、`ATTACH`（URI）、`VALARM`（`DISPLAY`/`AUDIO`/`EMAIL`，相对或 UTC 绝对触发）、`X-*` 扩展 | 未知反斜杠转义、尾随反斜杠、内联二进制 `ATTACH`（`ENCODING`/`VALUE=BINARY`）、`ACTION:PROCEDURE`、未知标准属性或参数 |
+| 文本、参与者、附件与告警 | 单遍 RFC 5545 TEXT 解码（`\\`、`\n`/`\N`、`\,`、`\;`）用于 `UID`、`PRODID`、`SUMMARY`、`DESCRIPTION`、`LOCATION` 与 `CATEGORIES`；支持 `URL`、`STATUS`、`CLASS`、`TRANSP`、`SEQUENCE`、`LAST-MODIFIED`、`ORGANIZER`、`ATTENDEE`、`ATTACH`（URI）、`VALARM`（`DISPLAY`/`AUDIO`/`EMAIL`，相对或 UTC 绝对触发）、`X-*` 扩展 | 未知反斜杠转义、尾随反斜杠、内联二进制 `ATTACH`（`ENCODING`/`VALUE=BINARY`）、`ACTION:PROCEDURE`、未知标准属性或参数 |
 | 非 `VEVENT` 组件 | `VTODO`、`VJOURNAL`、`VFREEBUSY` 不混入 `events`，原样保留在 `NormalizedIcs.diagnostics`（含组件类型、可选 `UID` 与原始文本） | 其它未知顶层或嵌套组件 |
 
 对 `STATUS:CANCELLED` 的例外 `VEVENT`，在折叠为 `Change::Cancelled` 前仍对其自身的 `DTSTART`、`DTEND`、`DURATION` 与 `VALARM` 执行独立领域校验，避免取消例外夹带非法时间或跨度被静默忽略。
@@ -38,6 +38,9 @@
 - Red：新增 `calendar-adapters` crate 与 `tests/ics_normalization.rs` 6 项验收测试，占位 `normalize_ics` 返回未实现错误；运行 `cargo test -p calendar-adapters --test ics_normalization`，0 通过、6 失败。
 - Green：实现有界行展开、组件栈与参数扫描、`ical 0.11.0` 结构复核、属性转换与 `validate_event` / `SyncBatch` 校验；修正母事件 `DTEND` 被例外 `DURATION` 覆盖时的继承清除逻辑后，6 项测试全部通过。
 - Refactor：补充大小写无关 `BEGIN`/`END`、空属性值在 `ical 0.11.0` 复核流中的兼容处理，以及 `STATUS:CANCELLED` 例外 `VEVENT` 的独立领域校验；对 `BudgetTracker::event` 执行受控源码 mutation（移除 `max_events` 超限分支），确认 `ac2_byte_property_event_and_parse_step_budgets_reject_whole_batch` 精确检出失败后恢复生产实现。
+- PR #54 review 修复：
+  - Red：在 `ac1_golden_recurrence_exceptions_and_cancellations_preserve_recurrence_id_and_spans` 中新增母事件含 `DTEND` 而改期例外省略 `DTEND`/`DURATION`（含 UTC 定时与全天 `VALUE=DATE`）以及 `UID` 含 RFC 5545 TEXT 转义序列的回归断言；运行 `cargo test -p calendar-adapters --test ics_normalization --offline --locked`，复现 `EndBeforeStart` 失败与未解码 `UID`。
+  - Green/Refactor：在 `extract_vevent`、`build_retained_diagnostics` 与 `validate_vcalendar_properties` 中对 `UID`/`PRODID` 先执行单遍 `unescape_text` 再校验长度与分组；当母事件指定 `DTEND` 且改期例外省略 `DTEND`/`DURATION` 时，在同时间族下将母事件跨度归一化为例外补丁的 `duration` 并显式清除继承 `end`，6 项测试全部通过。
 
 ## 实现参考
 
