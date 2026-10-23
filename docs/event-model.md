@@ -79,7 +79,7 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 ## 7. SQLite 逻辑表
 
-以下为完整目标模型。`calendar-storage` 的首个迁移已实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes` 的核心字段及约束；连接、类型、失败保护和验收见 [存储基础](storage-foundation.md)。其他表与凭据关联仍待后续迁移，不代表已实现。
+以下为完整目标模型。`calendar-storage` 已通过迁移实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes`（见 [存储基础](storage-foundation.md)、[来源同步](source-sync.md)）以及 `outputs`、`reminder_rules`、`rule_outputs`、`planning_watermarks`、`occurrences`、`logical_deliveries`、`delivery_jobs`（见 [提醒规划](reminder-planning-test-design.md)）。其他表与凭据关联仍待后续迁移，不代表已实现。
 
 | 表 | 关键字段与约束 |
 | --- | --- |
@@ -96,7 +96,7 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 | `reminder_rules` | id PK、calendar/filter 配置、policy_json、generation、enabled |
 | `rule_outputs` | rule_id FK、output_id FK；PK(rule_id, output_id) |
 | `logical_deliveries` | id PK、event_id FK、original_key、rule_id FK、output_id FK、notification_kind、accepted_at；以上语义身份 UNIQUE |
-| `delivery_jobs` | id PK、logical_delivery_id FK、generation、event/rule/output_revision、due_at、deadline_at、state、next_attempt_at、lease_*；UNIQUE(logical_delivery_id, generation) |
+| `delivery_jobs` | id PK、logical_delivery_id FK、generation、event/rule/output_revision、due_at、deadline_at、state、next_attempt_at、lease_*、planning_context（解释时区/tzdata）；UNIQUE(logical_delivery_id, generation) |
 | `delivery_attempts` | id PK、job_id FK、attempt_no、request_id、started/finished_at、outcome、response_code、redacted_error；UNIQUE(job_id, attempt_no) |
 | `feed_subscriptions` | id PK、public_id UNIQUE、token_digest UNIQUE、scope_json、revision、expires/revoked_at |
 | `credentials` | id PK、kind、ciphertext、nonce、key_version、rotated_at；主密钥不在库中 |
