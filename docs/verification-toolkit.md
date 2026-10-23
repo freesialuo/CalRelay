@@ -43,6 +43,6 @@
 
 当前已接入 `cargo test`、领域黄金样例、SQLite 事务/故障测试与独立可选 Kani；现有 Kani 受控源码 mutation 不等于已接入 `cargo-mutants`。其余表列工具均为允许按需引入的能力，未宣称已安装或运行。
 
-存储目前只有 `0001` 初始迁移，[存储基础测试](storage-foundation.md) 覆盖初始化、重开和异常历史；未来新增迁移时补充 old DB → latest schema 测试，不能将现有测试表述为已验证跨版本升级。发布 SBOM/attestation 随 [#38](https://github.com/freesialuo/CalRelay/issues/38) 等制品任务按需交付。
+存储目前包含 `0001`–`0004` 迁移，[存储基础测试](storage-foundation.md) 覆盖初始化、重开、异常历史及合成 v1/v2/v3 → latest 历史升级；[投递恢复](delivery-recovery.md) 另覆盖领取/accepted 回滚、真实子进程终止及忙锁恢复。未来迁移继续补充历史升级场景。发布 SBOM/attestation 随 [#38](https://github.com/freesialuo/CalRelay/issues/38) 等制品任务按需交付。
 
 候选映射：领域/ICS Issue 可选择属性测试与 fuzz；[#23](https://github.com/freesialuo/CalRelay/issues/23)/[#24](https://github.com/freesialuo/CalRelay/issues/24) 可选择状态机模型及局部证明；并发原语、unsafe、公共 API、依赖、迁移或性能目标出现时选对应工具。上述为设计选项，不改变已有 Issue 的验收范围；实施时更新该 Issue 的验证计划。

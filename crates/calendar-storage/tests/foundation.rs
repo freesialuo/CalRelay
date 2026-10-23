@@ -89,7 +89,7 @@ async fn migrations_are_repeatable_and_committed_data_survives_reopen() -> Resul
             sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success=1")
                 .fetch_one(db.pool())
                 .await?;
-        assert_eq!(migrations, 3);
+        assert_eq!(migrations, 4);
         let health: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(db.pool())
             .await?;
@@ -339,7 +339,7 @@ async fn upgrades_v1_database_to_latest_preserving_history_and_enforcing_plannin
     )
     .fetch_all(db.pool())
     .await?;
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
     let event_row: (String, i64, String) =
         sqlx::query_as("SELECT external_uid, revision, content_hash FROM events WHERE id = 'e1'")
             .fetch_one(db.pool())
@@ -409,7 +409,7 @@ async fn upgrades_v2_jobs_to_nullable_planning_context_without_losing_history() 
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(db.pool())
                 .await?;
-        assert_eq!(versions, vec![1, 2, 3]);
+        assert_eq!(versions, vec![1, 2, 3, 4]);
         rejected(
             &db,
             "UPDATE delivery_jobs SET planning_context='invalid json' WHERE id='j'",
@@ -421,6 +421,82 @@ async fn upgrades_v2_jobs_to_nullable_planning_context_without_losing_history() 
             .await?
             .is_empty());
         db.close().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn upgrades_v3_to_delivery_attempts_preserving_jobs_and_failure_history() -> Result {
+    let dir = tempdir()?;
+    let migrations = tempdir()?;
+    for (name, source) in [
+        (
+            "0001_event_core.sql",
+            include_str!("../migrations/0001_event_core.sql"),
+        ),
+        (
+            "0002_reminder_planning.sql",
+            include_str!("../migrations/0002_reminder_planning.sql"),
+        ),
+        (
+            "0003_job_planning_context.sql",
+            include_str!("../migrations/0003_job_planning_context.sql"),
+        ),
+    ] {
+        std::fs::write(migrations.path().join(name), source)?;
+    }
+    for conflict in [false, true] {
+        let path = dir.path().join(if conflict { "fail" } else { "ok" });
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await?;
+        sqlx::migrate::Migrator::new(migrations.path())
+            .await?
+            .run(&mut conn)
+            .await?;
+        sqlx::raw_sql("INSERT INTO sources(id,kind) VALUES ('s','test'); INSERT INTO calendars(id,source_id,external_id) VALUES ('c','s','c'); INSERT INTO events(id,source_id,calendar_id,external_uid,revision,document_json,content_hash) VALUES ('e','s','c','a',1,'{}','h'); INSERT INTO outputs(id,kind) VALUES ('o','test'); INSERT INTO reminder_rules(id) VALUES ('r'); INSERT INTO rule_outputs VALUES ('r','o'); INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id,accepted_at) VALUES ('l','e','single','r','o',123); INSERT INTO delivery_jobs(id,logical_delivery_id,generation,event_revision,rule_revision,output_revision,due_at,state,next_attempt_at,planning_context) VALUES ('j','l',1,1,1,1,100,'accepted',100,'[null,\"2025b\"]');").execute(&mut conn).await?;
+        if conflict {
+            sqlx::query("CREATE TABLE delivery_attempts(conflict INTEGER)")
+                .execute(&mut conn)
+                .await?;
+        }
+        conn.close().await?;
+        if conflict {
+            assert!(matches!(
+                Storage::open(&path).await,
+                Err(OpenError::Migration(_))
+            ));
+            let mut conn =
+                SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+                    .await?;
+            let row:(String,i64)=sqlx::query_as("SELECT j.state,l.accepted_at FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id").fetch_one(&mut conn).await?;
+            assert_eq!(row, ("accepted".into(), 123));
+            let versions: Vec<i64> = sqlx::query_scalar(
+                "SELECT version FROM _sqlx_migrations WHERE success=1 ORDER BY version",
+            )
+            .fetch_all(&mut conn)
+            .await?;
+            assert_eq!(versions, vec![1, 2, 3]);
+            conn.close().await?;
+        } else {
+            for _ in 0..2 {
+                let db = Storage::open(&path).await?;
+                let row:(String,String,i64)=sqlx::query_as("SELECT j.state,j.planning_context,l.accepted_at FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id").fetch_one(db.pool()).await?;
+                assert_eq!(row, ("accepted".into(), "[null,\"2025b\"]".into(), 123));
+                let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM delivery_attempts")
+                    .fetch_one(db.pool())
+                    .await?;
+                assert_eq!(attempts, 0);
+                assert!(sqlx::query("PRAGMA foreign_key_check")
+                    .fetch_all(db.pool())
+                    .await?
+                    .is_empty());
+                db.close().await;
+            }
+        }
     }
     Ok(())
 }

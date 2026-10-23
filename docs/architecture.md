@@ -116,6 +116,8 @@ ICS 导出器不实现推送接口；它与 Bark 共用事件查询和规则，�
 
 一次逻辑提醒的稳定身份：`event_id + original_recurrence_key + rule_id + output_id`。实例改期仍使用原始 recurrence key。投递任务另带 event/rule/output 的 generation 与计划触发时间。
 
+已实现的租约、单次投递用例与故障验证见 [投递恢复](delivery-recovery.md)。服务运行装配及真实输出仍由后续 Issue 交付。
+
 状态机：
 
 ```text
