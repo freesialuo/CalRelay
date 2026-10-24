@@ -1,5 +1,8 @@
 //! Application contracts. No database or network dependencies.
 
+mod security;
+pub use security::*;
+
 mod delivery;
 pub use delivery::*;
 
