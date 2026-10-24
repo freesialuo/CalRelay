@@ -19,7 +19,7 @@
 
 `icalendar 0.17.6` 在本矩阵中同样保留时间、重复属性与子组件，TEXT 则在解析时解码。但其连续替换会将编码为两个反斜杠再加 `n` 的字面反斜杠加 `n` 误解为换行；`ac3_literal_backslash_n_exposes_icalendar_text_decoding_loss` 固定该反例，测试断言实际损失，不在 helper 中修补后宣称兼容。因此未选为首版输入解析库。
 
-解析器保留 `RRULE`、`RDATE`、`VTIMEZONE` 或 `THISANDFUTURE` 不代表能够执行其语义。现有领域层对自定义 VTIMEZONE 和 THISANDFUTURE 的明确拒绝保持不变，见 [领域能力](domain-capabilities.md)。TEXT 解码、事件归一化、语义校验和资源限制属于后续 [#25](https://github.com/freesialuo/CalRelay/issues/25)，不能仅凭本样例矩阵接收任意 ICS。
+解析器保留 `RRULE`、`RDATE`、`VTIMEZONE` 或 `THISANDFUTURE` 不代表能够执行其语义。现有领域层对自定义 VTIMEZONE 和 THISANDFUTURE 的明确拒绝保持不变，见 [领域能力](domain-capabilities.md)。TEXT 解码、事件归一化、语义校验和资源限制由 [#25](https://github.com/freesialuo/CalRelay/issues/25) 实现（见 [ICS 归一化](ics-normalization.md)），不仅凭本样例矩阵接收任意 ICS。
 
 ## TDD 与协作记录
 

@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/calendar-domain", "crates/calendar-application", "crates/calendar-storage"]
+members = [
+    "crates/calendar-domain",
+    "crates/calendar-application",
+    "crates/calendar-adapters",
+    "crates/calendar-storage",
+]
 
 [workspace.package]
 edition = "2021"

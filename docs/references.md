@@ -92,3 +92,7 @@ Issue #21 使用 Context7 `/websites/rs_sqlx` 核对连接选项和迁移宏，�
 ## 投递租约与恢复（#24）
 
 Context7 查询、锁定 SQLx 0.8.6 公共源码与采用边界见 [投递恢复实现参考](delivery-recovery.md#实现参考)。事务提交/回滚、busy 错误及旧版本迁移均通过真实 SQLite 集成测试核对。
+
+## 受限 ICS 文件归一化（#25）
+
+Exa 核对的 `ical 0.11.0` 公共源码（`src/line.rs`、`src/property.rs`、`src/parser/ical/component.rs`）、RFC 5545 章节与支持边界见 [ICS 归一化实现参考](ics-normalization.md#实现参考)。
