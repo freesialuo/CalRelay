@@ -32,15 +32,18 @@ pub fn router_with_admin(
     Router::new()
         .route("/api/admin/v1/bootstrap", get(move || { let value=bootstrap.clone(); async move { ([ ("cache-control","no-store") ],Json(value)) } }))
         .merge(crate::ingest::router())
-        .route("/health/live", get(|| async { Json(json!({"status":"live"})) }))
+        .route("/health/live", get(|State(s): State<Arc<Services>>| async move {
+            if s.health.snapshot().live { (StatusCode::OK, Json(json!({"status":"live"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
+        }))
         .route("/health/ready", get(|State(s): State<Arc<Services>>| async move {
-            if s.ready() { (StatusCode::OK, Json(json!({"status":"ready"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
+            if s.health.snapshot().ready { (StatusCode::OK, Json(json!({"status":"ready"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
         }))
         .route("/api/v1/version", get(|| async { Json(json!({"name":"CalRelay", "version":env!("CARGO_PKG_VERSION"), "api_version":"v1"})) }))
         .route("/api/v1/openapi.json", get(|| async { Json(openapi()) }))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(services.clone())
-        .merge(crate::feed::router(services, config.max_response_bytes))
+        .merge(crate::feed::router(services.clone(), config.max_response_bytes))
+        .merge(crate::aggregate_feed::router(services, config.max_response_bytes))
         .merge(management)
         .layer(middleware::from_fn_with_state(config, boundary))
 }
@@ -156,6 +159,8 @@ pub fn openapi() -> Value {
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
     crate::ingest::describe(&mut document);
     crate::feed::describe(&mut document);
+    crate::aggregate_feed::describe(&mut document);
+    crate::aggregate_configuration::describe(&mut document);
     crate::source_configuration::describe(&mut document);
     crate::reminder_configuration::describe(&mut document);
     document

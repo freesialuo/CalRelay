@@ -1,0 +1,16 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "$id":"https://calrelay.invalid/schemas/aggregate-subscription-v1.schema.json",
+ "title":"Managed aggregate subscription v1",
+ "type":"object","additionalProperties":false,
+ "required":["version","name","enabled","sources","visible_fields","stale_policy","expires_at"],
+ "properties":{
+  "version":{"type":"integer","const":1},
+  "name":{"type":"string","minLength":1,"maxLength":256},
+  "enabled":{"type":"boolean"},
+  "sources":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["source_id","calendar_ids"],"properties":{"source_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,128}$"},"calendar_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,128}$"}}}}},
+  "visible_fields":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"enum":["summary","description","location","url","categories"]}},
+  "stale_policy":{"enum":["reject"]},
+  "expires_at":{"type":["integer","null"],"minimum":0,"description":"UTC Unix milliseconds; null means no token expiry"}
+ }
+}

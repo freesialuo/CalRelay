@@ -82,7 +82,7 @@ pub(crate) fn describe(document: &mut serde_json::Value) {
     }
     document["paths"]["/feeds/{public_id}/{secret}.ics"] = json!({"get":get,"head":head});
 }
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -182,7 +182,7 @@ async fn finish_feed(
     response
 }
 #[derive(Debug, PartialEq, Eq)]
-enum FeedRenderError {
+pub(crate) enum FeedRenderError {
     Invalid,
     Budget,
 }
@@ -195,10 +195,46 @@ fn component_budget(input_bytes: usize) -> Option<usize> {
 fn render_with(
     snapshot: FeedSnapshot,
     max_bytes: usize,
-    mut encode: impl FnMut(&[FeedEvent<'_>]) -> Result<String, calendar_adapters::renderer::RenderError>,
+    encode: impl FnMut(&[FeedEvent<'_>]) -> Result<String, calendar_adapters::renderer::RenderError>,
 ) -> Result<Document, FeedRenderError> {
-    let mut documents: Vec<EventV1> = snapshot
-        .records
+    let body = encode_records(
+        &snapshot.records,
+        snapshot.authorization.scope.visible_fields(),
+        max_bytes,
+        encode,
+    )?;
+    use sha2::{Digest, Sha256};
+    let key = serde_json::to_vec(&(
+        &snapshot.authorization.key.subscription_id,
+        snapshot.authorization.key.configuration_revision,
+        &snapshot.authorization.key.source_id,
+        snapshot.authorization.key.data_revision,
+        snapshot.authorization.key.scope_digest,
+    ))
+    .map_err(|_| FeedRenderError::Invalid)?;
+    let mut hash = Sha256::new();
+    hash.update(key);
+    hash.update(body.as_bytes());
+    Ok(Document {
+        body,
+        etag: format!("\"{:x}\"", hash.finalize()),
+    })
+}
+
+pub(crate) fn render_body(
+    records: &[calendar_storage::feed::FeedRecord],
+    fields: &[calendar_application::VisibleField],
+    max_bytes: usize,
+) -> Result<String, FeedRenderError> {
+    encode_records(records, Some(fields), max_bytes, render_ics)
+}
+fn encode_records(
+    records: &[calendar_storage::feed::FeedRecord],
+    fields: Option<&[calendar_application::VisibleField]>,
+    max_bytes: usize,
+    mut encode: impl FnMut(&[FeedEvent<'_>]) -> Result<String, calendar_adapters::renderer::RenderError>,
+) -> Result<String, FeedRenderError> {
+    let mut documents: Vec<EventV1> = records
         .iter()
         .map(|r| serde_json::from_str(&r.document_json).map_err(|_| FeedRenderError::Invalid))
         .collect::<Result<_, _>>()?;
@@ -214,7 +250,7 @@ fn render_with(
             .ok_or(FeedRenderError::Budget)?;
         Ok(())
     };
-    for (record, document) in snapshot.records.iter().zip(&documents) {
+    for (record, document) in records.iter().zip(&documents) {
         charge(component_budget(record.document_json.len()).ok_or(FeedRenderError::Budget)?)?;
         for exception in document
             .recurrence
@@ -231,8 +267,7 @@ fn render_with(
             charge(component_budget(repeated).ok_or(FeedRenderError::Budget)?)?;
         }
     }
-    let stamps: Vec<String> = snapshot
-        .records
+    let stamps: Vec<String> = records
         .iter()
         .map(|r| {
             chrono::DateTime::from_timestamp_millis(r.changed_at)
@@ -243,8 +278,7 @@ fn render_with(
     // Validate the original input against #31's profile before removing content.
     // Redaction must not accidentally make unsupported/invalid input renderable.
     let mut render_documents = |documents: &[EventV1]| -> Result<String, FeedRenderError> {
-        let events: Vec<_> = snapshot
-            .records
+        let events: Vec<_> = records
             .iter()
             .zip(documents)
             .zip(&stamps)
@@ -264,33 +298,18 @@ fn render_with(
         encode(&events).map_err(|_| FeedRenderError::Invalid)
     };
     let original = render_documents(&documents)?;
-    let body = if snapshot.authorization.scope == calendar_application::FeedScope::Legacy {
-        original
-    } else {
+    let body = if let Some(fields) = fields {
         for document in &mut documents {
-            snapshot.authorization.scope.project(document);
+            calendar_application::project_visible_fields(document, fields);
         }
         render_documents(&documents)?
+    } else {
+        original
     };
     if body.len() > max_bytes {
         return Err(FeedRenderError::Budget);
     }
-    use sha2::{Digest, Sha256};
-    let key = serde_json::to_vec(&(
-        &snapshot.authorization.key.subscription_id,
-        snapshot.authorization.key.configuration_revision,
-        &snapshot.authorization.key.source_id,
-        snapshot.authorization.key.data_revision,
-        snapshot.authorization.key.scope_digest,
-    ))
-    .map_err(|_| FeedRenderError::Invalid)?;
-    let mut hash = Sha256::new();
-    hash.update(key);
-    hash.update(body.as_bytes());
-    Ok(Document {
-        body,
-        etag: format!("\"{:x}\"", hash.finalize()),
-    })
+    Ok(body)
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
-//! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
+//! Service assembly, health observation and lifecycle.
 pub mod admin;
 pub mod admin_bootstrap;
+mod aggregate_configuration;
+mod aggregate_feed;
 mod config;
 pub mod delivery_worker;
 mod feed;
@@ -9,6 +11,7 @@ mod ingest;
 mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
+pub mod supervision;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
@@ -34,27 +37,35 @@ pub enum StartError {
     Storage(#[from] calendar_storage::OpenError),
     #[error("server I/O failed")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Supervision(#[from] supervision::CoreFault),
 }
 
 /// Every future task claimant must enter through `run_task`. The read permit spans the
 /// entire bounded application operation, including its final short transaction.
 pub struct Services {
     pub storage: Storage,
+    pub health: Arc<supervision::Health>,
     pub ingest_policy: calendar_application::IngestPolicy,
     pub delivery_policy: DeliveryPolicy,
     pub ics_limits: IcsLimits,
     stopping: AtomicBool,
     tasks: RwLock<()>,
     shutdown: watch::Sender<bool>,
+    force_cancel: watch::Sender<bool>,
 }
 impl Services {
+    /// Business task admission; HTTP readiness is evaluated by `health.snapshot()`.
     pub fn ready(&self) -> bool {
         !self.stopping.load(Ordering::SeqCst)
     }
     pub fn stop(&self) {
+        self.health.stop();
         self.stopping.store(true, Ordering::SeqCst);
         self.shutdown.send_replace(true);
     }
+    /// None means admission was refused or force-cancelled after drain expiry.
+    /// Keep the complete bounded operation and its transactions inside this future.
     pub async fn run_task<T>(&self, operation: impl AsyncFnOnce(&Storage) -> T) -> Option<T> {
         if !self.ready() {
             return None;
@@ -63,7 +74,26 @@ impl Services {
         if !self.ready() {
             return None;
         }
-        Some(operation(&self.storage).await)
+        let mut cancellation = self.force_cancel.subscribe();
+        tokio::select! {
+            biased;
+            () = async {
+                while !*cancellation.borrow_and_update() {
+                    if cancellation.changed().await.is_err() { break; }
+                }
+            } => None,
+            result = operation(&self.storage) => Some(result),
+        }
+    }
+    fn cancel_admitted(&self) {
+        self.force_cancel.send_replace(true);
+    }
+    async fn drain_cancelled(&self) {
+        // Close the pool immediately while cancelled operations release their permits and
+        // transactions; close waits for SQLx rollback/checked-out connection cleanup.
+        tokio::join!(self.storage.close(), async {
+            let _permit = self.tasks.write().await;
+        });
     }
     pub async fn drain(&self) {
         self.stop();
@@ -76,25 +106,37 @@ pub struct Server {
     pub services: Arc<Services>,
     config: Config,
     admin: Option<admin::AdminState>,
+    workers: Vec<supervision::Worker>,
 }
 impl Server {
-    /// Validate and migrate before constructing a ready service or opening the listener.
+    /// Validate and migrate before constructing an initialized service or opening the listener.
     pub async fn initialize(config: Config) -> Result<Self, StartError> {
+        Self::initialize_with_supervision(config, supervision::SupervisionConfig::default()).await
+    }
+    pub async fn initialize_with_supervision(
+        config: Config,
+        supervision: supervision::SupervisionConfig,
+    ) -> Result<Self, StartError> {
         config.validate()?;
+        supervision.validate()?;
         let ingest_policy = ingest::policy()?;
         let storage = Storage::open(&config.database).await?;
         let (shutdown, _) = watch::channel(false);
+        let (force_cancel, _) = watch::channel(false);
         Ok(Self {
             config,
             admin: None,
+            workers: Vec::new(),
             services: Arc::new(Services {
                 storage,
+                health: Arc::new(supervision::Health::new(supervision)),
                 ingest_policy,
                 delivery_policy: DeliveryPolicy::default(),
                 ics_limits: IcsLimits::default(),
                 stopping: AtomicBool::new(false),
                 tasks: RwLock::new(()),
                 shutdown,
+                force_cancel,
             }),
         })
     }
@@ -132,16 +174,6 @@ impl Server {
         listener: TcpListener,
         signal: impl Future<Output = ()> + Send + 'static,
     ) -> Result<(), StartError> {
-        let services = self.services.clone();
-        let mut shutdown = services.shutdown.subscribe();
-        let result = axum::serve(listener, self.router()).with_graceful_shutdown(async move {
-            tokio::select! {
-                () = signal => {},
-                _ = async { while !*shutdown.borrow_and_update() { if shutdown.changed().await.is_err() { break; } } } => {},
-            }
-            services.stop();
-        }).await;
-        self.services.drain().await;
-        result.map_err(StartError::Io)
+        supervision::serve(self, listener, signal).await
     }
 }
