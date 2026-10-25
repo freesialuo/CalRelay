@@ -382,6 +382,9 @@ async fn stalled_worker_recovers_only_after_real_progress_without_restarting() {
     let dir = tempfile::tempdir().unwrap();
     let mut budgets = options();
     budgets.stall_timeout = Duration::from_millis(200);
+    // This test verifies recovery, not subsecond shutdown performance under CI load.
+    // Deadline/cancellation tests below retain their explicit 50/80ms budgets.
+    budgets.shutdown_timeout = Duration::from_secs(3);
     let server = Server::initialize_with_supervision(
         config(&dir.path().join("resumed-progress.db")),
         budgets,
@@ -425,7 +428,11 @@ async fn stalled_worker_recovers_only_after_real_progress_without_restarting() {
         "other production roles are still missing"
     );
     tx.send(()).unwrap();
-    serving.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(7), serving)
+        .await
+        .expect("recovered worker must shut down within both bounded phases")
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]
