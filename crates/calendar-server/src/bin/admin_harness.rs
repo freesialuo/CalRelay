@@ -63,21 +63,8 @@ async fn main() -> std::process::ExitCode {
 }
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args
-        .first()
-        .is_some_and(|s| matches!(s.as_str(), "backup" | "restore"))
-    {
-        calendar_server::test_runtime::offline_snapshot(&args).await?;
-        println!("{}", json!({"synthetic_only":true,"operation":args[0]}));
-        return Ok(());
-    }
-    let (base, system_file) = match args.as_slice() {
-        [_, _, _, _] => (&args[..], None),
-        [_, _, _, _, flag, file] if flag == "--system-runtime" => (&args[..4], Some(file)),
-        _ => return Err("expected harness arguments".into()),
-    };
-    let [db_flag, path, origin_flag, origin] = base else {
-        unreachable!()
+    let [db_flag, path, origin_flag, origin] = args.as_slice() else {
+        return Err("expected harness arguments".into());
     };
     if db_flag != "--database"
         || origin_flag != "--browser-origin"
@@ -130,45 +117,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             hostname,
         }),
     )?;
-    let system = system_file
-        .map(|file| {
-            calendar_server::test_runtime::SystemHarnessConfig::load(
-                std::path::Path::new(file),
-                std::path::Path::new(path),
-            )
-        })
-        .transpose()?;
-    // Legacy/default mode still exclusively creates and rejects every existing file.
-    if system.is_none() {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-    }
+    // Exclusive create refuses any existing file, including symlinks and real databases.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = if let Some(system) = &system {
-        system.initialize(std::path::Path::new(path)).await?
-    } else {
-        Server::initialize(Config {
-            bind: "127.0.0.1:0".parse()?,
-            database: path.into(),
-            max_request_bytes: 1_048_576,
-            max_response_bytes: 1_048_576,
-            request_timeout: Duration::from_secs(10),
-        })
-        .await?
-    }
+    let server = Server::initialize(Config {
+        bind: "127.0.0.1:0".parse()?,
+        database: path.into(),
+        max_request_bytes: 1_048_576,
+        max_response_bytes: 1_048_576,
+        request_timeout: Duration::from_secs(10),
+    })
+    .await?
     .with_admin_site_key(Arc::new(verifier), "synthetic-site-key".into())?;
-    let server = if let Some(system) = &system {
-        system.install(server)?
-    } else {
-        server
-    };
     let listener = server.bind().await?;
     println!(
         "{}",
-        json!({"upstream":format!("http://{}",listener.local_addr()?),"browser_origin":origin,"access_jwt":jwt,"challenge_prefix":"synthetic-challenge:","synthetic_only":true,"system_runtime":system.is_some()})
+        json!({"upstream":format!("http://{}",listener.local_addr()?),"browser_origin":origin,"access_jwt":jwt,"challenge_prefix":"synthetic-challenge:","synthetic_only":true})
     );
     server
         .serve(listener, async move {

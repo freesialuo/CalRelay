@@ -52,6 +52,8 @@ pub enum StartError {
 pub struct Services {
     pub storage: Storage,
     credential_keys: OnceLock<Arc<calendar_storage::security::KeyRing>>,
+    #[cfg(feature = "test-harness")]
+    test_business_clock: OnceLock<Arc<dyn calendar_application::Clock>>,
     pub health: Arc<supervision::Health>,
     pub ingest_policy: calendar_application::IngestPolicy,
     pub delivery_policy: DeliveryPolicy,
@@ -62,6 +64,14 @@ pub struct Services {
     force_cancel: watch::Sender<bool>,
 }
 impl Services {
+    /// Only explicit test composition can install this clock; ordinary production uses UTC.
+    pub(crate) fn business_now_ms(&self) -> i64 {
+        #[cfg(feature = "test-harness")]
+        if let Some(clock) = self.test_business_clock.get() {
+            return clock.utc_now_ms();
+        }
+        feed::now()
+    }
     pub fn credential_provider(
         self: &Arc<Self>,
     ) -> Result<credentials_bootstrap::RuntimeCredentialProvider, calendar_application::SecurityError>
@@ -148,6 +158,8 @@ impl Server {
             services: Arc::new(Services {
                 storage,
                 credential_keys: OnceLock::new(),
+                #[cfg(feature = "test-harness")]
+                test_business_clock: OnceLock::new(),
                 health: Arc::new(supervision::Health::new(supervision)),
                 ingest_policy,
                 delivery_policy: DeliveryPolicy {

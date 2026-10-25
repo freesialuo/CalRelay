@@ -293,6 +293,11 @@ impl Server {
                 ConfigError("test runtime requires real admin and credential bootstrap").into(),
             );
         }
+        let business_clock: Arc<dyn Clock> = clock.clone();
+        self.services
+            .test_business_clock
+            .set(business_clock)
+            .map_err(|_| ConfigError("test business clock already installed"))?;
         let degraded = Arc::new(AtomicBool::new(false));
         let storage_failed = Arc::new(AtomicBool::new(false));
         let output = TestObservedOutput {
