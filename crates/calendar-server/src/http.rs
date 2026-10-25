@@ -19,6 +19,15 @@ pub struct RequestId(pub String);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn router(services: Arc<Services>, config: Config) -> Router {
+    router_with_admin(services, config, None)
+}
+
+pub fn router_with_admin(
+    services: Arc<Services>,
+    config: Config,
+    admin: Option<crate::admin::AdminState>,
+) -> Router {
+    let management = admin.map(crate::admin::router).unwrap_or_default();
     Router::new()
         .route("/health/live", get(|| async { Json(json!({"status":"live"})) }))
         .route("/health/ready", get(|State(s): State<Arc<Services>>| async move {
@@ -28,6 +37,7 @@ pub fn router(services: Arc<Services>, config: Config) -> Router {
         .route("/api/v1/openapi.json", get(|| async { Json(openapi()) }))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(services)
+        .merge(management)
         .layer(middleware::from_fn_with_state(config, boundary))
 }
 
@@ -136,6 +146,7 @@ pub fn openapi() -> Value {
         }
         paths.insert(path.into(), json!({"get":{"responses":responses}}));
     }
+    paths.extend(crate::admin::openapi_paths());
     json!({"openapi":"3.1.0","info":{"title":"CalRelay service API","version":env!("CARGO_PKG_VERSION")},
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}})
 }

@@ -314,7 +314,7 @@ async fn v6_upgrades_to_recovery_policy_without_pausing_normal_database() -> Res
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success=1 ORDER BY version")
             .fetch_all(recovered.pool())
             .await?;
-    assert_eq!(recovered_versions, [1, 2, 3, 4, 5, 6, 9]);
+    assert_eq!(recovered_versions, [1, 2, 3, 4, 5, 6, 9, 10]);
     let recovery_policy: (bool, Option<i64>) =
         sqlx::query_as("SELECT paused,cutoff FROM recovery_control WHERE id=1")
             .fetch_one(recovered.pool())
@@ -356,7 +356,7 @@ async fn v6_upgrades_to_recovery_policy_without_pausing_normal_database() -> Res
         )
         .fetch_all(db.pool())
         .await?;
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 9]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 9, 10]);
         db.close().await;
     }
     let db = Storage::open(&path).await?;
