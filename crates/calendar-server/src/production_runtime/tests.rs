@@ -62,7 +62,7 @@ async fn configure(services: &Services) {
     ))
     .unwrap();
     source.mode = SourceMode::Pull;
-    source.endpoint = Some("https://calendar.example.test/source.ics".into());
+    source.endpoint = Some("https://127.0.0.1:9/source.ics".into());
     source.refresh_interval_ms = Some(60_000);
     source.freshness_sla_ms = Some(60_000);
     source.capabilities.conditional_read = true;
@@ -330,7 +330,12 @@ async fn production_workers_respect_actual_restore_pause_and_cutoff_without_netw
     let listener = server.bind().await.unwrap();
     let running = tokio::spawn(server.serve(listener, std::future::pending()));
     wait_ready(&services, true).await;
-    assert!(!services.health.snapshot().ready);
+    let health = services.health.snapshot();
+    assert!(!health.ready);
+    assert!(
+        health.degraded_workers.is_empty(),
+        "paused workers must not attempt a blocked endpoint"
+    );
     assert!(services.ready());
     let control: (bool, i64) = sqlx::query_as("SELECT paused,cutoff FROM recovery_control")
         .fetch_one(services.storage.pool())
