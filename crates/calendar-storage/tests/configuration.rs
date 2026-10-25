@@ -264,3 +264,43 @@ fn source_capabilities_and_untrusted_fields_have_strict_semantics() {
     push.capabilities.delete = true;
     push.validate().unwrap(); // Intermittent push producers require no implicit SLA.
 }
+
+#[tokio::test]
+async fn discovery_is_bounded_ordered_and_keeps_retired_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Storage::open(dir.path().join("db")).await.unwrap();
+    for n in 0..102 {
+        let mut body = config();
+        body.calendars[0].id = format!("calendar-{n:03}");
+        db.put_source_configuration(
+            &format!("source-{n:03}"),
+            ConfigurationCondition::Absent,
+            body,
+            "alice",
+            100,
+        )
+        .await
+        .unwrap();
+    }
+    db.retire_source_configuration("source-000", 1, "alice", 101)
+        .await
+        .unwrap();
+    let page = db.list_source_configurations(None).await.unwrap();
+    assert_eq!(page.items.len(), 100);
+    assert_eq!(page.items[0].source_id, "source-000");
+    assert_eq!(page.items[0].retired_at, Some(101));
+    assert!(!page.items[0].enabled);
+    assert_eq!(page.next_after.as_deref(), Some("source-099"));
+    let last = db
+        .list_source_configurations(page.next_after.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(last.items.len(), 2);
+    assert_eq!(last.items[1].source_id, "source-101");
+    assert!(last.next_after.is_none());
+    assert!(db
+        .list_source_configurations(Some("invalid cursor"))
+        .await
+        .is_err());
+    db.close().await;
+}

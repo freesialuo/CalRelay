@@ -8,13 +8,14 @@ Rust 权威为 `calendar-application::configuration::{SourceConfigurationV1, Sou
 
 | 请求 | 条件与结果 |
 | --- | --- |
+| GET `/api/admin/v1/sources?after=ID` | Access + session；最多100条无配置/凭据摘要，含退休状态；next_after 非空时续页；按稳定 id 排序，非跨并发快照 |
 | GET `/api/admin/v1/sources/{source_id}` | Access + session；200 record + ETag，404 未托管；退休 record 仍可审计读取 |
 | PUT 同路径 | 严格配置正文；创建 `If-None-Match: *` 返回 201，必须 enabled=false；更新 `If-Match: "N"` 返回 200；ETag 是 config_revision，不是事件或 source revision |
 | DELETE 同路径 | 空正文，`If-Match: "N"`；204 逻辑退休，永久禁止同 id 重建/启用；重复删除/旧 revision 409 |
 
 沿用 #34 Access JWT、Secure HttpOnly SameSite session、精确 Origin、CSRF 和一次 write nonce。失败鉴权不写业务数据；已经授权的 unsafe 请求即使业务失败也消费 nonce，客户端读取 `X-Admin-Write-Nonce` 后重试。GET/写响应均 no-store。无条件写、弱/重复/同时携带的条件头、未知字段/版本、非法能力为 422（JSON 提取层的语法错误为 400）；stale CAS/身份重映射为 409。沿用全局有界错误码与 request_id；持久错误不回显配置/凭据。管理来源正文额外限制 64 KiB，全局部署预算可更小。
 
-id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空白无控制字符；1–256 个日历映射。calendar id 全库唯一、external_id 源内唯一；跨源同 EventV1.external_uid 仍由原 `(source_id, external_uid)` 隔离。已有 calendar id/external_id 不可重映射或移除，取消选择用 selected=false，保留事件/历史引用。timezone 只允许有效 IANA TZID 或 null。新日历可追加。列表/搜索 API 留给后续管理批次；本批按已知稳定 id 读写。
+id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空白无控制字符；1–256 个日历映射。calendar id 全库唯一、external_id 源内唯一；跨源同 EventV1.external_uid 仍由原 `(source_id, external_uid)` 隔离。已有 calendar id/external_id 不可重映射或移除，取消选择用 selected=false，保留事件/历史引用。timezone 只允许有效 IANA TZID 或 null。新日历可追加。发现接口使用 `SourceConfigurationSummary` / `SourceConfigurationPage`，不导出完整配置或凭据引用。
 
 | mode | 本批允许配置与 freshness |
 | --- | --- |
@@ -28,7 +29,7 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 唯一新增迁移 `0011_source_configuration.sql`；main 0010，未合并 #70 保留 0008，不复制它的 schema。旧来源保留 config_json/事件/启用状态与 config_revision=0；GET 返回 404，不猜测转换未知旧配置，PUT 不允许覆盖。后续明确导入迁移需单独验收。
 
-首次托管来源 config/source revision 均为 1。BEGIN IMMEDIATE 短事务校验 CAS、凭据引用、稳定日历身份，写配置/日历与摘要审计；任一步失败整体回滚。无网络或 secret provider 调用。每次 PUT（包括同值写）config_revision 与 source revision 均 +1，清除 checkpoint/snapshot proof/last_verified，强制新拉取而不将旧内容当作新配置的可信基线；事件本体仍保留。#29 commit_sync/verify_unchanged、#23 reconcile 现有 source revision 比较拒绝旧请求；配置 ETag 独立于事件 ingest 的数据 revision。
+首次托管来源 config/source revision 均为 1。BEGIN IMMEDIATE 短事务校验 CAS、凭据引用、稳定日历身份，写配置/日历与摘要审计；任一步失败整体回滚。无网络或 secret provider 调用。每次 PUT（包括同值写）config_revision 与 source revision 均 +1，清除 checkpoint/snapshot proof/last_verified，强制新拉取而不将旧内容当作新配置的可信基线；事件本体仍保留。重命名也保守推进 fence；#75 必须扫描当前 source revision 与 planning_watermarks 的差异，按新 revision 调用 #23 reconcile；它会为 superseded 的未 accepted 提醒建立新 generation，已 accepted 不重发。pull 重新核验后再发送，manual/push 的无 SLA 策略由 #74/#75 使用 DTO 装配；当前无生产循环，不能把本库 API 的作废当作完整产品重规划已交付。#29 commit_sync/verify_unchanged、#23 reconcile 现有 source revision 比较拒绝旧请求；配置 ETag 独立于事件 ingest 的数据 revision。
 
 每次修改把该源 pending/retry_wait/leased jobs 标 superseded；退休标 cancelled、禁用 source、撤销 producer token 与单源 feed_subscriptions 并增加其 revision。保留 lease 与 attempt：已 prepare/send 的旧请求可能仍 accepted，#24 finish 记录实际 accepted outcome + superseded/cancelled disposition，并保留 logical_deliveries.accepted_at，不能谎称外部撤回。已 accepted jobs、event tombstone、logical dedup、attempt/audit/history 不物理删除；本批无自动清理，未来保留期策略不得让 accepted 重放。
 
@@ -36,7 +37,7 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 ## 标准源 envelope v1 冻结边界
 
-`schemas/standard-calendar-source-v1.schema.json` 是下一批执行入口的结构契约，引用现有 EventV1 urn，不复制模型。当前只执行 #30 的 `/api/ingest/v1/sources/{source_id}/events/{uid}` PUT/DELETE，认证、If-Match/If-None-Match、token-wide Idempotency-Key、receipt TTL 及预算原样兼容。此 PR 没有新增机器批次端点、receipt 表或声称 snapshot/delta 已接入 HTTP。不能把 envelope 发往旧单事件端点；它会按未知形状拒绝。
+`schemas/standard-calendar-source-v1.schema.json` 是下一批执行入口的结构契约，引用现有 EventV1 urn，不复制模型。当前只执行 #30 的 `/api/ingest/v1/sources/{source_id}/events/{uid}` PUT/DELETE，既有非托管来源的认证、If-Match/If-None-Match、token-wide Idempotency-Key、receipt TTL 及预算原样兼容。新托管来源只允许 push-only + standard-calendar 的已声明操作使用机器 API；在回执查询前重新核对模式/能力/启用/退休，配置收窄不能通过旧幂等回执放行。旧单事件入口没有 config CAS 请求头；同一允许操作的普通配置更新仍按原 Event revision CAS，完整 config/source/checkpoint CAS 由后续 envelope 入口承载，不冒充已完成 #73 AC5。此 PR 没有新增机器批次端点、receipt 表或声称 snapshot/delta 已接入 HTTP。不能把 envelope 发往旧单事件端点；它会按未知形状拒绝。
 
 后续 envelope 入口应为独立版本路径（实现前在 OpenAPI 明示），同一个 source-scoped token 的授权先于幂等回执；认证上下文注入 source_id，正文任何 source_id/权限/内部 context 均是未知字段拒绝。protocol_version 固定 `standard-calendar-source/v1`；batch_id 是 idempotency key 的可审计关联而非来源身份。upsert 携带 calendar_id + 原 EventV1；delete 携带 external_uid + 正 revision。所有 upsert/delete 授权、结构/领域/日历归属检查必须整批完成后短事务提交。
 
@@ -55,3 +56,5 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 仍未覆盖 #73：规则/输出/订阅 CRUD 与诊断查询、机器 envelope 执行与摘要/重放状态、多源缓存 fence、生产安全管理装配、UI与周期/发送系统旅程。后续批次继续同一 owner 和契约，不关闭父项。
 
 参考实际使用：[SQLite BEGIN IMMEDIATE 与单写者事务](https://www.sqlite.org/lang_transaction.html)、[RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785)、[Axum stateful middleware](https://docs.rs/axum/0.8.6/axum/middleware/fn.from_fn_with_state.html)。后两者分别为后续摘要规范与既有管理 guard 装配边界，不引入新的协议库。
+
+本批实测证据（云端合成数据）：`cargo test --workspace --all-features --locked` 254 tests、`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`、`cargo fmt --all --check`、Python unittest 20 tests、repository checker 与 diff check 通过。有效 Red：旧 binary 无部署文件升级诊断；受控移除配置写的 source revision 推进后，`cas_rename_restart_retirement_and_atomic_failure` 因旧 fetch 错误获准而失败，恢复实现后配置/规划专项通过。没有运行 envelope HTTP 执行、浏览器/UI、生产 worker、长 fuzz 或形式证明，不能从这些测试声称对应功能已完成。

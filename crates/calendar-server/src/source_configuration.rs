@@ -1,7 +1,7 @@
 //! Management source routes, mounted only inside the existing #34 guard.
 use crate::admin::AdminState;
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -15,10 +15,12 @@ use calendar_application::configuration::{
 use std::sync::Arc;
 
 pub(crate) fn routes() -> Router<AdminState> {
-    Router::new().route(
-        "/api/admin/v1/sources/{source_id}",
-        get(read).put(write).delete(retire),
-    )
+    Router::new()
+        .route("/api/admin/v1/sources", get(list))
+        .route(
+            "/api/admin/v1/sources/{source_id}",
+            get(read).put(write).delete(retire),
+        )
 }
 fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
@@ -175,5 +177,26 @@ pub(crate) fn describe(document: &mut serde_json::Value) {
         }
         ops.insert(method.into(), op);
     }
+    document["components"]["schemas"]["SourceConfigurationSummary"] = json!({"type":"object","additionalProperties":false,"required":["source_id","name","enabled","config_revision","source_revision","retired_at"],"properties":{"source_id":{"type":"string"},"name":{"type":"string"},"enabled":{"type":"boolean"},"config_revision":{"type":"integer","minimum":1},"source_revision":{"type":"integer","minimum":1},"retired_at":{"type":["integer","null"]}}});
+    document["components"]["schemas"]["SourceConfigurationPage"] = json!({"type":"object","additionalProperties":false,"required":["items","next_after"],"properties":{"items":{"type":"array","maxItems":100,"items":{"$ref":"#/components/schemas/SourceConfigurationSummary"}},"next_after":{"type":["string","null"]}}});
+    document["paths"]["/api/admin/v1/sources"] = json!({"get":{"summary":"Discover managed sources including retired records; at most 100 summaries","description":"Binary source_id cursor. Not snapshot pagination under concurrent writes. Unknown query fields rejected. No config bodies, tokens or credential handles.","parameters":[parameter("Cf-Access-Jwt-Assertion","header",true),parameter("__Host-calrelay_admin","cookie",true),parameter("after","query",false)],"responses":{"200":{"description":"Bounded no-store page","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SourceConfigurationPage"}}}},"400":{"description":"Invalid query"},"403":{"description":"Management identity denied"},"422":{"description":"Invalid cursor"},"500":{"description":"Persistence failed"},"503":{"description":"Stopping"}}}});
     document["paths"]["/api/admin/v1/sources/{source_id}"] = serde_json::Value::Object(ops);
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListQuery {
+    after: Option<String>,
+}
+async fn list(
+    State(state): State<AdminState>,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<calendar_application::configuration::SourceConfigurationPage>, StatusCode> {
+    state
+        .services
+        .run_task(async |db| db.list_source_configurations(query.after.as_deref()).await)
+        .await
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .map(Json)
+        .map_err(error)
 }

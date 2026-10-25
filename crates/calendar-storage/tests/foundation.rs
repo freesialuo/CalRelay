@@ -94,7 +94,7 @@ async fn migrations_are_repeatable_and_committed_data_survives_reopen() -> Resul
             sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success=1")
                 .fetch_one(db.pool())
                 .await?;
-        assert_eq!(migrations, 9);
+        assert_eq!(migrations, 10);
         let health: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(db.pool())
             .await?;

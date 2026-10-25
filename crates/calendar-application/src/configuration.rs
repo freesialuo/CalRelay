@@ -170,3 +170,21 @@ impl SourceConfigurationV1 {
         Ok(())
     }
 }
+
+/// Bounded discovery; fetch the full configuration by stable source_id after selection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceConfigurationSummary {
+    pub source_id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub config_revision: i64,
+    pub source_revision: i64,
+    pub retired_at: Option<i64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceConfigurationPage {
+    pub items: Vec<SourceConfigurationSummary>,
+    pub next_after: Option<String>,
+}

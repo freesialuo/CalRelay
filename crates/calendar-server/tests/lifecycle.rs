@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 7);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 8);
     for path in [
         "/health/live",
         "/health/ready",
@@ -241,4 +241,61 @@ fn invalid_configuration_is_rejected_without_secrets_in_diagnostics() {
         let error = result.unwrap_err().to_string();
         assert!(!error.contains("secret-invalid"));
     }
+}
+
+#[test]
+fn deployment_file_is_the_only_listener_authority_and_budgets_stay_deployment_owned() {
+    let lookup = |key: &str| match key {
+        "CALRELAY_DATABASE" => Some("persistent.db".into()),
+        "CALRELAY_MAX_REQUEST_BYTES" => Some("4096".into()),
+        "CALRELAY_SOURCE_NAME" => Some("must-not-be-read".into()),
+        _ => None,
+    };
+    let parsed = Config::from_deployment(br#"{"bind":"127.0.0.1:0"}"#, lookup).unwrap();
+    assert_eq!(parsed.bind, "127.0.0.1:0".parse().unwrap());
+    assert_eq!(parsed.max_request_bytes, 4096);
+    for body in [
+        b"{}".as_slice(),
+        br#"{"bind":"invalid-secret"}"#,
+        br#"{"bind":"127.0.0.1:0","enabled":true}"#,
+        br#"{"bind":"127.0.0.1:0","bind":"127.0.0.1:1"}"#,
+    ] {
+        let error = Config::from_deployment(body, lookup)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("invalid-secret"));
+    }
+    let legacy = Config::from_deployment(br#"{"bind":"127.0.0.1:0"}"#, |key| {
+        if key == "CALRELAY_BIND" {
+            Some(String::new())
+        } else {
+            lookup(key)
+        }
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(legacy.contains("--deployment-config"));
+}
+
+#[test]
+fn management_openapi_embeds_the_shared_configuration_schema_and_discovery_dto() {
+    let document = calendar_server::openapi();
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../schemas/source-configuration-v1.schema.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        document["components"]["schemas"]["SourceConfigurationV1"],
+        schema
+    );
+    assert_eq!(
+        document["paths"]["/api/admin/v1/sources"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SourceConfigurationPage"
+    );
+    assert_eq!(
+        document["paths"]["/api/admin/v1/sources/{source_id}"]["put"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SourceConfigurationV1"
+    );
 }

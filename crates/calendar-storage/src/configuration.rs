@@ -184,3 +184,45 @@ async fn audit(
         .execute(tx).await.map_err(|_|Error::Storage)?;
     Ok(())
 }
+
+impl Storage {
+    /// Binary source-id cursor, 100 summaries per page. Includes retired managed sources;
+    /// no secrets/config JSON. Concurrent changes require a refresh, not snapshot pagination.
+    pub async fn list_source_configurations(
+        &self,
+        after: Option<&str>,
+    ) -> Result<calendar_application::configuration::SourceConfigurationPage, Error> {
+        use calendar_application::configuration::{
+            SourceConfigurationPage, SourceConfigurationSummary,
+        };
+        if after.is_some_and(|id| !valid_id(id)) {
+            return Err(Error::Invalid);
+        }
+        type Row = (String, String, bool, i64, i64, Option<i64>);
+        let rows:Vec<Row>=sqlx::query_as("SELECT id,json_extract(config_json,'$.name'),enabled,config_revision,revision,retired_at FROM sources WHERE config_revision>0 AND id>? ORDER BY id LIMIT 101")
+            .bind(after.unwrap_or("")).fetch_all(self.pool()).await.map_err(|_|Error::Storage)?;
+        let more = rows.len() > 100;
+        let items: Vec<_> = rows
+            .into_iter()
+            .take(100)
+            .map(
+                |(source_id, name, enabled, config_revision, source_revision, retired_at)| {
+                    SourceConfigurationSummary {
+                        source_id,
+                        name,
+                        enabled,
+                        config_revision,
+                        source_revision,
+                        retired_at,
+                    }
+                },
+            )
+            .collect();
+        let next_after = if more {
+            items.last().map(|s| s.source_id.clone())
+        } else {
+            None
+        };
+        Ok(SourceConfigurationPage { items, next_after })
+    }
+}

@@ -546,6 +546,26 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
         .await
         .unwrap();
     assert_eq!(persisted.config_revision, 2);
+    let page = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/api/admin/v1/sources",
+            &jwt,
+            Some(&cookie),
+            None,
+            None,
+            None,
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page: Value =
+        serde_json::from_slice(&to_bytes(page.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(page["items"][0]["source_id"], "source-a");
+    assert!(page["items"][0].get("configuration").is_none());
+    assert!(page["next_after"].is_null());
     // Machine credentials cannot be used in place of the Access/session identity.
     let machine = server
         .services
