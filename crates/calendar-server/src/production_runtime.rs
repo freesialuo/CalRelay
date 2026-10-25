@@ -254,7 +254,13 @@ impl Server {
         };
         let degraded = output.degraded.clone();
         let storage_failed = output.storage_failed.clone();
-        self.install_runtime_ports(runner, output, degraded, storage_failed)
+        self.install_runtime_ports(
+            runner,
+            output,
+            degraded,
+            storage_failed,
+            Arc::new(RuntimeClock::new()),
+        )
     }
 
     /// Explicit isolated test harness only: reuse the exact business loops with loopback
@@ -264,6 +270,23 @@ impl Server {
     where
         R: SourceRunner + Send + 'static,
         O: PushOutput + Send + 'static,
+    {
+        self.with_test_runtime_ports_and_clock(runner, output, Arc::new(RuntimeClock::new()))
+    }
+
+    /// Controlled business clock for explicit isolated harnesses. Real-time resource budgets
+    /// remain the caller Clock's responsibility; the system harness keeps real elapsed time.
+    #[cfg(feature = "test-harness")]
+    pub fn with_test_runtime_ports_and_clock<R, O, C>(
+        self,
+        runner: R,
+        output: O,
+        clock: Arc<C>,
+    ) -> Result<Self, StartError>
+    where
+        R: SourceRunner + Send + 'static,
+        O: PushOutput + Send + 'static,
+        C: Clock + 'static,
     {
         if self.admin.is_none() || self.services.credential_provider().is_err() {
             return Err(
@@ -276,19 +299,21 @@ impl Server {
             output,
             degraded: degraded.clone(),
         };
-        self.install_runtime_ports(runner, output, degraded, storage_failed)
+        self.install_runtime_ports(runner, output, degraded, storage_failed, clock)
     }
 
-    fn install_runtime_ports<R, O>(
+    fn install_runtime_ports<R, O, C>(
         mut self,
         runner: R,
         output: O,
         degraded: Arc<AtomicBool>,
         storage_failed: Arc<AtomicBool>,
+        clock: Arc<C>,
     ) -> Result<Self, StartError>
     where
         R: SourceRunner + Send + 'static,
         O: PushOutput + Send + 'static,
+        C: Clock + 'static,
     {
         let source_limits =
             SourceScanLimits::new(1, 8, 16_384, ROUND, DELAY, DELAY, Duration::from_secs(300))
@@ -296,16 +321,17 @@ impl Server {
         let delivery_limits = DeliveryWorkerLimits::new(8, ROUND, DELAY)
             .map_err(|_| ConfigError("invalid delivery runtime limits"))?;
         let services = self.services.clone();
+        let source_clock = clock.clone();
         self = self
             .with_worker(WorkerKind::SourceSync, move |context| async move {
-                let clock = RuntimeClock::new();
+                let clock = source_clock;
                 let mut scanner = SourceScanner::new(source_limits);
                 while services.ready() {
                     if paused(&services).await? {
                         context.progress(Progress::RecoveryPaused);
                     } else {
                         scanner
-                            .round(&services, &runner, &clock, |p| {
+                            .round(&services, &runner, &*clock, |p| {
                                 context.progress(match p {
                                     SourceProgress::Scanned { external_degraded }
                                     | SourceProgress::Synchronized {
@@ -331,16 +357,17 @@ impl Server {
             })
             .map_err(|_| ConfigError("source worker already installed"))?;
         let services = self.services.clone();
+        let planner_clock = clock.clone();
         self = self
             .with_worker(WorkerKind::Planner, move |context| async move {
-                let clock = RuntimeClock::new();
+                let clock = planner_clock;
                 let mut planner = Planner::default();
                 while services.ready() {
                     if paused(&services).await? {
                         context.progress(Progress::RecoveryPaused);
                     } else {
                         planner
-                            .round(&services, &clock, |p| context.progress(p))
+                            .round(&services, &*clock, |p| context.progress(p))
                             .await?;
                     }
                     wait(&services).await;
@@ -350,14 +377,13 @@ impl Server {
             .map_err(|_| ConfigError("planner worker already installed"))?;
         let services = self.services.clone();
         self.with_worker(WorkerKind::Delivery, move |context| async move {
-            let clock = RuntimeClock::new();
             while services.ready() {
                 let result = delivery_round(
                     &services,
                     &output,
                     "calrelay-delivery",
                     delivery_limits,
-                    &clock,
+                    &*clock,
                     |p| {
                         context.progress(match p {
                             DeliveryProgress::RecoveryPaused => Progress::RecoveryPaused,

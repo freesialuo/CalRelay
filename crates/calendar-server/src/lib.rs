@@ -14,6 +14,8 @@ mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
 pub mod supervision;
+#[cfg(feature = "test-harness")]
+pub mod test_runtime;
 #[cfg(feature = "production-web")]
 mod web;
 use calendar_adapters::IcsLimits;
