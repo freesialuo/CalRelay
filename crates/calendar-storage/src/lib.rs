@@ -2,6 +2,7 @@
 
 pub mod admin_sessions;
 pub mod backup;
+pub mod ingest;
 pub mod security;
 
 mod ingestion;

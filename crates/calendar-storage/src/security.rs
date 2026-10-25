@@ -235,7 +235,7 @@ pub enum ApiAction {
     Delete,
 }
 
-fn digest(purpose: &str, secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
+pub(crate) fn digest(purpose: &str, secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
     if secret.len() != 64
         || !secret
             .iter()

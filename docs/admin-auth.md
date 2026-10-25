@@ -58,3 +58,7 @@ session 最晚于初始 Access JWT 到期或 session TTL 到期失效。配置�
 - [ring 0.17.14 RSA 公钥验证](https://docs.rs/ring/0.17.14/ring/signature/struct.RsaPublicKeyComponents.html)
 
 通过 Exa 检索并读取以上官方资料；未自行实现 RSA。测试 fixture 明确标记公开合成测试 key，只用于本地签发伪造测试 JWT，绝不能用于部署。无形式证明、长时 fuzz 或真实 Cloudflare/生产环境验证声明。
+
+### main 集成（#30 已合并）
+
+普通 merge 同步 main `653b4c6` 后，保留 #30 的 ingest router、Services policy、Schema validator、OpenAPI describe 和0007；管理路由仍单独可选挂载。旧 v9 夹具明确只装1–6、9，升级允许补入较低编号0007，再应用0010；逐条核对旧版本checksum，不再假设非连续历史是新历史的连续前缀。完整本地 Rust 241项通过；最终CI/Codex以PR当前head记录为准。#32组合验证在独立临时工作树进行，不把其未合并代码写入本分支。

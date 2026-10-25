@@ -6,7 +6,8 @@ async fn v9(path: &std::path::Path) -> Result {
     let migrations = tempfile::tempdir()?;
     for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))? {
         let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with("0010") {
+        let version: i64 = entry.file_name().to_string_lossy()[..4].parse()?;
+        if version > 6 && version != 9 {
             continue;
         }
         std::fs::copy(entry.path(), migrations.path().join(entry.file_name()))?;
@@ -38,7 +39,10 @@ async fn v9_upgrade_and_historical_and_current_backups_keep_checksums_and_data()
         sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&mut conn)
             .await?;
-    assert_eq!(old.last().unwrap().0, 9);
+    assert_eq!(
+        old.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5, 6, 9]
+    );
     conn.close().await?;
     let old_backup = dir.path().join("old-backup");
     backup::backup(&path, &old_backup).await?;
@@ -55,7 +59,12 @@ async fn v9_upgrade_and_historical_and_current_backups_keep_checksums_and_data()
         sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(db.pool())
             .await?;
-    assert_eq!(&history[..old.len()], old);
+    for (version, checksum) in &old {
+        assert_eq!(
+            history.iter().find(|(v, _)| v == version).map(|(_, c)| c),
+            Some(checksum)
+        );
+    }
     assert_eq!(history.last().unwrap().0, 10);
     let grant = db
         .create_admin_session("alice", "policy", "challenge", 100, 200)
