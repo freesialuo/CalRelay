@@ -1,5 +1,53 @@
 // Generated from the local Rust service OpenAPI. Run npm run generate.
 export interface paths {
+    "/api/admin/v1/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public challenge metadata; never grants authority */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disabled or public Turnstile metadata only */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            enabled: false;
+                        } | {
+                            /** @constant */
+                            enabled: true;
+                            turnstile: {
+                                action: string;
+                                hostname: string;
+                                site_key: string;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/outputs": {
         parameters: {
             query?: never;

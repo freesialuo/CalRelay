@@ -22,6 +22,7 @@ const COOKIE: &str = "__Host-calrelay_admin";
 pub struct AdminState {
     pub(crate) services: Arc<Services>,
     verifier: Arc<CloudflareVerifier>,
+    pub(crate) site_key: Option<String>,
     pub(crate) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 impl AdminState {
@@ -46,8 +47,28 @@ impl AdminState {
         Self {
             services,
             verifier,
+            site_key: None,
             clock,
         }
+    }
+}
+pub(crate) fn validate_site_key(value: &str) -> Result<(), crate::ConfigError> {
+    if value.is_empty()
+        || value.len() > 256
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(crate::ConfigError("invalid Turnstile site key"));
+    }
+    Ok(())
+}
+pub(crate) fn bootstrap(state: Option<&AdminState>) -> serde_json::Value {
+    match state.and_then(|s| s.site_key.as_ref().map(|key| (s, key))) {
+        Some((state, key)) => {
+            json!({"enabled":true,"turnstile":{"site_key":key,"hostname":state.verifier.hostname(),"action":state.verifier.action()}})
+        }
+        None => json!({"enabled":false}),
     }
 }
 #[derive(Deserialize)]
