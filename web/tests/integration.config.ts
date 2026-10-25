@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: ".",
-  testMatch: "source-integration.spec.ts",
+  testMatch: "*integration.spec.ts",
   workers: 1,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

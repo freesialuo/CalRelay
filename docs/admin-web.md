@@ -61,3 +61,5 @@ TDD：可运行占位入口下，浏览器在找不到“从来源开始”旅�
 依据：[Vite env 暴露边界](https://vite.dev/guide/env-and-mode)、[openapi-typescript Node API](https://openapi-ts.dev/node)、[Playwright 浏览器](https://playwright.dev/docs/browsers)与[测试配置](https://playwright.dev/docs/test-configuration)。setup-node v6 的完整 SHA 从官方仓库 tag 解析固定；不改变现有 Action 或权限。
 
 后续来源 CRUD、真实管理登录与 HTTPS/SQLite 浏览器验收见[来源管理前端](source-web.md)；原 #81 的只读基础证据不替代后续写入证据，完整产品范围仍按父项验收。
+
+规则/Bark输出与汇总订阅的后续网页旅程见[配置管理](configuration-web.md)；来源、凭据初始化与系统验收边界分别保留。

@@ -11,6 +11,8 @@ const child = spawn(
     "test-harness",
     "--bin",
     "calendar-admin-harness",
+    "--bin",
+    "calendar-server",
     "--locked",
   ],
   {

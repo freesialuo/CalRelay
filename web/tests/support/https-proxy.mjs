@@ -49,7 +49,8 @@ export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
           const url = new URL(request.url ?? "/", `https://127.0.0.1:${port}`);
           if (
             url.pathname.startsWith("/api/") ||
-            url.pathname.startsWith("/health/")
+            url.pathname.startsWith("/health/") ||
+            url.pathname.startsWith("/feeds/aggregates/")
           ) {
             const headers = new Headers();
             for (const [name, value] of Object.entries(request.headers)) {

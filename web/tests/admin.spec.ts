@@ -169,7 +169,7 @@ test("mobile navigation fits viewport", async ({ page }) => {
   await page.goto("/admin/");
   await page.getByRole("link", { name: "输出与订阅" }).click();
   await expect(
-    page.getByRole("heading", { name: "输出与订阅", exact: true }),
+    page.getByRole("heading", { name: "Bark 输出", exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(
