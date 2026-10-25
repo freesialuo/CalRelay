@@ -27,10 +27,21 @@ async fn built_assets_share_real_http_without_swallowing_api_or_paths() {
     assert_eq!(home.headers()["x-content-type-options"], "nosniff");
     assert_eq!(home.headers()["referrer-policy"], "no-referrer");
     assert_eq!(home.headers()["x-frame-options"], "DENY");
-    assert!(home.headers()["content-security-policy"]
-        .to_str()
-        .unwrap()
-        .contains("frame-ancestors 'none'"));
+    let csp = home.headers()["content-security-policy"].to_str().unwrap();
+    let directives: std::collections::BTreeMap<_, _> = csp
+        .split("; ")
+        .map(|directive| directive.split_once(' ').unwrap())
+        .collect();
+    // These exact origins must compose with the real Turnstile page's meta CSP.
+    assert_eq!(
+        directives["script-src"],
+        "'self' https://challenges.cloudflare.com"
+    );
+    assert_eq!(directives["frame-src"], "https://challenges.cloudflare.com");
+    assert_eq!(directives["connect-src"], "'self'");
+    assert_eq!(directives["style-src"], "'self'");
+    assert_eq!(directives["frame-ancestors"], "'none'");
+    assert!(!csp.contains("unsafe-") && !csp.contains('*'));
     let html = home.text().await.unwrap();
     assert!(html.contains("CalRelay"));
     assert!(!html.contains("/src/main.ts"));
