@@ -1,6 +1,7 @@
 //! SQLite persistence and atomic source synchronization for CalRelay.
 
 pub mod admin_sessions;
+pub mod aggregate;
 pub mod backup;
 pub mod configuration;
 pub mod feed;
