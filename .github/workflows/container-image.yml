@@ -2,7 +2,7 @@ name: Container image
 
 on:
   push:
-    branches: ['release-request/v*']
+    branches: ['release-request/v*', 'release-inspect/v0.1.0-alpha.1']
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -25,6 +25,7 @@ permissions:
 jobs:
   build:
     name: image-build-test
+    if: github.ref != 'refs/heads/release-inspect/v0.1.0-alpha.1'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -150,3 +151,35 @@ jobs:
           path: ${{ runner.temp }}/container-bundle/release-notes.md
           if-no-files-found: error
           retention-days: 30
+
+
+  inspect:
+    name: read-only-alpha-package-inspection
+    if: >-
+      github.repository == 'freesialuo/CalRelay' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/release-inspect/v0.1.0-alpha.1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.31.0
+          driver: docker
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Read only approved alpha metadata and manifest identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.package_inspect
