@@ -65,7 +65,7 @@ async fn v9_upgrade_and_historical_and_current_backups_keep_checksums_and_data()
             Some(checksum)
         );
     }
-    assert_eq!(history.last().unwrap().0, 10);
+    assert_eq!(history.last().unwrap().0, 11);
     let grant = db
         .create_admin_session("alice", "policy", "challenge", 100, 200)
         .await?;

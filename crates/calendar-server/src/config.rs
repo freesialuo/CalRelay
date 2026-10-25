@@ -15,16 +15,39 @@ pub struct Config {
 pub struct ConfigError(pub &'static str);
 
 impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|key| std::env::var(key).ok())
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
+        if std::env::var_os("CALRELAY_BIND").is_some() {
+            return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
+        }
+        let args: Vec<_> = args.into_iter().collect();
+        let [flag, path] = args.as_slice() else {
+            return Err(ConfigError("expected --deployment-config FILE"));
+        };
+        if flag != "--deployment-config" {
+            return Err(ConfigError("expected --deployment-config FILE"));
+        }
+        let bytes =
+            std::fs::read(path).map_err(|_| ConfigError("cannot read deployment configuration"))?;
+        Self::from_deployment(&bytes, |key| std::env::var(key).ok())
     }
 
-    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+    pub fn from_deployment(
+        bytes: &[u8],
+        get: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
+        if get("CALRELAY_BIND").is_some() {
+            return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Deployment {
+            bind: SocketAddr,
+        }
+        let deployment: Deployment = serde_json::from_slice(bytes).map_err(|_| {
+            ConfigError("deployment configuration must contain only an explicit bind address")
+        })?;
         let config = Self {
-            bind: get("CALRELAY_BIND")
-                .ok_or(ConfigError("CALRELAY_BIND"))?
-                .parse()
-                .map_err(|_| ConfigError("CALRELAY_BIND"))?,
+            bind: deployment.bind,
             database: get("CALRELAY_DATABASE")
                 .ok_or(ConfigError("CALRELAY_DATABASE"))?
                 .into(),

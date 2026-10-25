@@ -312,3 +312,86 @@ async fn new_unchanged_writes_verify_source_but_receipt_replays_do_not() {
         );
     }
 }
+
+#[tokio::test]
+async fn managed_mode_and_capability_narrowing_precede_receipt_replay() {
+    use calendar_application::configuration::*;
+    let dir = tempdir().unwrap();
+    let db = Storage::open(dir.path().join("db")).await.unwrap();
+    let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))
+    .unwrap();
+    config.calendars[0].id = "c".into();
+    config.mode = SourceMode::PushOnly;
+    config.adapter = AdapterKind::StandardCalendar;
+    config.capabilities.delta = true;
+    config.capabilities.delete = true;
+    db.put_source_configuration(
+        "s",
+        ConfigurationCondition::Absent,
+        config.clone(),
+        "alice",
+        0,
+    )
+    .await
+    .unwrap();
+    config.enabled = true;
+    db.put_source_configuration(
+        "s",
+        ConfigurationCondition::Revision(1),
+        config.clone(),
+        "alice",
+        1,
+    )
+    .await
+    .unwrap();
+    let token = db
+        .issue_api_token("managed", "s", true, true, None)
+        .await
+        .unwrap();
+    let clock = Time::new(10);
+    let first = db
+        .ingest(
+            token.expose(),
+            request("same"),
+            IngestPolicy::default(),
+            &clock,
+            "r1",
+        )
+        .await
+        .unwrap();
+    assert!(!first.replayed);
+    config.mode = SourceMode::ManualStatic;
+    db.put_source_configuration(
+        "s",
+        ConfigurationCondition::Revision(2),
+        config,
+        "alice",
+        11,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        db.ingest(
+            token.expose(),
+            request("same"),
+            IngestPolicy::default(),
+            &clock,
+            "r2"
+        )
+        .await,
+        Err(IngestError::Denied)
+    ));
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM ingest_requests")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(receipts, 1);
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM events")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+    db.close().await;
+}

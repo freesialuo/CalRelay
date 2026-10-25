@@ -1,6 +1,6 @@
 // Development/test harness only. Never connects to an existing database or service.
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +11,10 @@ export async function startService() {
   const binary = fileURLToPath(
     new URL("../../target/debug/calendar-server", import.meta.url),
   );
-  const child = spawn(binary, [], {
+  const deployment = join(directory, "deployment.json");
+  await writeFile(deployment, JSON.stringify({ bind: "127.0.0.1:0" }));
+  const child = spawn(binary, ["--deployment-config", deployment], {
     env: {
-      CALRELAY_BIND: "127.0.0.1:0",
       CALRELAY_DATABASE: join(directory, "test.sqlite"),
     },
     stdio: ["ignore", "ignore", "pipe"],

@@ -20,13 +20,13 @@ npm test
 npm run dev:local
 ```
 
-`dev:local` 在 `http://127.0.0.1:4173/admin/` 提供已构建页面，启动独立 Rust 子进程、临时 SQLite 文件和回环临时端口。仅代理同源 `/api` 与 `/health` 至这个子进程，不连接已有实例或生产服务；退出会停止子进程、删除临时库。当前 harness 使用 main 已有 env bootstrap；#73 迁移到部署 JSON 后须同步此开发 harness，前端不处理监听配置。`npm run dev` 仅提供静态开发页面，没有默认模拟或生产代理。
+`dev:local` 在 `http://127.0.0.1:4173/admin/` 提供已构建页面，启动独立 Rust 子进程、临时 SQLite 文件和回环临时端口。仅代理同源 `/api` 与 `/health` 至这个子进程，不连接已有实例或生产服务；退出会停止子进程、删除临时库。harness 为这个临时实例写入部署 JSON，通过 `--deployment-config` 显式选择回环临时端口，不再传入已移除的 `CALRELAY_BIND`；JSON 随临时库一同清理，不作为产品默认监听配置，页面不处理监听设置。`npm run dev` 仅提供静态开发页面，没有默认模拟或生产代理。
 
 已有系统 Chromium 时可执行 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm test`；CI 使用 Playwright 固定版本对应的 Chromium。测试针对生产构建。route fixtures 仅存在于 `web/tests`，无生产 mock 开关。
 
 ## 类型与构建边界
 
-`npm run generate` 启动上述本地真实服务，读取其 `/api/v1/openapi.json`，用锁定 openapi-typescript 生成 `web/src/generated/api.d.ts`。`check:generated` 做逐字比较，源头是实际 Rust OpenAPI，不复制配置 DTO 或提交另一个 JSON 权威。Rust 改动后先重建服务，再更新生成类型。声明包含现有可选管理会话和机器 API，并不意味着默认 binary 装配了这些路由，也不会赋予前端机器管理权限。
+`npm run generate` 启动上述本地真实服务，读取其 `/api/v1/openapi.json`，用锁定 openapi-typescript 生成 `web/src/generated/api.d.ts`。`check:generated` 做逐字比较，源头是实际 Rust OpenAPI，不复制配置 DTO 或提交另一个 JSON 权威。Rust 改动后先重建服务，再更新生成类型。声明包含现有可选管理会话、来源配置/分页发现与机器 API，并不意味着默认 binary 装配了这些路由，也不会赋予前端机器管理权限。
 
 Vite + TypeScript，无运行时 UI 框架；固定 npm lockfile，所有工具是开发依赖。只通过固定同源 GET 路径读取，拒绝重定向；检查有 8 秒预算和 4 KiB JSON 上限，不自动重试。请求中重复点击被禁止；取消、返回和刷新不复用旧结果。成功只描述本次 HTTP 证据，不证明来源、工作器或配置写入成功。鉴权 401/403、404 未接通、409 冲突、限流及 503 均有明确状态。响应正文错误不直接渲染；request ID 限长并筛选字符。版本等不可信文字通过 textContent 渲染。
 
