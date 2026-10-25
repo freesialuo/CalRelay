@@ -51,7 +51,10 @@ struct Job {
     source_enabled: bool,
     source_revision: i64,
     last_verified_at: Option<i64>,
+    source_config_revision: i64,
+    source_config: String,
     rule_enabled: bool,
+    binding_enabled: bool,
     current_rule: i64,
     output_enabled: bool,
     current_output: i64,
@@ -71,7 +74,8 @@ struct Job {
 const JOB_BY_ID: &str = "SELECT j.id,j.logical_delivery_id AS logical_id,j.state,
  j.event_revision,j.rule_revision,j.output_revision,j.due_at,j.next_attempt_at,j.deadline_at,j.lease_owner,j.lease_token,j.lease_until,j.planning_context,
  l.accepted_at,e.document_json,e.deleted_at,e.revision AS current_event,
- s.enabled AS source_enabled,s.revision AS source_revision,s.last_verified_at,
+ s.enabled AS source_enabled,s.revision AS source_revision,s.last_verified_at,s.config_revision AS source_config_revision,s.config_json AS source_config,
+ COALESCE((SELECT enabled FROM rule_outputs WHERE rule_id=l.rule_id AND output_id=l.output_id),0) AS binding_enabled,
  r.enabled AS rule_enabled,r.generation AS current_rule,o.enabled AS output_enabled,o.generation AS current_output,
  e.calendar_id,c.timezone_policy,r.policy_json,l.output_id,l.original_key,
  w.source_revision AS watermark_source,w.rule_revision AS watermark_rule,w.output_revision AS watermark_output,w.tzdata_version AS watermark_tzdata,
@@ -116,6 +120,7 @@ impl Job {
             || document["status"] == "cancelled"
             || self.occurrence_cancelled
             || !self.source_enabled
+            || !self.binding_enabled
             || !self.rule_enabled
             || !self.output_enabled
             || !rule["calendar_ids"]
@@ -145,13 +150,20 @@ impl Job {
         if context[0] != interpretation || context[1].as_str() != Some(&policy.tzdata_version) {
             return Ok(None);
         }
+        let fresh = if self.source_config_revision > 0 {
+            let config: calendar_application::configuration::SourceConfigurationV1 =
+                serde_json::from_str(&self.source_config)
+                    .map_err(|_| DeliveryError::InvalidData)?;
+            config.freshness_satisfied(self.last_verified_at, now)
+        } else {
+            self.last_verified_at
+                .is_some_and(|time| time >= now.saturating_sub(policy.source_max_age_ms))
+        };
         if self.watermark_source != Some(self.source_revision)
             || self.watermark_rule != Some(self.current_rule)
             || self.watermark_output != Some(self.current_output)
             || self.watermark_tzdata.as_deref() != Some(&policy.tzdata_version)
-            || !self
-                .last_verified_at
-                .is_some_and(|time| time >= now.saturating_sub(policy.source_max_age_ms))
+            || !fresh
         {
             return Ok(None);
         }
@@ -288,16 +300,22 @@ impl DeliveryRepository for Storage {
              AND (COALESCE(j.deadline_at,j.due_at+?)<=?
                OR l.accepted_at IS NOT NULL OR e.deleted_at IS NOT NULL
                OR s.enabled=0 OR r.enabled=0 OR o.enabled=0
+               OR NOT EXISTS(SELECT 1 FROM rule_outputs ro WHERE ro.rule_id=r.id AND ro.output_id=o.id AND ro.enabled=1)
                OR j.event_revision<>e.revision OR j.rule_revision<>r.generation OR j.output_revision<>o.generation
                OR (w.source_revision=s.revision AND w.rule_revision=r.generation AND w.output_revision=o.generation
-                 AND s.last_verified_at>=? AND w.tzdata_version=?
+                 AND ((s.config_revision=0 AND s.last_verified_at>=?) OR
+                   (s.config_revision>0 AND (json_extract(s.config_json,'$.mode')='manual-static'
+                     OR (json_extract(s.config_json,'$.mode')='push-only' AND json_extract(s.config_json,'$.freshness_sla_ms') IS NULL)
+                     OR (json_extract(s.config_json,'$.mode') IN ('pull','push-only')
+                       AND s.last_verified_at BETWEEN (? - json_extract(s.config_json,'$.freshness_sla_ms')) AND ?))))
+                 AND w.tzdata_version=?
                  AND json_extract(j.planning_context,'$[1]')=?
                  AND json_extract(j.planning_context,'$[0]') IS
                    CASE WHEN json_extract(e.document_json,'$.start.kind') IN ('date','floating')
                    THEN json_extract(c.timezone_policy,'$.tzid') ELSE NULL END))
              ORDER BY j.next_attempt_at,j.id LIMIT 64")
             .bind(now).bind(now).bind(policy.catch_up_ms).bind(now)
-            .bind(now.saturating_sub(policy.source_max_age_ms))
+            .bind(now.saturating_sub(policy.source_max_age_ms)).bind(now).bind(now)
             .bind(&policy.tzdata_version).bind(&policy.tzdata_version)
             .fetch_all(&mut *tx).await.map_err(db_error)?;
         for id in ids {

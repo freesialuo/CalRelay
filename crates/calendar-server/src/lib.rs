@@ -1,15 +1,18 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
 pub mod admin;
+pub mod admin_bootstrap;
 mod config;
 pub mod delivery_worker;
 mod feed;
 mod http;
 mod ingest;
+mod reminder_configuration;
 mod source_configuration;
+pub mod source_worker;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
-pub use config::{Config, ConfigError};
+pub use config::{Config, ConfigError, DeploymentConfig};
 pub use http::{openapi, router, RequestId};
 use std::{
     future::Future,
@@ -105,6 +108,17 @@ impl Server {
     ) -> Self {
         self.admin = Some(admin::AdminState::new(self.services.clone(), verifier));
         self
+    }
+    pub fn with_admin_site_key(
+        mut self,
+        verifier: Arc<calendar_adapters::admin_auth::CloudflareVerifier>,
+        site_key: String,
+    ) -> Result<Self, ConfigError> {
+        admin::validate_site_key(&site_key)?;
+        let mut state = admin::AdminState::new(self.services.clone(), verifier);
+        state.site_key = Some(site_key);
+        self.admin = Some(state);
+        Ok(self)
     }
     pub fn router(&self) -> axum::Router {
         http::router_with_admin(

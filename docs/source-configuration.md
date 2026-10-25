@@ -58,3 +58,5 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 参考实际使用：[SQLite BEGIN IMMEDIATE 与单写者事务](https://www.sqlite.org/lang_transaction.html)、[RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785)、[Axum stateful middleware](https://docs.rs/axum/0.8.6/axum/middleware/fn.from_fn_with_state.html)。后两者分别为后续摘要规范与既有管理 guard 装配边界，不引入新的协议库。
 
 本批实测证据（云端合成数据）：`cargo test --workspace --all-features --locked` 255 tests、`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`、`cargo fmt --all --check`、Python unittest 20 tests、repository checker 与 diff check 通过。有效 Red：旧 binary 无部署文件升级诊断；受控移除配置写的 source revision 推进后，`cas_rename_restart_retirement_and_atomic_failure` 因旧 fetch 错误获准而失败，恢复实现后配置/规划专项通过。没有运行 envelope HTTP 执行、浏览器/UI、生产 worker、长 fuzz 或形式证明，不能从这些测试声称对应功能已完成。
+
+后续规则/Bark输出持久配置见[提醒配置](reminder-configuration.md)（独立叶子#92），不改变本页#80历史交付范围；#73的订阅/envelope/系统集成验收继续保留。

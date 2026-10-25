@@ -27,8 +27,10 @@ pub fn router_with_admin(
     config: Config,
     admin: Option<crate::admin::AdminState>,
 ) -> Router {
+    let bootstrap = crate::admin::bootstrap(admin.as_ref());
     let management = admin.map(crate::admin::router).unwrap_or_default();
     Router::new()
+        .route("/api/admin/v1/bootstrap", get(move || { let value=bootstrap.clone(); async move { ([ ("cache-control","no-store") ],Json(value)) } }))
         .merge(crate::ingest::router())
         .route("/health/live", get(|| async { Json(json!({"status":"live"})) }))
         .route("/health/ready", get(|State(s): State<Arc<Services>>| async move {
@@ -148,12 +150,14 @@ pub fn openapi() -> Value {
         }
         paths.insert(path.into(), json!({"get":{"responses":responses}}));
     }
+    paths.insert("/api/admin/v1/bootstrap".into(), json!({"get":{"summary":"Public challenge metadata; never grants authority","responses":{"200":{"description":"Disabled or public Turnstile metadata only","headers":{"Cache-Control":{"schema":{"const":"no-store"}}},"content":{"application/json":{"schema":{"oneOf":[{"type":"object","additionalProperties":false,"required":["enabled"],"properties":{"enabled":{"const":false}}},{"type":"object","additionalProperties":false,"required":["enabled","turnstile"],"properties":{"enabled":{"const":true},"turnstile":{"type":"object","additionalProperties":false,"required":["site_key","hostname","action"],"properties":{"site_key":{"type":"string"},"hostname":{"type":"string"},"action":{"type":"string"}}}}}]}}}}}}}));
     paths.extend(crate::admin::openapi_paths());
     let mut document = json!({"openapi":"3.1.0","info":{"title":"CalRelay service API","version":env!("CARGO_PKG_VERSION")},
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
     crate::ingest::describe(&mut document);
     crate::feed::describe(&mut document);
     crate::source_configuration::describe(&mut document);
+    crate::reminder_configuration::describe(&mut document);
     document
 }
 

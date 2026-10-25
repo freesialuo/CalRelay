@@ -62,3 +62,55 @@ session 最晚于初始 Access JWT 到期或 session TTL 到期失效。配置�
 ### main 集成（#30 已合并）
 
 普通 merge 同步 main `653b4c6` 后，保留 #30 的 ingest router、Services policy、Schema validator、OpenAPI describe 和0007；管理路由仍单独可选挂载。旧 v9 夹具明确只装1–6、9，升级允许补入较低编号0007，再应用0010；逐条核对旧版本checksum，不再假设非连续历史是新历史的连续前缀。完整本地 Rust 241项通过；最终CI/Codex以PR当前head记录为准。#32组合验证在独立临时工作树进行，不把其未合并代码写入本分支。
+
+## 标准 binary 的部署装配（#93）
+
+`--deployment-config FILE` 仍是监听地址唯一入口，`CALRELAY_BIND` 继续拒绝。部署 JSON 只追加可选 `admin`；不含该字段时保持关闭，`GET /api/admin/v1/bootstrap` 返回 `{"enabled":false}`。配置 admin 后，标准 binary 在打开数据库和监听之前验证并加载 secret、构造既有 Cloudflare verifier，再调用同一管理装配。缺失/错误字段不回退关闭，直接启动失败。旧 `Config` 解析入口遇到 admin 会显式拒绝，生产调用使用 `DeploymentConfig`，避免配置被静默丢弃。
+
+以下全部是合成示例，不是账号或密钥：
+
+```json
+{
+  "bind": "127.0.0.1:8080",
+  "admin": {
+    "team": "synthetic-team",
+    "audience": "synthetic-audience",
+    "origin": "https://admin.example.test",
+    "hostname": "admin.example.test",
+    "action": "admin-login",
+    "site_key": "synthetic-site-key",
+    "administrators": {"synthetic-subject": "admin@example.test"},
+    "session_seconds": 300,
+    "turnstile_secret_file": "/run/secrets/turnstile"
+  }
+}
+```
+
+所有 admin 字段必填；未知/重复字段、重复 subject、空身份列表、非 HTTPS 或 hostname 不匹配的 origin、无效 action/site_key、TTL 非1–900秒或相对 secret 路径均拒绝。部署文档最多64KiB，管理员最多64项。site_key仅含1–256个ASCII字母数字/下划线/连字符；action最多32个相同字符。绑定地址和已有数据库/预算环境配置不改为业务配置；不从环境变量读取 admin secret。
+
+`TurnstileFileSecretProvider` 实现既有 `CredentialProvider`，仅响应固定 turnstile 用途，以只读方式打开绝对路径常规文件，读取最多4097字节后要求1–4096个ASCII graphic字节（不接受末尾换行）。Unix用O_NOFOLLOW拒绝末端symlink，用O_NONBLOCK避免FIFO阻塞，打开后检查常规文件；不会创建、写入或更改文件权限。部署者负责可信目录、只读secret挂载和文件访问权限，本实现不宣称验证挂载属性或所有父目录无symlink。错误仅为固定文本，无路径/身份/secret。没有新凭据表或迁移，不自动导入凭据。
+
+公开 `GET /api/admin/v1/bootstrap` 始终 no-store。启用且 site配置完整时，仅返回：
+
+```json
+{"enabled":true,"turnstile":{"site_key":"synthetic-site-key","hostname":"admin.example.test","action":"admin-login"}}
+```
+
+不返回team/issuer、audience、管理员、origin允许列表、secret或路径；调用不验证或返回身份、不建立会话，也不授予CRUD权限。仅使用旧 `with_admin` 而没有site_key的内部装配仍可供已有测试使用，但公开bootstrap报告关闭以避免UI宣称可登录；生产使用完整装配。登录仍为POST /api/admin/v1/session，所有原JWT/Siteverify、Origin/CSRF、nonce、过期/撤销/重放规则保留。生产反向代理负责HTTPS与Cloudflare Access header传递；不在此配置账户或代理。
+
+### 给 #89 的离线浏览器入口
+
+显式构建才包含独立测试程序；标准 binary 没有mock配置字段、环境开关或测试登录路由：
+
+```sh
+cargo build -p calendar-server --features test-harness --bin calendar-admin-harness
+./target/debug/calendar-admin-harness --database /tmp/new-isolated-test.sqlite --browser-origin https://localhost:4443
+```
+
+数据库路径必须绝对且不存在，程序独占创建文件、只绑定127.0.0.1随机端口；origin只允许HTTPS localhost或127.0.0.1。启动stdout第一行JSON包含 `upstream`、`browser_origin`、`access_jwt`、`challenge_prefix`、`synthetic_only:true`。这些是公开合成fixture；不要把该stdout或程序用于生产。Access JWT的audience/subject固定合成值，有效一小时；会话最多900秒。只接受 `synthetic-challenge:` 前缀、长度21–127的挑战，数据库仍原子拒绝重复挑战。
+
+前端测试可在其HTTPS本地代理后运行：浏览器请求保持实际Origin，代理只向本地upstream注入上述合成Cf-Access-Jwt-Assertion，绝不重写Origin以绕过guard。浏览器侧仅在测试中模拟Turnstile widget返回新的合成挑战；随后POST登录，接收真实HttpOnly Secure cookie与内存CSRF/nonce。未来来源CRUD使用生成DTO和真实API，页面刷新从同一SQLite回读。harness无预建管理员会话、无预置业务行、无认证绕过。TLS终止/前端widget模拟由#89测试owner接入，不将HTTP开发预览冒充生产登录。
+
+测试：新增标准binary子进程验证真实启用/公开元数据/伪造拒绝/坏secret启动失败；独立harness子进程验证签名后的错误身份和到期、伪造挑战、Origin/CSRF、登录、来源PUT/列表、nonce重放、到期/撤销及数据库重开。原#34全套负例保持。有效Red是bootstrap关闭状态原先404而预期200；来源API夹具修正不算Red。
+
+实现查阅 [Rust OpenOptionsExt 官方文档](https://doc.rust-lang.org/std/os/unix/fs/trait.OpenOptionsExt.html) 与 [Linux open(2)](https://man7.org/linux/man-pages/man2/open.2.html)，保留原Cloudflare/ring依据。不宣称真实账号登录、实际外部Siteverify调用或首版完整产品闭环；#75/#77其余AC仍未由本叶子覆盖。
