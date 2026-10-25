@@ -26,4 +26,6 @@ CALRELAY_DATABASE=/data/calrelay.sqlite3 calendar-server --deployment-config /ru
 
 测试使用临时 SQLite、合成部署 secret/key、安全 provider、loopback HTTP/模拟输出，覆盖三工作器真实 empty ready、规划水位/延展/版本、分页待处理预算、prepare 后输出变更失效、真实 backup/restore pause、SIGTERM 与重启。网络组件组合测试使用仅测试的 loopback transport，生产 HTTPS/SSRF 与实际 Bark TLS/响应矩阵继续由 adapters 现有测试验证；未给生产适配器添加私网豁免。
 
-生产同镜像 UI 静态托管/Docker 打包由 #103 单独负责。本批不修改 assets server、Docker 恢复或 supervisor 内部，不关闭 #75/#74/#36 的其他 AC。此文档必须与正式基线 CI 和依赖合并状态一起验收，隔离分支不能视为已发布闭环。
+仅启用 production-web（未启用 test-harness）的最终标准 binary 另经真实子进程测试：显式凭据 CLI 创建加密 handle；按现有配置 API 持久化来源/规则/输出并提交事件；实际 source 刷新与 Bark 目标的私网拒绝不关闭 HTTP，planner 生成水位/任务，投递 attempt 完整入库；同进程 /admin/、受保护 API、live/ready 均按契约响应，SIGTERM 后 SQLite 重开保持结果与零 accepted。成功 ICS/304/503 及 Bark 重试/accepted/重开去重在 loopback 模拟 transport 组合测试中覆盖，没有访问生产。
+
+同镜像 UI 静态托管/Docker 打包复用已合并 #103。本批不修改 assets server、Docker 恢复或 supervisor 内部，不关闭 #75/#74/#36 的其他 AC。此文档必须与正式基线 CI 和依赖合并状态一起验收，隔离分支不能视为已发布闭环。

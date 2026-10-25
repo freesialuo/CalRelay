@@ -396,3 +396,187 @@ fn standard_runtime_refuses_missing_security_before_database_or_bind() {
         assert_eq!(String::from_utf8(output.stderr).unwrap(),"invalid or missing server configuration: production runtime requires admin and credentials configuration\n");
     }
 }
+
+#[test]
+fn standard_binary_plans_and_dispatches_real_configuration_without_private_network_access() {
+    use calendar_application::{
+        configuration::*, EventRepository, SourceRepository, SyncBatch, SyncMode, SyncRecord,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("workflow.db");
+    let document = common::deployment(dir.path(), "127.0.0.1:0");
+    let deployment = dir.path().join("workflow.json");
+    std::fs::write(&deployment, document.to_string()).unwrap();
+    let secret = dir.path().join("synthetic-bark-secret");
+    std::fs::write(&secret, b"synthetic-device-key").unwrap();
+    let provision = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .env("CALRELAY_DATABASE", &database)
+        .args(["credential", "provision-bark", "--deployment-config"])
+        .arg(&deployment)
+        .args(["--credential-id", "bark-credential", "--secret-file"])
+        .arg(&secret)
+        .output()
+        .unwrap();
+    assert!(
+        provision.status.success(),
+        "{}",
+        String::from_utf8_lossy(&provision.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&provision.stdout).unwrap();
+    assert_eq!(receipt["credential_id"], "bark-credential");
+    assert!(!String::from_utf8_lossy(&provision.stdout).contains("synthetic-device-key"));
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    let start = chrono::DateTime::from_timestamp_millis(now + 10_000)
+        .unwrap()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db=calendar_storage::Storage::open(&database).await.unwrap();
+        let mut source:SourceConfigurationV1=serde_json::from_str(include_str!("../../../examples/source-configuration-v1.json")).unwrap();
+        source.mode=SourceMode::Pull;source.endpoint=Some("https://127.0.0.1:9/blocked.ics".into());
+        source.refresh_interval_ms=Some(60_000);source.freshness_sla_ms=Some(60_000);
+        db.put_source_configuration("source",ConfigurationCondition::Absent,source.clone(),"test",now).await.unwrap();
+        source.enabled=true;db.put_source_configuration("source",ConfigurationCondition::Revision(1),source,"test",now).await.unwrap();
+        let mut output:BarkOutputConfigurationV1=serde_json::from_str(include_str!("../../../examples/bark-output-configuration-v1.json")).unwrap();
+        output.origin="https://127.0.0.1:9".into();
+        db.put_bark_output_configuration("bark-a",ConfigurationCondition::Absent,output.clone(),"test",now).await.unwrap();
+        output.enabled=true;db.put_bark_output_configuration("bark-a",ConfigurationCondition::Revision(1),output,"test",now).await.unwrap();
+        let mut rule:RuleConfigurationV1=serde_json::from_str(include_str!("../../../examples/rule-configuration-v1.json")).unwrap();rule.policy.lead_ms=0;
+        db.put_rule_configuration("rule",ConfigurationCondition::Absent,rule.clone(),"test",now).await.unwrap();
+        rule.enabled=true;db.put_rule_configuration("rule",ConfigurationCondition::Revision(1),rule,"test",now).await.unwrap();
+        let event=serde_json::from_value(serde_json::json!({"schema_version":"1.0","external_uid":"future-event","title":"Synthetic process workflow","status":"confirmed","start":{"kind":"utc","value":start}})).unwrap();
+        db.commit_sync(SyncBatch { source_id:"source".into(),base_revision:db.source_state("source").await.unwrap().revision,
+            mode:SyncMode::Delta,records:vec![SyncRecord::Upsert { calendar_id:"calendar-a".into(),event:Box::new(event) }],proposed_checkpoint:None,verified_at:now }).await.unwrap();
+        db.close().await;
+    });
+    let mut process = Process(
+        Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+            .env_clear()
+            .env("CALRELAY_DATABASE", &database)
+            .arg("--deployment-config")
+            .arg(&deployment)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stderr = process.0.stderr.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let _ = tx.send(line.unwrap());
+        }
+    });
+    let line = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let address = line.strip_prefix("CalRelay listening on ").unwrap();
+    let observed = runtime
+        .block_on(calendar_storage::Storage::open(&database))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let state: Option<String> = runtime
+            .block_on(
+                sqlx::query_scalar("SELECT state FROM delivery_jobs")
+                    .fetch_optional(observed.pool()),
+            )
+            .unwrap();
+        if state.as_deref() == Some("failed_permanent") {
+            break;
+        }
+        assert!(
+            process.0.try_wait().unwrap().is_none(),
+            "external degradation must not terminate the binary"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "configured planner/delivery did not run; state={state:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    runtime.block_on(async {
+        let audit: (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),COUNT(sent_at),COUNT(finished_at) FROM delivery_attempts",
+        )
+        .fetch_one(observed.pool())
+        .await
+        .unwrap();
+        assert_eq!(audit, (1, 1, 1));
+        let watermarks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM planning_watermarks")
+            .fetch_one(observed.pool())
+            .await
+            .unwrap();
+        assert_eq!(watermarks, 1);
+        let verified: Option<i64> =
+            sqlx::query_scalar("SELECT last_verified_at FROM sources WHERE id='source'")
+                .fetch_one(observed.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            verified,
+            Some(now),
+            "blocked refresh keeps the previous snapshot"
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        for path in ["/health/live", "/health/ready"] {
+            assert_eq!(
+                client
+                    .get(format!("http://{address}{path}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
+        }
+        assert_eq!(
+            client
+                .get(format!("http://{address}/api/admin/v1/sources"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        #[cfg(feature = "production-web")]
+        {
+            let page = client
+                .get(format!("http://{address}/admin/"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(page.status(), 200);
+            assert!(page.text().await.unwrap().contains("/admin/assets/"));
+        }
+        observed.close().await;
+    });
+    terminate(&mut process.0);
+    reader.join().unwrap();
+    assert!(!rx.try_iter().any(|s| s.contains("synthetic-device-key")));
+    runtime.block_on(async {
+        let db = calendar_storage::Storage::open(&database).await.unwrap();
+        let accepted: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM logical_deliveries WHERE accepted_at IS NOT NULL",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(accepted, 0);
+        let state: String = sqlx::query_scalar("SELECT state FROM delivery_jobs")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(state, "failed_permanent");
+        db.close().await;
+    });
+}

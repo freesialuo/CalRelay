@@ -2,7 +2,7 @@
 
 统一接入日历与事件，可靠地生成日历订阅和定时提醒。
 
-状态：已实现事件领域、持久化同步/规划/租约、协议适配、管理鉴权、汇总订阅与恢复；标准 binary 安全装配实际来源扫描、规划和投递三工作器。运行与预算见[生产运行时](docs/production-runtime.md)。来源管理旅程已接入；规则/输出/订阅前端及 Docker/静态网页交付仍待整体验收，不能据此认定整个产品完成。
+状态：已实现事件领域、持久化同步/规划/租约、协议适配、管理鉴权、汇总订阅与恢复；标准 binary 安全装配实际来源扫描、规划和投递三工作器。运行与预算见[生产运行时](docs/production-runtime.md)。来源管理旅程已接入；规则/输出/订阅前端及 Docker 产品整体验收仍待完成，不能据此认定整个产品完成。
 
 CalRelay 的目标是 Docker 交付、高度可定制的提醒平台：在前端管理来源/接入器、周期、日历选择、规则、输出和订阅。核心是自定义标准日历源与 EventV1 数据契约，ICS 只是输入协议之一；支持配置的协议适配器及经鉴权的远端任意语言/浏览器扩展 producer。详见[产品 DFD/UML 与实现差距](docs/product-design.md)。
 
@@ -41,4 +41,4 @@ flowchart LR
 
 仓库：[freesialuo/CalRelay](https://github.com/freesialuo/CalRelay)。项目名意为日历与提醒的中继。
 
-TypeScript 管理入口已有真实登录与来源 CRUD；规则/输出/订阅前端及生产静态资源仍待接通。开发与验证见[管理前端](docs/admin-web.md)。
+TypeScript 管理入口已有真实登录与来源 CRUD；规则/输出/订阅前端仍待接通；同 binary 静态网页已有 production-web 构建入口。开发与验证见[管理前端](docs/admin-web.md)。
