@@ -1,12 +1,15 @@
 //! Service assembly, health observation and lifecycle.
 pub mod admin;
 pub mod admin_bootstrap;
+mod aggregate_configuration;
+mod aggregate_feed;
 mod config;
 mod feed;
 mod http;
 mod ingest;
 mod reminder_configuration;
 mod source_configuration;
+pub mod source_worker;
 pub mod supervision;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;

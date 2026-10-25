@@ -69,42 +69,53 @@ impl FeedScope {
     }
     /// Remove only the five supported content fields. Other capabilities remain in the
     /// document so the renderer still rejects unsupported input instead of hiding loss.
+    pub fn visible_fields(&self) -> Option<&[VisibleField]> {
+        match self {
+            Self::Legacy => None,
+            Self::V1(v) => Some(&v.visible_fields),
+        }
+    }
     pub fn project(&self, event: &mut EventV1) {
-        let Self::V1(v) = self else { return };
-        let visible = |field| v.visible_fields.contains(&field);
-        if !visible(VisibleField::Summary) {
-            event.title = "Busy".into();
+        if let Some(fields) = self.visible_fields() {
+            project_visible_fields(event, fields);
         }
-        if !visible(VisibleField::Description) {
-            event.description = None;
-        }
-        if !visible(VisibleField::Location) {
-            event.location = None;
-        }
-        if !visible(VisibleField::Url) {
-            event.url = None;
-        }
-        if !visible(VisibleField::Categories) {
-            event.categories = None;
-        }
-        if let Some(recurrence) = &mut event.recurrence {
-            for exception in recurrence.exceptions.iter_mut().flatten() {
-                if let Change::Override { patch } = &mut exception.change {
-                    if !visible(VisibleField::Summary) {
-                        patch.title = None;
-                    }
-                    if !visible(VisibleField::Description) {
-                        patch.description = None;
-                    }
-                    if !visible(VisibleField::Location) {
-                        patch.location = None;
-                    }
-                    if !visible(VisibleField::Url) {
-                        patch.url = None;
-                    }
-                    if !visible(VisibleField::Categories) {
-                        patch.categories = None;
-                    }
+    }
+}
+/// Shared finite projection for stored single/aggregate policies; not an authorization grant.
+pub fn project_visible_fields(event: &mut EventV1, fields: &[VisibleField]) {
+    let visible = |field| fields.contains(&field);
+    if !visible(VisibleField::Summary) {
+        event.title = "Busy".into();
+    }
+    if !visible(VisibleField::Description) {
+        event.description = None;
+    }
+    if !visible(VisibleField::Location) {
+        event.location = None;
+    }
+    if !visible(VisibleField::Url) {
+        event.url = None;
+    }
+    if !visible(VisibleField::Categories) {
+        event.categories = None;
+    }
+    if let Some(recurrence) = &mut event.recurrence {
+        for exception in recurrence.exceptions.iter_mut().flatten() {
+            if let Change::Override { patch } = &mut exception.change {
+                if !visible(VisibleField::Summary) {
+                    patch.title = None;
+                }
+                if !visible(VisibleField::Description) {
+                    patch.description = None;
+                }
+                if !visible(VisibleField::Location) {
+                    patch.location = None;
+                }
+                if !visible(VisibleField::Url) {
+                    patch.url = None;
+                }
+                if !visible(VisibleField::Categories) {
+                    patch.categories = None;
                 }
             }
         }

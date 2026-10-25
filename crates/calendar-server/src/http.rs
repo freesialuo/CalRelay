@@ -42,7 +42,8 @@ pub fn router_with_admin(
         .route("/api/v1/openapi.json", get(|| async { Json(openapi()) }))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(services.clone())
-        .merge(crate::feed::router(services, config.max_response_bytes))
+        .merge(crate::feed::router(services.clone(), config.max_response_bytes))
+        .merge(crate::aggregate_feed::router(services, config.max_response_bytes))
         .merge(management)
         .layer(middleware::from_fn_with_state(config, boundary))
 }
@@ -158,6 +159,8 @@ pub fn openapi() -> Value {
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
     crate::ingest::describe(&mut document);
     crate::feed::describe(&mut document);
+    crate::aggregate_feed::describe(&mut document);
+    crate::aggregate_configuration::describe(&mut document);
     crate::source_configuration::describe(&mut document);
     crate::reminder_configuration::describe(&mut document);
     document
