@@ -227,18 +227,14 @@ fn ac2_timezone_subcomponents_and_thisandfuture_remain_explicit_source_data() {
 }
 
 #[test]
-fn ac3_literal_backslash_n_exposes_icalendar_text_decoding_loss() {
-    // RFC 5545 section 3.3.11: the escaped backslash is literal, so the
-    // semantic text is backslash + 'n', not a line break. Record the candidate
-    // defect rather than silently correcting its parsed output in the helper.
+fn ac3_literal_backslash_n_preserves_rfc_text() {
+    // RFC 5545 section 3.3.11: an escaped backslash followed by 'n'
+    // remains literal text. Each parser has an independent fixed oracle.
     let ical = calendar(Candidate::Ical, TIME_TEXT);
     let icalendar = calendar(Candidate::Icalendar, TIME_TEXT);
     let raw = property(events(&ical)[2], "DESCRIPTION");
-    let lossy = property(events(&icalendar)[2], "DESCRIPTION");
+    let decoded = property(events(&icalendar)[2], "DESCRIPTION");
     assert_eq!(raw.value, r"Literal \\n token");
-    assert_eq!(lossy.value, "Literal \n token");
-    assert_ne!(
-        lossy.value, r"Literal \n token",
-        "candidate unexpectedly preserves RFC text; revisit selection evidence"
-    );
+    assert_eq!(decoded.value, r"Literal \n token");
+    assert_ne!(decoded.value, "Literal \n token");
 }
