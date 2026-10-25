@@ -4,7 +4,7 @@
 
 ## 可实现的最小配置 API
 
-Rust 权威为 `calendar-application::configuration::{SourceConfigurationV1, SourceConfigurationRecord, CalendarMappingV1, SourceCapabilitiesV1}`；结构 schema 为 `schemas/source-configuration-v1.schema.json`，示例为 `examples/source-configuration-v1.json`。业务校验进一步限制能力/模式/日历归属/时区/URL，不把 JSON Schema 通过当作可启用。
+Rust 权威为 `calendar-application::configuration::{SourceConfigurationV1, SourceConfigurationRecord, CalendarMappingV1, SourceCapabilitiesV1}`；结构 schema 为 `schemas/source-configuration-v1.schema.json`，示例为 `examples/source-configuration-v1.json`。业务校验进一步限制能力/模式/日历归属/时区/URL，不把 JSON Schema 通过当作可启用。 UI 类型生成可运行 `cargo run -p calendar-server --example export_openapi --locked` 导出与 HTTP 相同的 OpenAPI；该命令不读取 env、不打开 DB 或监听器。
 
 | 请求 | 条件与结果 |
 | --- | --- |
