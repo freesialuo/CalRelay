@@ -60,7 +60,7 @@ async fn seed(services: &Services) -> Result {
       VALUES ('e','s','c','a',1,'{"schema_version":"1.0","external_uid":"a","title":"Test","status":"confirmed","start":{"kind":"utc","value":"2026-11-02T17:00:00Z"},"duration":"PT1H"}','h');
     INSERT INTO outputs(id,kind) VALUES ('o','test');
     INSERT INTO reminder_rules(id,policy_json) VALUES ('r','{"calendar_ids":["c"]}');
-    INSERT INTO rule_outputs VALUES ('r','o');
+    INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o');
     INSERT INTO planning_watermarks(scope_id,source_id,rule_id,output_id,source_revision,rule_revision,output_revision,planned_until,tzdata_version)
       VALUES ('w','s','r','o',1,1,1,20000,'2025b');
     "#).execute(services.storage.pool()).await?;
@@ -451,5 +451,199 @@ async fn external_http_failure_is_persisted_and_other_due_jobs_continue() -> Res
     let _ = stop.send(());
     server.await??;
     services.drain().await;
+    Ok(())
+}
+
+// Register the actual queue future; missing production workers stay visibly not-ready.
+async fn supervised_server(path: &std::path::Path) -> Result<Server> {
+    use calendar_server::supervision::SupervisionConfig;
+    Ok(Server::initialize_with_supervision(
+        Config {
+            bind: "127.0.0.1:0".parse()?,
+            database: path.into(),
+            max_request_bytes: 1024,
+            max_response_bytes: 16384,
+            request_timeout: Duration::from_secs(1),
+        },
+        SupervisionConfig {
+            startup_grace: Duration::from_secs(5),
+            stall_timeout: Duration::from_secs(3),
+            probe_interval: Duration::from_millis(10),
+            probe_timeout: Duration::from_millis(30),
+            shutdown_timeout: Duration::from_millis(100),
+        },
+    )
+    .await?)
+}
+
+#[tokio::test]
+async fn supervised_real_empty_scan_is_progress_without_inventing_other_workers() -> Result {
+    use calendar_server::supervision::{Progress, WorkerFailure, WorkerKind};
+    let dir = tempfile::tempdir()?;
+    let server = supervised_server(&dir.path().join("db")).await?;
+    let services = server.services.clone();
+    let scanned = Arc::new(Semaphore::new(0));
+    let observed = scanned.clone();
+    let worker_services = services.clone();
+    let server = server.with_worker(WorkerKind::Delivery, move |context| async move {
+        run_delivery_worker(
+            &worker_services,
+            &Accepted,
+            "supervised",
+            limits(8),
+            &Time::new(),
+            |p| {
+                assert_eq!(p, DeliveryProgress::Empty);
+                context.progress(Progress::Completed);
+                observed.add_permits(1);
+            },
+        )
+        .await
+        .map_err(|_| WorkerFailure)
+    })?;
+    let listener = server.bind().await?;
+    let running = tokio::spawn(server.serve(listener, std::future::pending()));
+    tokio::time::timeout(Duration::from_secs(2), scanned.acquire())
+        .await??
+        .forget();
+    let snapshot = services.health.snapshot();
+    assert!(!snapshot.pending_workers.contains(&WorkerKind::Delivery));
+    assert!(snapshot.missing_workers.contains(&WorkerKind::Planner));
+    assert!(!snapshot.ready);
+    assert!(
+        services.ready(),
+        "health readiness does not close admission"
+    );
+    services.stop();
+    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    assert!(services.health.snapshot().fault.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn supervised_restore_pause_is_live_and_never_claims_or_resumes() -> Result {
+    use calendar_server::supervision::{Progress, WorkerFailure, WorkerKind};
+    let dir = tempfile::tempdir()?;
+    let original = dir.path().join("original");
+    let services = service(&original).await?;
+    seed(&services).await?;
+    let snapshot = dir.path().join("snapshot");
+    calendar_storage::backup::backup(&original, &snapshot).await?;
+    services.drain().await;
+    let recovery = dir.path().join("recovery");
+    calendar_storage::backup::restore(&snapshot, &recovery, 1000).await?;
+    let path = recovery.join("database.sqlite3");
+    let server = supervised_server(&path).await?;
+    let services = server.services.clone();
+    let paused = Arc::new(Semaphore::new(0));
+    let observed = paused.clone();
+    let worker_services = services.clone();
+    let server = server.with_worker(WorkerKind::Delivery, move |context| async move {
+        run_delivery_worker(
+            &worker_services,
+            &Accepted,
+            "supervised",
+            limits(8),
+            &Time::new(),
+            |p| {
+                assert_eq!(p, DeliveryProgress::RecoveryPaused);
+                context.progress(Progress::RecoveryPaused);
+                observed.add_permits(1);
+            },
+        )
+        .await
+        .map_err(|_| WorkerFailure)
+    })?;
+    let listener = server.bind().await?;
+    let running = tokio::spawn(server.serve(listener, std::future::pending()));
+    tokio::time::timeout(Duration::from_secs(2), paused.acquire())
+        .await??
+        .forget();
+    let mut changes = services.health.subscribe();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while services.health.snapshot().database
+            != (calendar_server::supervision::DatabaseState::Ready {
+                recovery_paused: true,
+            })
+        {
+            changes.changed().await.unwrap();
+        }
+    })
+    .await?;
+    let health = services.health.snapshot();
+    assert!(health.live);
+    assert!(!health.ready);
+    assert!(services.ready());
+    let control: (i64, i64) = sqlx::query_as("SELECT paused,cutoff FROM recovery_control")
+        .fetch_one(services.storage.pool())
+        .await?;
+    assert_eq!(control, (1, 1000));
+    let attempts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM delivery_attempts")
+        .fetch_one(services.storage.pool())
+        .await?;
+    assert_eq!(attempts, 0);
+    assert_eq!(
+        states(&services).await?,
+        ["retry_wait", "retry_wait", "retry_wait"]
+    );
+    services.stop();
+    tokio::time::timeout(Duration::from_secs(2), running).await???;
+    assert!(services.health.snapshot().fault.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn supervised_stuck_send_has_bounded_drain_and_preserves_unfinished_intent() -> Result {
+    use calendar_server::supervision::{CoreFault, Progress, WorkerFailure, WorkerKind};
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("db");
+    let server = supervised_server(&path).await?;
+    let services = server.services.clone();
+    seed(&services).await?;
+    let output = Arc::new(GatedOutput {
+        entered: Semaphore::new(0),
+        release: Semaphore::new(0),
+    });
+    let sending = output.clone();
+    let worker_services = services.clone();
+    let server = server.with_worker(WorkerKind::Delivery, move |context| async move {
+        run_delivery_worker(
+            &worker_services,
+            &*sending,
+            "supervised",
+            limits(8),
+            &Time::new(),
+            |_| {
+                context.progress(Progress::Completed);
+            },
+        )
+        .await
+        .map_err(|_| WorkerFailure)
+    })?;
+    let listener = server.bind().await?;
+    let running = tokio::spawn(server.serve(listener, std::future::pending()));
+    tokio::time::timeout(Duration::from_secs(2), output.entered.acquire())
+        .await??
+        .forget();
+    services.stop();
+    let result = tokio::time::timeout(Duration::from_secs(2), running).await??;
+    assert!(matches!(
+        result,
+        Err(calendar_server::StartError::Supervision(
+            CoreFault::ShutdownTimeout
+        ))
+    ));
+    let reopened = service(&path).await?;
+    let attempts: (i64, i64, i64) =
+        sqlx::query_as("SELECT COUNT(*),COUNT(sent_at),COUNT(finished_at) FROM delivery_attempts")
+            .fetch_one(reopened.storage.pool())
+            .await?;
+    assert_eq!(
+        attempts,
+        (1, 1, 0),
+        "cancellation retains durable send uncertainty"
+    );
+    assert_eq!(states(&reopened).await?, ["leased", "pending", "pending"]);
+    reopened.drain().await;
     Ok(())
 }

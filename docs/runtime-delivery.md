@@ -14,14 +14,8 @@
 
 集成测试使用真实 SQLite 与合成配置，仅测试中提供受控输出/本地模拟 HTTP。覆盖有界轮次、单调预算、停止排空、空查询、存储失败、取消后 accepted 审计、重开去重、真实 backup/restore 的 pause/cutoff。Bark 实际适配器仍使用已有本地 TLS 模拟响应矩阵测试。有效 Red：未检查轮次操作上限时实际处理 3 项，断言预期 1 项失败；恢复暂停最初误走 claim 导致 Database，增加只读状态判别后通过。没有生产网络或设备发送。
 
-此批基于 main，可独立集成。生产装配仍有以下真实依赖，不关闭 #75 或 #74：
+此批已正常组合 main 上的 #71 监督、#96 admin bootstrap、#97 规则/输出配置查询、#98 来源扫描及 #101 汇总订阅；不重复这些模块的 DTO、迁移或 API。监督集成测试直接注册真实 due-loop：空 SQLite 查询报告 Completed；真实 backup/restore 后报告 RecoveryPaused、保持 pause/cutoff 且不领取；卡住的测试输出触发有限 drain，重开 SQLite 后发送意图/租约仍未完成，没有伪造 accepted。缺失其他生产工作器时 ready 仍为 false，健康诊断不关闭业务准入。
 
-- #82 的共享来源配置 DTO/持久化及 `--deployment-config` 监听迁移（读取实际 PR，不复制其 DTO/0011/API）。
-- 规则/输出绑定的有界配置发现 port，包含 source/rule/output 当前 revision/generation 与规划水位；真实 `PlanningRequest` 需由这些值构造。
-- Bark 输出配置的 endpoint、credential 引用与 enabled/generation 契约；credential 加密存储不能代替明确的部署主密钥/只读 secret provider 装配。
-- 管理 Access verifier、Turnstile 和管理员身份的严格部署配置；标准 binary 必须 fail closed，不能用 `admin=None` 宣称管理可用。
-- #71 的 `with_worker` / `WorkerContext` 注册；将真实进度与 recovery_paused 接到监督，保持 readiness 与业务准入分开。仅在依赖实际合并后组合 main 并运行最终基线 CI。
-
-后续叶子继续交付能力感知来源扫描、规划窗口延展与持久水位、安全 composition root；本批不提供虚假的空配置循环。
+标准 binary 的生产闭环仍待 #75 后续组合：基于实际 `ReminderConfigurationRepository` 的规划窗口/持久水位、按 job/output 当前 generation 查询的 Bark 分发、#99 的实际 KeyRing/只读凭据 provider，以及三个真实工作器注册和整体恢复验收。生产部署必须使用安全 admin/secret 配置，不能用 seed/mock 数据或默认免鉴权冒充可用。本批只关闭 #90，保留 #75/#74 的未完成要求。
 
 参考：[Tokio watch Receiver](https://docs.rs/tokio/1.54.1/tokio/sync/watch/struct.Receiver.html) 的订阅/changed 语义与取消安全；[Tokio sleep](https://docs.rs/tokio/1.54.1/tokio/time/fn.sleep.html) 的异步等待与取消语义。实现使用仓库固定 Tokio 1.54.1。
