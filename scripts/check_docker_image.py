@@ -153,6 +153,6 @@ try:
     print("UNVERIFIED: production workers/credentials/UI journey, arm64, external recovery/Engine stop-kill races, upgrades/scanning/SBOM")
 finally:
     for container in (CONTAINER, SEED):
-        docker("rm", "--force", container, check=False)
+        docker("rm", "--force", "--volumes", container, check=False)
     for volume in VOLUMES:
         docker("volume", "rm", volume, check=False)
