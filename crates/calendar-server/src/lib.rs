@@ -2,6 +2,7 @@
 pub mod admin;
 mod config;
 pub mod delivery_worker;
+mod feed;
 mod http;
 mod ingest;
 mod source_configuration;
