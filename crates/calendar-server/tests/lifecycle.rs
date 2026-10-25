@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 9);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 13);
     for path in [
         "/health/live",
         "/health/ready",
