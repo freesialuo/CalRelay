@@ -50,9 +50,13 @@ async fn state(db: &Storage) -> Result<(i64, Option<String>, Option<i64>)> {
     .await?)
 }
 async fn count(db: &Storage, table: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(db.pool())
-        .await?)
+    let query = match table {
+        "event_revisions" => "SELECT count(*) FROM event_revisions",
+        "events" => "SELECT count(*) FROM events",
+        "source_changes" => "SELECT count(*) FROM source_changes",
+        _ => panic!("unsupported test table"),
+    };
+    Ok(sqlx::query_scalar(query).fetch_one(db.pool()).await?)
 }
 
 #[tokio::test]
