@@ -29,7 +29,7 @@ Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校�
 
 - 不强推。更新分支优先使用 merge 提交；如需重写历史，必须事先单独授权。
 - 运行 `git diff --check`，安装 `requirements/ci.txt`，运行 `python3 -m unittest discover -s tests -v` 和 `python3 scripts/check_repository.py`。
-- CI 运行事件 JSON Schema、示例、契约拒绝案例、PR 约定与仓库结构检查，以及 Rust workspace 的 `cargo fmt --check`、Clippy（`-D warnings`）和 `cargo test`；尚无前端运行代码，不声称运行了前端测试。
+- CI 运行事件 JSON Schema、示例、契约拒绝案例、PR 约定与仓库结构检查，以及 Rust workspace 的 `cargo fmt --check`、Clippy（`-D warnings`）和 `cargo test`；前端检查见 [管理前端](docs/admin-web.md)，包含真实本地 HTTP 与浏览器测试。
 - Rust workspace 首次实现的同一 PR 必须接入 `cargo fmt --check`、`cargo clippy --workspace --all-targets --all-features -- -D warnings` 和适当的 `cargo test`；前端首次实现同样接入类型、构建与有价值的测试。所有检查纳入固定 `quality-gate`。
 - Kani 是独立的可选工作流：相关路径改动时自动运行，也可手动触发；不纳入 `quality-gate` 或必需状态检查。范围与运行方式见 [形式验证](docs/formal-verification.md)。
 - 按 Issue 的风险与 TDD 需要选用 [测试、证明与质量工具](docs/verification-toolkit.md)，记录适用范围及实际证据；允许的扩展能力不默认成为强制 CI。
