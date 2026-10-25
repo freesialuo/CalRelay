@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,6 +78,48 @@ try {
       reject(new Error("Offline harness exited before readiness"));
     });
   });
+  // Only this explicit offline test process creates synthetic credential files.
+  // Provision via the actual owner's CLI, never SQL seeds or a management bypass.
+  const keyPath = join(directory, "synthetic-master-key");
+  const secretPath = join(directory, "synthetic-bark-secret");
+  const deploymentPath = join(directory, "synthetic-deployment.json");
+  await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 });
+  await writeFile(secretPath, "synthetic_bark_browser_secret", {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await writeFile(
+    deploymentPath,
+    JSON.stringify({
+      bind: "127.0.0.1:0",
+      credentials: { current_key_version: 1, key_files: { 1: keyPath } },
+    }),
+    { flag: "wx", mode: 0o600 },
+  );
+  const credentialBinary = fileURLToPath(
+    new URL("../../../target/debug/calendar-server", import.meta.url),
+  );
+  const provision = await execute(
+    credentialBinary,
+    [
+      "credential",
+      "provision-bark",
+      "--deployment-config",
+      deploymentPath,
+      "--credential-id",
+      "synthetic_browser_bark",
+      "--secret-file",
+      secretPath,
+    ],
+    { env: { ...process.env, CALRELAY_DATABASE: database }, maxBuffer: 4096 },
+  );
+  const metadata = JSON.parse(provision.stdout);
+  if (
+    metadata.credential_id !== "synthetic_browser_bark" ||
+    metadata.revision !== 0 ||
+    provision.stderr
+  )
+    throw new Error("Invalid synthetic CLI receipt");
   proxy = await startHTTPSProxy(
     configuration.upstream,
     configuration.access_jwt,

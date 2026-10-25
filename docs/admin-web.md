@@ -73,3 +73,5 @@ cargo build --release --locked -p calendar-server --bin calendar-server --featur
 
 静态资源本身不授予管理身份。生产入口仍必须在可信代理/Access 边界保护整个管理 host 与 `/admin/`，管理 API 持续验证 JWT/session/CSRF/Origin/nonce；静态服务不会加载 secret 或绕过这些 guard。监听仍只有部署 JSON，未新增 env、字段或默认端口。反向代理不得覆盖安全头或把未知 API 改写为首页。实际 TCP HTTP 测试覆盖页面/资产、HEAD、类型/缓存、安全头、编码 traversal 负例和 API 共存；这是静态托管证据，不代表 UI 写入或业务循环已验收。
 后续来源 CRUD、真实管理登录与 HTTPS/SQLite 浏览器验收见[来源管理前端](source-web.md)；原 #81 的只读基础证据不替代后续写入证据，完整产品范围仍按父项验收。
+
+规则/Bark输出与汇总订阅的后续网页旅程见[配置管理](configuration-web.md)；来源、凭据初始化与系统验收边界分别保留。

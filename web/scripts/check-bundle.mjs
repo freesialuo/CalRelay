@@ -8,6 +8,8 @@ const markers = [
   "synthetic_browser_test_challenge",
   "synthetic-challenge:",
   "offline-widget",
+  "synthetic_bark_browser_secret",
+  "synthetic_browser_bark",
 ];
 await promisify(execFile)(
   process.execPath,
