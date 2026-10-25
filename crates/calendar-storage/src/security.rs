@@ -1,5 +1,10 @@
 //! AEAD credentials and purpose-separated machine capabilities. No HTTP/admin auth here.
-use std::{collections::BTreeMap, io::Read, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs::OpenOptions,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use calendar_application::{CredentialProvider, SecretBytes, SecurityError};
 use chacha20poly1305::{
@@ -13,6 +18,37 @@ use zeroize::Zeroizing;
 use crate::Storage;
 
 const MAX_SECRET: usize = 65_536;
+
+/// Bounded read-only regular-file adapter. Callers validate path ownership and purpose.
+/// Unix rejects terminal symlinks and nonregular files without waiting on FIFO writers.
+pub fn read_secret_file(path: &Path, max_bytes: usize) -> Result<SecretBytes, SecurityError> {
+    if !(1..=MAX_SECRET).contains(&max_bytes) {
+        return Err(SecurityError::InvalidInput);
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|_| SecurityError::KeyFile)?;
+    if !file
+        .metadata()
+        .map_err(|_| SecurityError::KeyFile)?
+        .is_file()
+    {
+        return Err(SecurityError::KeyFile);
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SecurityError::KeyFile)?;
+    if bytes.is_empty() || bytes.len() > max_bytes {
+        return Err(SecurityError::KeyFile);
+    }
+    Ok(SecretBytes::new(std::mem::take(&mut *bytes)))
+}
 
 /// Loaded from independently mounted read-only secret files; never persisted or logged.
 /// Retain old versions until all credentials have been rotated and backups reconciled.
@@ -33,23 +69,12 @@ impl KeyRing {
         }
         let mut keys = BTreeMap::new();
         for (version, path) in files {
-            let file = std::fs::File::open(path).map_err(|_| SecurityError::KeyFile)?;
-            if !file
-                .metadata()
-                .map_err(|_| SecurityError::KeyFile)?
-                .is_file()
-            {
-                return Err(SecurityError::KeyFile);
-            }
-            let mut bytes = Zeroizing::new(Vec::new());
-            file.take(33)
-                .read_to_end(&mut bytes)
-                .map_err(|_| SecurityError::KeyFile)?;
-            if bytes.len() != 32 {
+            let bytes = read_secret_file(path, 32)?;
+            if bytes.expose().len() != 32 {
                 return Err(SecurityError::KeyFile);
             }
             let mut key = Zeroizing::new([0u8; 32]);
-            key.copy_from_slice(&bytes);
+            key.copy_from_slice(bytes.expose());
             keys.insert(*version, key);
         }
         Ok(Self { current, keys })
@@ -173,7 +198,7 @@ impl SecurityStore<'_> {
         expected_revision: i64,
         now: i64,
     ) -> Result<(), SecurityError> {
-        self.update_credential(id, expected_revision, None, now)
+        self.update_credential(id, None, expected_revision, None, now)
             .await
     }
     /// Replace an external credential value using the current key and a fresh nonce.
@@ -184,12 +209,35 @@ impl SecurityStore<'_> {
         secret: &SecretBytes,
         now: i64,
     ) -> Result<(), SecurityError> {
-        self.update_credential(id, expected_revision, Some(secret), now)
+        self.update_credential(id, None, expected_revision, Some(secret), now)
+            .await
+    }
+    /// Purpose-bound variant for trusted local provisioning adapters.
+    pub async fn rotate_credential_for_kind(
+        &self,
+        id: &str,
+        kind: &str,
+        expected_revision: i64,
+        now: i64,
+    ) -> Result<(), SecurityError> {
+        self.update_credential(id, Some(kind), expected_revision, None, now)
+            .await
+    }
+    pub async fn replace_credential_for_kind(
+        &self,
+        id: &str,
+        kind: &str,
+        expected_revision: i64,
+        secret: &SecretBytes,
+        now: i64,
+    ) -> Result<(), SecurityError> {
+        self.update_credential(id, Some(kind), expected_revision, Some(secret), now)
             .await
     }
     async fn update_credential(
         &self,
         id: &str,
+        expected_kind: Option<&str>,
         expected_revision: i64,
         replacement: Option<&SecretBytes>,
         now: i64,
@@ -205,7 +253,13 @@ impl SecurityStore<'_> {
         .await
         .map_err(storage_error)?
         .ok_or(SecurityError::Denied)?;
-        if row.revision != expected_revision || expected_revision == i64::MAX {
+        if expected_kind.is_some_and(|kind| kind != row.kind) {
+            return Err(SecurityError::Denied);
+        }
+        if row.revision != expected_revision
+            || expected_revision < 0
+            || expected_revision == i64::MAX
+        {
             return Err(SecurityError::Conflict);
         }
         // A supplied replacement can recover an unusable credential without decrypting it.

@@ -2,6 +2,7 @@
 pub mod admin;
 pub mod admin_bootstrap;
 mod config;
+pub mod credentials_bootstrap;
 mod feed;
 mod http;
 mod ingest;
@@ -16,7 +17,7 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 use tokio::{
@@ -38,6 +39,7 @@ pub enum StartError {
 /// entire bounded application operation, including its final short transaction.
 pub struct Services {
     pub storage: Storage,
+    credential_keys: OnceLock<Arc<calendar_storage::security::KeyRing>>,
     pub ingest_policy: calendar_application::IngestPolicy,
     pub delivery_policy: DeliveryPolicy,
     pub ics_limits: IcsLimits,
@@ -46,6 +48,17 @@ pub struct Services {
     shutdown: watch::Sender<bool>,
 }
 impl Services {
+    pub fn credential_provider(
+        self: &Arc<Self>,
+    ) -> Result<credentials_bootstrap::RuntimeCredentialProvider, calendar_application::SecurityError>
+    {
+        self.credential_keys
+            .get()
+            .ok_or(calendar_application::SecurityError::MissingKey)?;
+        Ok(credentials_bootstrap::RuntimeCredentialProvider {
+            services: self.clone(),
+        })
+    }
     pub fn ready(&self) -> bool {
         !self.stopping.load(Ordering::SeqCst)
     }
@@ -87,6 +100,7 @@ impl Server {
             admin: None,
             services: Arc::new(Services {
                 storage,
+                credential_keys: OnceLock::new(),
                 ingest_policy,
                 delivery_policy: DeliveryPolicy::default(),
                 ics_limits: IcsLimits::default(),
@@ -95,6 +109,16 @@ impl Server {
                 shutdown,
             }),
         })
+    }
+    pub fn with_credential_keys(
+        self,
+        keys: calendar_storage::security::KeyRing,
+    ) -> Result<Self, ConfigError> {
+        self.services
+            .credential_keys
+            .set(Arc::new(keys))
+            .map_err(|_| ConfigError("credential keys already configured"))?;
+        Ok(self)
     }
     pub async fn bind(&self) -> Result<TcpListener, StartError> {
         Ok(TcpListener::bind(self.config.bind).await?)
