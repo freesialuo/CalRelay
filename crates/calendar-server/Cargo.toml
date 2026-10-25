@@ -5,7 +5,20 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+test-harness = ["dep:ring", "dep:base64", "dep:chrono"]
+
+[[bin]]
+name = "calendar-admin-harness"
+path = "src/bin/admin_harness.rs"
+required-features = ["test-harness"]
+
 [dependencies]
+ring = { version = "=0.17.14", optional = true }
+base64 = { version = "=0.22.1", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+
 calendar-application = { path = "../calendar-application" }
 calendar-adapters = { path = "../calendar-adapters" }
 calendar-storage = { path = "../calendar-storage" }
@@ -16,7 +29,11 @@ serde_json = "1"
 jsonschema = { version = "=0.58.6", default-features = false }
 thiserror = "2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
+reqwest = { version = "=0.12.24", default-features = false, features = ["json"] }
 ring = "=0.17.14"
 base64 = "=0.22.1"
 tempfile = "3"
