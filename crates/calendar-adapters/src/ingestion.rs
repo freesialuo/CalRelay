@@ -199,7 +199,17 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
                 let next = match value.pointer(&mapping.next) {
                     Some(serde_json::Value::Null) => None,
                     Some(serde_json::Value::String(s)) if !s.is_empty() && s.len() <= 8192 => {
-                        Some(s.clone())
+                        let next_url = url.join(s).map_err(|_| E::Adapter)?;
+                        if next_url.origin() != base.origin()
+                            || next_url.scheme() != "https"
+                            || !next_url.username().is_empty()
+                            || next_url.password().is_some()
+                            || next_url.fragment().is_some()
+                            || next_url.as_str().len() > 8192
+                        {
+                            return Err(E::Adapter);
+                        }
+                        Some(next_url.to_string())
                     }
                     _ => return Err(E::InvalidSnapshot),
                 };

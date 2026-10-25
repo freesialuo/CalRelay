@@ -241,14 +241,15 @@ async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Res
     };
     let remote = Arc::new(FakeRemote {
         replies: std::sync::Mutex::new(VecDeque::from([
-            remote_reply(page("a", json!("/page2"))),
-            remote_reply(page("b", json!(null))),
+            remote_reply(page("a", json!("/v2/pages/2"))),
+            remote_reply(page("b", json!("3"))),
+            remote_reply(page("c", json!(null))),
         ])),
         calls: Default::default(),
     });
     let adapter = HttpSource {
         fetcher: remote.clone(),
-        url: "https://calendar.example/json".into(),
+        url: "https://calendar.example/api/events".into(),
         authentication: RemoteAuthentication::None,
         calendar_id: "c".into(),
         format: SourceFormat::Json(JsonMapping {
@@ -278,15 +279,16 @@ async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Res
     )
     .fetch_all(db.pool())
     .await?;
-    assert_eq!(live, vec!["a", "b"]);
+    assert_eq!(live, vec!["a", "b", "c"]);
     let checkpoint = db.source_state("s").await?.checkpoint.unwrap();
     assert!(!checkpoint.contains("page"));
     {
         let calls = remote.calls.lock().unwrap();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 3);
         assert!(!calls[0].1);
         assert!(calls[0].2.is_none());
-        assert!(calls[1].0.ends_with("/page2"));
+        assert_eq!(calls[1].0, "https://calendar.example/v2/pages/2");
+        assert_eq!(calls[2].0, "https://calendar.example/v2/pages/3");
         assert!(!calls[1].1);
         assert!(calls[1].2.is_none());
     }
@@ -310,6 +312,31 @@ async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Res
         Err(IngestionError::InvalidSnapshot)
     );
     assert_eq!(db.source_state("s").await?, before);
+    for next in [
+        "https://other.example/page",
+        "http://calendar.example/plain",
+        "https://user:pass@calendar.example/page",
+        "#fragment",
+    ] {
+        remote
+            .replies
+            .lock()
+            .unwrap()
+            .push_back(remote_reply(page("z", json!(next))));
+        assert_eq!(
+            synchronize(
+                &db,
+                &adapter,
+                "s",
+                40,
+                DeletionPolicy::Limit(10),
+                SyncLimits::default()
+            )
+            .await,
+            Err(IngestionError::Adapter)
+        );
+        assert_eq!(db.source_state("s").await?, before);
+    }
     db.close().await;
     Ok(())
 }
