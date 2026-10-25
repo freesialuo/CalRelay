@@ -19,3 +19,5 @@ secrets/
 web/test-results/
 web/playwright-report/
 /deployment.json
+
+web/.test-admin-state.json

@@ -69,6 +69,7 @@ cargo build --release --locked -p calendar-server --bin calendar-server --featur
 
 先构建 `web/dist`，再编译 Rust。feature 缺少产物时明确失败，默认构建不需要 Node/dist。构建脚本只纳入首页及 Vite 哈希命名 JS/CSS，拒绝非普通文件和超过默认 1 MiB 响应预算的单份资源，不纳入 source map、环境文件或其他目录。构建工作区必须可信且干净；allowlist 不是对恶意构建产物的扫描替代。锁定依赖与 bundle canary 仍须通过。`--bin calendar-server --features production-web` 不启用 `test-harness`，不会产生管理测试程序。运行镜像无需 Node 或 web/dist。
 
-显式 GET/HEAD `/admin/`、`/admin/index.html` 及实际 `/admin/assets/<hashed-name>.js|css`；无 SPA 全局 fallback、无运行时任意文件读取。未知页面/资产、API/health/feed 保留既有 404 JSON 边界，其他方法返回 405。首页 `Cache-Control: no-store`，哈希资产一年 immutable；更新首页选择新哈希。资源使用明确 MIME、nosniff、no-referrer、DENY 和 CSP；CSP 仅额外允许固定 Turnstile 官方脚本/frame 域，不允许任意外链、内联脚本或 eval。HTML 自身 CSP 与 HTTP CSP 同时生效，页面所需资源须同时满足两者；实际认证页面与 #94 合并后继续组合验收。
+显式 GET/HEAD `/admin/`、`/admin/index.html` 及实际 `/admin/assets/<hashed-name>.js|css`；无 SPA 全局 fallback、无运行时任意文件读取。未知页面/资产、API/health/feed 保留既有 404 JSON 边界，其他方法返回 405。首页 `Cache-Control: no-store`，哈希资产一年 immutable；更新首页选择新哈希。资源使用明确 MIME、nosniff、no-referrer、DENY 和 CSP；CSP 仅额外允许固定 Turnstile 官方脚本/frame 域，不允许任意外链、内联脚本或 eval。HTML 自身 CSP 与 HTTP CSP 同时生效，页面所需资源须同时满足两者；已合并 #94 的实际认证页面 meta CSP 使用相同固定脚本/frame origin，HTTP 与 HTML 双重限制保持兼容。
 
 静态资源本身不授予管理身份。生产入口仍必须在可信代理/Access 边界保护整个管理 host 与 `/admin/`，管理 API 持续验证 JWT/session/CSRF/Origin/nonce；静态服务不会加载 secret 或绕过这些 guard。监听仍只有部署 JSON，未新增 env、字段或默认端口。反向代理不得覆盖安全头或把未知 API 改写为首页。实际 TCP HTTP 测试覆盖页面/资产、HEAD、类型/缓存、安全头、编码 traversal 负例和 API 共存；这是静态托管证据，不代表 UI 写入或业务循环已验收。
+后续来源 CRUD、真实管理登录与 HTTPS/SQLite 浏览器验收见[来源管理前端](source-web.md)；原 #81 的只读基础证据不替代后续写入证据，完整产品范围仍按父项验收。
