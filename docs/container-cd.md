@@ -5,10 +5,27 @@
 ## 触发与权限
 
 - 面向 main 的 PR：只构建和运行真实镜像验收，不登录 GHCR、不推送，不取得 packages 写权限。
+- 普通 git push 到 `release-request/vMAJOR.MINOR.PATCH[-prerelease]`：仅允许本仓库且非删除/非强推事件，请求分支必须指向 main 历史中已通过确切 main push CI 的提交，workflow SHA 与事件 SHA 相同，当前请求 ref 仍指向该提交。版本来自分支名，目标是已存在的同名版本 tag。
 - Release `published`：只接受 `vMAJOR.MINOR.PATCH[-prerelease]`，Release 的 prerelease 标志必须与版本一致。
 - 手动 `workflow_dispatch`：必须从 main 运行，提供已存在的版本 tag；`publish` 默认为 false，仅验证。显式 true 才发布。
 
 没有 main push 自动发布，没有 `pull_request_target` 或 `workflow_run` 制品晋级。发布 job 仅允许本仓库的上述可信事件。Action 固定完整 commit SHA；构建没有 secret/buildargs，不共享不可信 PR 构建缓存。只有独立发布 job 有 `packages: write`，使用临时 `GITHUB_TOKEN`；不新增 PAT，不修改仓库或 package 可见性、权限和安全设置。首次创建 GHCR package 按 GitHub 默认 private；既有 package 必须 private 且关联本仓库，否则停止。API/registry 权限不足直接失败，不切换凭据。
+
+## 无浏览器发布既有版本
+
+已存在的 `v0.1.0-alpha.1` 保持原 annotated tag 与 commit，不移动、删除或重建。此入口解决旧 tag 所在提交没有新触发器的问题：控制工作流从新主线提交加载，候选镜像仍构建旧 tag 的确切源码。
+
+1. 先合并本工作流变更，等待确切 main merge SHA 的主 CI/quality-gate 成功，核实已有版本 tag 的不可变 SHA 及其确切 main CI。实际发布另需维护者对版本的批准；合并此流程本身不会发布。
+2. 确认对应 `release-request/版本` 分支不存在；然后将下面占位符换成已核实的完整 main SHA，以普通 git push 创建请求分支：
+
+   ```text
+   git push origin FULL_VERIFIED_MAIN_SHA:refs/heads/release-request/v0.1.0-alpha.1
+   ```
+
+   该请求分支不携带未合并代码或新请求文件。不要使用浮动 main、强推、移动版本 tag 或另建版本来重试。若请求分支已存在，先核实指向和既有 Actions/registry 状态；不要为等待而重复推送、重触发或覆盖 tag。
+3. 只观察这一次 `Container image` run；alpha 不更新 latest，不部署服务器，不创建 UI Release。构建/测试、同 run artifact 校验、版本不可变、private package 检查和全局 publish concurrency 均复用同一流程。
+
+publisher 开始及最终别名写入前会再次读取请求 ref 与两个确切 CI；请求被移动/删除、控制提交不在 main 历史、任一 CI 最新运行失败或目标 tag 不匹配都会停止。控制提交与候选源码各自验证，不能用请求分支的 push run 替代 main CI。普通功能分支、main push、tag push、fork 和 PR 都不能通过该入口发布。无需浏览器、PAT、新 secret 或 repo/package 设置变更。
 
 ## 确切源码与镜像
 

@@ -86,6 +86,13 @@ def quality_gate(api, sha):
     return {'id': run['id'], 'attempt': run['run_attempt']}
 
 
+def require_main_ancestor(api, sha):
+    compare = api.get(PREFIX + f'/compare/{sha}...main')
+    require(compare.get('status') in ('ahead', 'identical')
+            and (compare.get('merge_base_commit') or {}).get('sha') == sha,
+            'Code is not an ancestor of main.')
+
+
 def qualify_source(api, tag):
     repo = api.get(PREFIX)
     require(repo.get('private') is True and repo.get('default_branch') == 'main',
@@ -103,10 +110,7 @@ def qualify_source(api, tag):
         obj = api.get(PREFIX + '/git/tags/' + value).get('object') or {}
     else:
         raise PolicyError('Annotated tag chain is too deep.')
-    compare = api.get(PREFIX + f'/compare/{value}...main')
-    require(compare.get('status') in ('ahead', 'identical')
-            and (compare.get('merge_base_commit') or {}).get('sha') == value,
-            'Tagged code is not an ancestor of main.')
+    require_main_ancestor(api, value)
     return value, quality_gate(api, value)
 
 
@@ -132,6 +136,19 @@ def source_plan(event_name, event, ref, sha, workflow_sha, api):
                 and current.get('draft') is False and current.get('published_at')
                 and current.get('prerelease') is version.prerelease
                 and release.get('prerelease') is version.prerelease, 'Release state/version flags changed or disagree.')
+        publish = True
+    elif event_name == 'push':
+        prefix = 'refs/heads/release-request/'
+        require(ref.startswith(prefix) and sha == workflow_sha
+                and event.get('after') == sha and event.get('deleted') is False
+                and event.get('forced') is False, 'Invalid git release request context.')
+        version = parse_version(ref[len(prefix):])
+        request = api.get(PREFIX + '/git/ref/' + ref[len('refs/'):])
+        require(request.get('ref') == ref and (request.get('object') or {}).get('type') == 'commit'
+                and (request.get('object') or {}).get('sha') == sha,
+                'Release request was deleted, moved or superseded.')
+        require_main_ancestor(api, sha)
+        quality_gate(api, sha)
         publish = True
     elif event_name == 'workflow_dispatch':
         require(ref == 'refs/heads/main', 'Manual image workflow must run from main.')
