@@ -7,6 +7,7 @@ pub mod ingest;
 pub mod security;
 
 mod ingestion;
+mod source_runtime;
 
 mod delivery;
 mod planning;
