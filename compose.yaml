@@ -1,0 +1,37 @@
+services:
+  calrelay:
+    build:
+      context: .
+    image: calrelay:local
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      CALRELAY_DATABASE: /data/calrelay.db
+    volumes:
+      - data:/data
+      - type: bind
+        source: ./deployment.json
+        target: /run/calrelay/deployment.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    # Example only: match deployment.json bind=0.0.0.0:3000.
+    # Protect the management host with Access/a trusted reverse proxy before deployment.
+    ports:
+      - 127.0.0.1:3000:3000
+volumes:
+  data:

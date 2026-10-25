@@ -1,0 +1,62 @@
+# 镜像构建与版本发布
+
+此流程属于 #108，支撑 #38 / #78 的镜像交付范围。它不代表生产闭环已验收，也不部署服务器。镜像为 `ghcr.io/freesialuo/calrelay`，首版只验证 `linux/amd64`。Dockerfile、Compose 与真实镜像验收由 #105 管理。
+
+## 触发与权限
+
+源仓库现在 public；资格按精确 approved repo/main 校验，与 GHCR 可见性分离。GHCR 仍须 private，原 registry/不可变版本校验不放宽。PR Docker 路由和去重见 [CI 范围](ci.md)。
+
+- 面向 main 的 PR：只构建和运行真实镜像验收，不登录 GHCR、不推送，不取得 packages 写权限。
+- 普通 git push 到 `release-request/vMAJOR.MINOR.PATCH[-prerelease]`：仅允许本仓库且非删除/非强推事件，请求分支必须指向 main 历史中已通过确切 main push CI 的提交，workflow SHA 与事件 SHA 相同，当前请求 ref 仍指向该提交。版本来自分支名，目标是已存在的同名版本 tag。
+- Release `published`：只接受 `vMAJOR.MINOR.PATCH[-prerelease]`，Release 的 prerelease 标志必须与版本一致。
+- 手动 `workflow_dispatch`：必须从 main 运行，提供已存在的版本 tag；`publish` 默认为 false，仅验证。显式 true 才发布。
+
+没有 main push 自动发布，没有 `pull_request_target` 或 `workflow_run` 制品晋级。发布 job 仅允许本仓库的上述可信事件。Action 固定完整 commit SHA；构建没有 secret/buildargs，不共享不可信 PR 构建缓存。只有独立发布 job 有 `packages: write`，使用临时 `GITHUB_TOKEN`；不新增 PAT，不修改仓库或 package 可见性、权限和安全设置。首次创建 GHCR package 按 GitHub 默认 private；既有 package 必须 private 且关联本仓库，否则停止。API/registry 权限不足直接失败，不切换凭据。
+
+## 无浏览器发布既有版本
+
+已存在的 `v0.1.0-alpha.1` 保持原 annotated tag 与 commit，不移动、删除或重建。此入口解决旧 tag 所在提交没有新触发器的问题：控制工作流从新主线提交加载，候选镜像仍构建旧 tag 的确切源码。
+
+1. 先合并本工作流变更，等待确切 main merge SHA 的主 CI/quality-gate 成功，核实已有版本 tag 的不可变 SHA 及其确切 main CI。实际发布另需维护者对版本的批准；合并此流程本身不会发布。
+2. 确认对应 `release-request/版本` 分支不存在；然后将下面占位符换成已核实的完整 main SHA，以普通 git push 创建请求分支：
+
+   ```text
+   git push origin FULL_VERIFIED_MAIN_SHA:refs/heads/release-request/v0.1.0-alpha.1
+   ```
+
+   该请求分支不携带未合并代码或新请求文件。不要使用浮动 main、强推、移动版本 tag 或另建版本来重试。若请求分支已存在，先核实指向和既有 Actions/registry 状态；不要为等待而重复推送、重触发或覆盖 tag。
+3. 只观察这一次 `Container image` run；alpha 不更新 latest，不部署服务器，不创建 UI Release。构建/测试、同 run artifact 校验、版本不可变、private package 检查和全局 publish concurrency 均复用同一流程。
+
+publisher 开始及最终别名写入前会再次读取请求 ref 与两个确切 CI；请求被移动/删除、控制提交不在 main 历史、任一 CI 最新运行失败或目标 tag 不匹配都会停止。控制提交与候选源码各自验证，不能用请求分支的 push run 替代 main CI。普通功能分支、main push、tag push、fork 和 PR 都不能通过该入口发布。无需浏览器、PAT、新 secret 或 repo/package 设置变更。
+
+## 确切源码与镜像
+
+版本 tag 可以是轻量或带注释 tag，须解析到 main 历史中的提交。发布要求该确切 SHA 的当前 CI workflow main push 最新 run/attempt 成功，且其中 `quality-gate` job 成功；旧绿、PR run、其他仓库/workflow、进行中或已失败的新 attempt 均不放行。版本若指向尚未有 main CI 证据的提交，则等待 CI 完成后重新运行；不以相邻提交代替。
+
+构建接口为 context `.`、根 `Dockerfile`、target `runtime`，由镜像 owner 维护。工作流 checkout 到 `source/`，因此 Action 输入写作 context `source` / file `source/Dockerfile`。构建后执行 `python3 scripts/check_docker_image.py IMAGE`，验证真实 HTTP/静态资源/API/健康、只读和非 root 边界、SIGTERM、SQLite 重开及镜像内容。不重复运行主 CI 全套业务测试，也不削弱现有 quality-gate。
+
+只有验证成功的待发布镜像才以 `docker save` 上传。不可变 artifact ID、当前 run/attempt、源码/workflow SHA、image ID、archive/manifest SHA-256 共同绑定；publisher 只下载当前 run 的确切 ID，重新验证文件集合和摘要。它只从 workflow SHA checkout 发布 helper，不执行 artifact 中脚本或候选镜像业务代码，不重新构建镜像。发布前和 `latest` 更新前都重新核对版本、tag、确切 SHA CI。
+
+## 版本、重试与并发
+
+版本 tag 保持不可变：任何版本 push 前均复用同一个 registry reader 做鉴权 HEAD，不以 Packages metadata 缺项证明不存在。registry 已有版本时，只有其远端单平台 manifest 的 config digest 与本次测试 image ID 完全相同才可复用，否则拒绝覆盖；同源码重建不等于同镜像。只有 registry 鉴权查询明确 404 且 metadata 也无该版本才创建，未知/拒绝/不一致一律停止。部分成功后的重跑不重新 push 已存在版本，而是有界等待 metadata 跟上，仍缺失则保持版本原样并停止。先推版本并拉取确切 digest 验证，再考虑 `latest`。prerelease 永不更新 `latest`；stable 只允许向更高版本推进，旧版本重跑不降级。既有 latest 必须有唯一可识别的 stable 版本关联，无法判断则停止。晋级前还会使用同一临时 token 获取仅 pull 的 registry bearer token，先 HEAD 核对已验证版本的确切 digest，再 HEAD 读取 registry 实际 latest；其 digest 必须与 GitHub Packages metadata 的 latest 关联一致。认证、限流、网络、重定向、无效 descriptor 或两者不一致均 fail closed，不写 latest。只有同一 bearer 已能读取已知版本且 latest 明确返回 404，同时 metadata 也无 latest，才允许创建首次 latest；不将错误当作 tag 不存在。
+
+所有本工作流发布 job 使用同一 concurrency group，且不取消运行中的发布。GitHub concurrency 不保证 FIFO，最多保留一个 pending，新的 pending 可能替换旧 pending；被取消的等待任务没有发布。外部发布者不受此锁保护，应由维护者避免并发改写本 package 的 tag。registry HEAD 与最终 alias 写入不构成 CAS；本工作流的单发布锁保证自己的发布串行，无法保证外部写入者在检查后的竞争。
+
+最终别名写入之前的失败不更新 latest。网络中断或最终别名写入后的验证失败可能已经产生远端结果，须先检查 registry digest 与 run summary 再重试，不能承诺网络错误下跨版本/别名的原子事务。版本推送成功、后续失败时保留版本供核对，不删除 package/version。
+
+成功产出 digest、源码 SHA、CI run/attempt、image ID 与 latest 结果到 Actions summary，并保存 release-notes artifact；不申请 contents 写权限去编辑 Release。使用不可变 `IMAGE@sha256:...` 拉取。整个流程不创建 tag/Release，不触发真实服务器部署。
+
+## 验证边界
+
+本地可运行 `python3 -m unittest discover -s tests -v`、`python3 scripts/check_repository.py` 和 actionlint；策略测试使用合成事件/API/制品，不访问真实密钥或推送 registry。真实 Docker 构建与 smoke 必须由 PR 的 `image-build-test` 验证。首次 live 发布、GITHUB_TOKEN 对 private GHCR metadata 的实际访问及 registry 晋级仍需经授权版本发布验证；不能以 mock 通过替代。若关联/权限不满足，失败后由维护者决定后续，不自动改设置或新增 token。
+
+参考：[GitHub 发布 Docker 镜像](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)、[GHCR 权限与默认可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)、[Release 触发](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release)、[Docker 单 manifest 晋级](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)。
+
+Registry 读取依据：[OCI manifest 存在与 digest 检查](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#checking-if-content-exists-in-the-registry)、[Registry bearer 认证协议](https://distribution.github.io/distribution/spec/auth/token/)。
+
+## 首次 alpha 的只读故障检查
+
+run `40197637059` 的 package guard 失败时，不能由无 push 输出推断 registry 没有写入，也不能将可见性/仓库关联合并错误猜成临时延迟。`release-inspect/v0.1.0-alpha.1` 是独立只读入口：先合并经审核的检查代码并等确切 main CI 成功，再经维护者协调普通 push 该已验证 SHA 到这个分支。不要重复触发原 publication 请求。
+
+检查 job 只有 `packages: read`，跳过 build/publish，复用 API/registry reader；固定原 alpha tag、源码 SHA 和 run40197637059 的已测试 image ID。仅输出允许列出的 package 可见性、关联是否匹配/结构、匹配版本的第一页面时间/digest，以及 OCI config digest 是否等于原测试镜像。404、认证或网络错误均不被当作“从未写入”。事实写入 Actions 日志/summary，不读取真实业务数据或密钥，不构建、推送或运行镜像，不修改 package/repository 设置。现有发布 guards 保持原样；若确实 public/unassociated，维护者需决定必要动作，工具不能修设置或绕过 guard。

@@ -9,7 +9,7 @@ publish.workspace = true
 [features]
 default = []
 production-web = []
-test-harness = ["dep:ring", "dep:base64"]
+test-harness = ["dep:ring", "dep:base64", "dep:libc"]
 
 [[bin]]
 name = "calendar-admin-harness"
@@ -17,6 +17,7 @@ path = "src/bin/admin_harness.rs"
 required-features = ["test-harness"]
 
 [dependencies]
+libc = { version = "0.2", optional = true }
 ring = { version = "=0.17.14", optional = true }
 base64 = { version = "=0.22.1", optional = true }
 

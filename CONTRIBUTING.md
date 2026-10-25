@@ -38,6 +38,8 @@ Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校�
 
 ## 提交与验证
 
+CI 按相关改动运行，metadata/Ready 避免重复编译；main 始终完整验证，安全 skip、缓存及 required quality-gate 的规则见 [CI 触发与范围](docs/ci.md)。
+
 提交签名为可选项，不作为贡献或合并的前置条件。
 
 - 不强推。更新分支优先使用 merge 提交；如需重写历史，必须事先单独授权。
