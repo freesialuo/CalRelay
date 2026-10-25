@@ -70,7 +70,7 @@ impl KeyRing {
         let ciphertext = self
             .cipher(self.current)?
             .encrypt(
-                XNonce::from_slice(&nonce),
+                &XNonce::from(nonce),
                 Payload {
                     msg: secret.expose(),
                     aad: &aad,
@@ -86,11 +86,13 @@ impl KeyRing {
         {
             return Err(SecurityError::Authentication);
         }
+        let nonce =
+            XNonce::try_from(row.nonce.as_slice()).map_err(|_| SecurityError::Authentication)?;
         let aad = aad(id, &row.kind, row.key_version);
         let clear = self
             .cipher(row.key_version)?
             .decrypt(
-                XNonce::from_slice(&row.nonce),
+                &nonce,
                 Payload {
                     msg: &row.ciphertext,
                     aad: &aad,
@@ -357,5 +359,72 @@ impl Storage {
             return Err(SecurityError::Denied);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+
+    // Generated with chacha20poly1305 0.10.1 using only synthetic key/nonce/data.
+    // Keep this fixed: same-version round trips cannot detect wire-format drift.
+    const LEGACY_CIPHERTEXT: &[u8] = &[
+        205, 11, 140, 254, 20, 207, 13, 11, 151, 50, 100, 89, 15, 18, 100, 146, 10, 144, 197, 255,
+        36, 4, 243, 149, 207, 236, 116, 217, 37, 93, 207, 18, 60, 124, 210, 202, 88, 195, 59, 22,
+        115, 248, 251,
+    ];
+
+    #[test]
+    fn legacy_0101_credential_format_and_authentication_are_preserved() {
+        let keys = KeyRing {
+            current: 1,
+            keys: BTreeMap::from([(1, Zeroizing::new([7; 32]))]),
+        };
+        let mut row = CredentialRow {
+            kind: "bearer".into(),
+            ciphertext: LEGACY_CIPHERTEXT.to_vec(),
+            nonce: vec![9; 24],
+            key_version: 1,
+            revision: 0,
+        };
+        assert_eq!(
+            keys.decrypt("legacy", &row).unwrap().expose(),
+            b"synthetic legacy credential"
+        );
+        let encoded = keys
+            .cipher(1)
+            .unwrap()
+            .encrypt(
+                &XNonce::from([9; 24]),
+                Payload {
+                    msg: b"synthetic legacy credential",
+                    aad: &aad("legacy", "bearer", 1),
+                },
+            )
+            .unwrap();
+        assert_eq!(encoded, LEGACY_CIPHERTEXT);
+        assert_eq!(
+            keys.decrypt("other-id", &row).unwrap_err(),
+            SecurityError::Authentication
+        );
+        row.ciphertext[0] ^= 1;
+        assert_eq!(
+            keys.decrypt("legacy", &row).unwrap_err(),
+            SecurityError::Authentication
+        );
+        row.ciphertext[0] ^= 1;
+        for length in [0, 23, 25] {
+            row.nonce = vec![9; length];
+            assert_eq!(
+                keys.decrypt("legacy", &row).unwrap_err(),
+                SecurityError::Authentication
+            );
+        }
+    }
+
+    #[test]
+    fn cipher_keeps_zeroize_on_drop_enabled() {
+        fn requires_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<XChaCha20Poly1305>();
     }
 }
