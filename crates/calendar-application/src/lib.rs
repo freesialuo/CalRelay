@@ -1,5 +1,8 @@
 //! Application contracts. No database or network dependencies.
 
+mod remote;
+pub use remote::*;
+
 mod security;
 pub use security::*;
 

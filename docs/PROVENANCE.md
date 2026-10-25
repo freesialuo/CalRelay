@@ -8,3 +8,5 @@
 | Antigravity（AI 辅助，按维护者需求） | `crates/calendar-adapters/`、workspace/lockfile、[ics-normalization.md](ics-normalization.md) 及关联文档 | 原创实现；Exa 核对 `ical 0.11.0` 公共源码与 RFC 5545 规范，见 [ics-normalization.md](ics-normalization.md#实现参考) | Issue #25：实现受限 ICS 文件归一化、四类资源预算、整批失败保护、非 VEVENT 诊断保留及完整快照 `SyncBatch` 构造 | V-Model 验收映射、Red/Green/Refactor 及受控源码 mutation 记录见 [ics-normalization.md](ics-normalization.md) |
 
 Issue #26：`calendar-application/src/security.rs`、`calendar-storage/src/security.rs`、迁移与安全测试为 AI 辅助原创实现；加密原语来自 RustCrypto `chacha20poly1305 0.10.1`，通过 Exa 核对的实际来源见 [凭据安全](credential-security.md#实现参考)。测试密钥均临时随机生成，不包含真实凭据。
+
+Issue #28：应用 RemoteFetcher 契约、HTTPS 传输和本地 TLS 测试为 AI 辅助原创实现；第三方 Reqwest/Tokio/Rustls/rcgen 使用 Cargo.lock 固定版本，实际采用来源见 [远程获取](remote-fetch.md#实现参考)，不包含真实外部数据或凭据。
