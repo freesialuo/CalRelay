@@ -1,6 +1,7 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
 mod config;
 mod http;
+mod ingest;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
@@ -32,6 +33,7 @@ pub enum StartError {
 /// entire bounded application operation, including its final short transaction.
 pub struct Services {
     pub storage: Storage,
+    pub ingest_policy: calendar_application::IngestPolicy,
     pub delivery_policy: DeliveryPolicy,
     pub ics_limits: IcsLimits,
     stopping: AtomicBool,
@@ -71,12 +73,14 @@ impl Server {
     /// Validate and migrate before constructing a ready service or opening the listener.
     pub async fn initialize(config: Config) -> Result<Self, StartError> {
         config.validate()?;
+        let ingest_policy = ingest::policy()?;
         let storage = Storage::open(&config.database).await?;
         let (shutdown, _) = watch::channel(false);
         Ok(Self {
             config,
             services: Arc::new(Services {
                 storage,
+                ingest_policy,
                 delivery_policy: DeliveryPolicy::default(),
                 ics_limits: IcsLimits::default(),
                 stopping: AtomicBool::new(false),
