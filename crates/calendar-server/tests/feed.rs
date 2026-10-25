@@ -471,3 +471,31 @@ async fn enabled_management_guard_does_not_challenge_calendar_clients() {
         "calendar routes must not call Access/Turnstile"
     );
 }
+
+#[test]
+fn openapi_describes_feed_capability_without_management_security_and_preserves_other_routes() {
+    let document = calendar_server::openapi();
+    let path = &document["paths"]["/feeds/{public_id}/{secret}.ics"];
+    for method in ["get", "head"] {
+        let operation = &path[method];
+        assert!(operation.is_object(), "missing {method}");
+        assert_eq!(operation["security"], serde_json::json!([]));
+        for name in ["public_id", "secret", "If-None-Match"] {
+            assert!(operation["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == name));
+        }
+        assert!(operation["responses"]["304"]["content"].is_null());
+        assert!(operation["responses"]["200"]["headers"]["ETag"].is_object());
+    }
+    assert_eq!(
+        path["get"]["responses"]["200"]["content"]["text/calendar; charset=utf-8"]["schema"]
+            ["type"],
+        "string"
+    );
+    assert!(path["head"]["responses"]["200"]["content"].is_null());
+    assert!(document["paths"]["/api/admin/v1/session"].is_object());
+    assert!(document["paths"]["/api/ingest/v1/sources/{source_id}/events/{uid}"].is_object());
+}

@@ -20,6 +20,12 @@
 
 `Storage::issue_scoped_feed_token` 在同一事务内验证 policy/归属并签发受限 token，不先暴露临时的整来源授权。`Storage::configure_feed_scope` 在事务内检查归属并按预期配置 revision 做 CAS；撤销记录不能借配置修改复活。`authorize_feed` 返回包括已验证 scope 的 `FeedAuthorization`。历史 `authenticate_feed_token` 仍只接受字面 `{}`、仅返回 source_id，继续拒绝受限 policy，防止旧调用方误把受限能力当作整来源授权。
 
+## HTTP 契约与前端类型
+
+服务 OpenAPI 同时描述 GET/HEAD `/feeds/{public_id}/{secret}.ics`，显式不继承管理 security；capability 仅通过 path 参数传入，没有管理 Cookie、Bearer 或人机挑战参数。GET 200 为 `text/calendar; charset=utf-8`，HEAD/304 无正文，并描述 ETag、Cache-Control、If-None-Match 及固定错误 envelope。admin 与 ingest 的既有 OpenAPI 路径保持不变。
+
+`web/src/generated/api.d.ts` 由重建后的真实本地服务通过 `npm run generate` 生成，并以 `check:generated` 检查漂移，不手写并行 DTO。本次仅新增 feed 类型契约；管理页面仍不接受或保存 feed/source token，不新增多源聚合（另属 #76）。前后端组合验证包含生产构建、bundle secret canary、真实 loopback HTTP 和 Chromium 测试。
+
 ## 快照、缓存与并发
 
 授权、scope、calendar 归属、source revision、事件和最新事件修订时间在 SQLite 一致读快照中取得。事件按内部 ID 排序，包含保留文档的删除墓碑；不依赖提醒任务或规划窗口。缺失事件修订元数据使整份请求失败，不静默遗漏。每份快照最多 10000 事件、16 MiB 原始 JSON；输出受服务 max_response_bytes 限制，不截断返回部分日历。
@@ -47,6 +53,6 @@
 | AC3 | application/feed_contract：逐字段及 override 独立投影、严格 schema 负例；storage：跨 source 拒绝、calendar 过滤、一致旧/新快照、缺 metadata 故障；HTTP：缩权后旧 ETag 得到新正文或空日历、renderer 边界；合并 #30 后验证 feed token 不能调用 ingest、有效 API delete 使 feed 缓存失效且保留 ingest OpenAPI；启用 management 后仍允许无 Access/Turnstile 的 feed GET/304，模拟管理 transport 调用计数为零，admin/ingest OpenAPI 路径均保留；feed_process：真实日志无 URL/token |
 | 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007、已有 0007+0009 和已有 0007+0009+0010 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
 
-有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。最终完整验证和审核结果见 PR。
+有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。补充 OpenAPI 契约回归：最初因缺少 feed GET 描述而失败，新增 GET/HEAD 契约并由真实服务重新生成 TypeScript 后通过；文档增大导致生命周期夹具预算不足的 500 不计需求 Red，生产响应限制未改变。最终完整验证和已有审核状态见 PR。
 
 参考：通过 Exa 查阅 [Axum Router merge/state 官方源码](https://github.com/tokio-rs/axum/blob/axum-v0.8.6/axum/src/routing/mod.rs)，采用独立 router/state 后最小 merge；条件请求采用 [RFC 9110 §13.1.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.2)的弱比较，缓存指令依据 [RFC 9111 §5.2](https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2)；协议编码仍采用[既有 renderer](ics-rendering.md)，不重新实现 RFC 5545。

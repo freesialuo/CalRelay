@@ -53,6 +53,35 @@ async fn privacy_headers(request: Request, next: Next) -> Response {
         .insert("cache-control", policy.parse().unwrap());
     response
 }
+/// Calendar capability is carried only in the path; never inherit management security.
+pub(crate) fn describe(document: &mut serde_json::Value) {
+    use serde_json::json;
+    let mut responses = serde_json::Map::new();
+    let headers = json!({"ETag":{"schema":{"type":"string"}},"Cache-Control":{"schema":{"type":"string","enum":["private, no-cache"]}},"X-Request-Id":{"schema":{"type":"string"}}});
+    responses.insert("200".into(),json!({"description":"Complete single-source ICS representation","headers":headers,"content":{"text/calendar; charset=utf-8":{"schema":{"type":"string"}}}}));
+    responses.insert("304".into(),json!({"description":"Unchanged authorized representation; no response body","headers":headers}));
+    for code in ["400", "404", "405", "408", "413", "422", "500", "503"] {
+        responses.insert(code.into(),json!({"description":"Fixed error envelope; no calendar content or ETag","headers":{"X-Request-Id":{"schema":{"type":"string"}}},"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}}));
+    }
+    let get = json!({"summary":"Read a scoped single-source calendar","description":"Revocable feed capability; no management session or human challenge. The full URL is secret and must not be logged.","security":[],"parameters":[
+        {"name":"public_id","in":"path","required":true,"schema":{"type":"string","minLength":1,"maxLength":256}},
+        {"name":"secret","in":"path","required":true,"schema":{"type":"string","pattern":"^[0-9a-f]{64}$","writeOnly":true}},
+        {"name":"If-None-Match","in":"header","required":false,"schema":{"type":"string"}}
+    ],"responses":responses});
+    let mut head = get.clone();
+    head["summary"] = json!("Inspect an authorized calendar representation");
+    for response in head["responses"]
+        .as_object_mut()
+        .expect("constructed object")
+        .values_mut()
+    {
+        response
+            .as_object_mut()
+            .expect("constructed response")
+            .remove("content");
+    }
+    document["paths"]["/feeds/{public_id}/{secret}.ics"] = json!({"get":get,"head":head});
+}
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -73,10 +73,46 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features --locked
 
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked frontend tooling
+        working-directory: web
+        run: npm ci --ignore-scripts
+      - name: Build local service for real OpenAPI and HTTP tests
+        run: cargo build -p calendar-server --locked
+      - name: Check generated types, lint and types
+        working-directory: web
+        run: |
+          npm run check:generated
+          npm run lint
+          npm run typecheck
+      - name: Build and check bundle credential canaries
+        working-directory: web
+        run: |
+          npm run build
+          npm run check:bundle
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Browser operations and real local HTTP
+        working-directory: web
+        run: npm test
+
   quality-gate:
     name: quality-gate
     if: ${{ always() }}
-    needs: [contracts, pr-policy, rust]
+    needs: [contracts, pr-policy, rust, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -85,7 +121,9 @@ jobs:
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           PR_POLICY_RESULT: ${{ needs.pr-policy.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$PR_POLICY_RESULT" = success
           test "$RUST_RESULT" = success
+          test "$FRONTEND_RESULT" = success

@@ -6,6 +6,8 @@
 
 [event-v1.schema.json](../schemas/event-v1.schema.json) 定义归一化边界；它是 CalRelay 自定义契约，不宣称完全等同 iCalendar 或 JSCalendar。规范参考 [RFC 5545](https://datatracker.ietf.org/doc/html/rfc5545) 与 [JSCalendar](https://datatracker.ietf.org/doc/html/rfc8984)。schema 预留完整的重复例外、警报和扩展结构；每个能力只有通过对应验收后才能启用。
 
+EventV1 是标准日历源 envelope 中 upsert 的事件正文；来源能力、批次完整性、snapshot/delta/delete/checkpoint、认证上下文与 CAS 是外层契约，不把它们塞入事件 schema 或让原始 ICS 绕过验证。目标与现有单事件 API 的兼容边界见[标准源设计](product-design.md)。
+
 ## 2. 身份、来源与修订
 
 | 字段 | 语义 |
