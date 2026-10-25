@@ -1,5 +1,7 @@
 //! SQLite persistence and atomic source synchronization for CalRelay.
 
+pub mod security;
+
 mod delivery;
 mod planning;
 mod sync;
