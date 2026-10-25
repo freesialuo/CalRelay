@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 default = []
-test-harness = ["dep:ring", "dep:base64", "dep:chrono"]
+test-harness = ["dep:ring", "dep:base64"]
 
 [[bin]]
 name = "calendar-admin-harness"
@@ -18,7 +18,6 @@ required-features = ["test-harness"]
 [dependencies]
 ring = { version = "=0.17.14", optional = true }
 base64 = { version = "=0.22.1", optional = true }
-chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 
 calendar-application = { path = "../calendar-application" }
 calendar-adapters = { path = "../calendar-adapters" }

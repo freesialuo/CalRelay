@@ -195,10 +195,12 @@ async fn offline_harness_uses_real_guard_and_sqlite_and_rejects_replay_and_cross
             .status(),
         403
     );
-    let source: Value = serde_json::from_str(include_str!(
+    let mut source: Value = serde_json::from_str(include_str!(
         "../../../examples/source-configuration-v1.json"
     ))
     .unwrap();
+    source["adapter"] = json!("standard-calendar");
+    source["mode"] = json!("push-only");
     let write = |nonce: &str| {
         client
             .put(format!("{base}/api/admin/v1/sources/harness-source"))
@@ -240,7 +242,75 @@ async fn offline_harness_uses_real_guard_and_sqlite_and_rejects_replay_and_cross
     assert!(list
         .to_string()
         .contains(saved["source_id"].as_str().unwrap()));
+    // Creation remains disabled; enabling uses the real configuration CAS and next nonce.
+    let mut enabled_source = source.clone();
+    enabled_source["enabled"] = json!(true);
+    let response = client
+        .put(format!("{base}/api/admin/v1/sources/harness-source"))
+        .header("cf-access-jwt-assertion", jwt)
+        .header("cookie", &cookie)
+        .header("origin", browser_origin)
+        .header("x-csrf-token", session["csrf_token"].as_str().unwrap())
+        .header("x-admin-write-nonce", &next)
+        .header(
+            "if-match",
+            format!("\"{}\"", saved["config_revision"].as_i64().unwrap()),
+        )
+        .json(&enabled_source)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_ne!(
+        response.headers()["x-admin-write-nonce"].to_str().unwrap(),
+        next
+    );
     let db = calendar_storage::Storage::open(&database).await.unwrap();
+    // Real management, machine ingest and feed routers coexist without sharing credentials.
+    let api = db
+        .issue_api_token("harness-api", "harness-source", true, true, None)
+        .await
+        .unwrap();
+    let api = std::str::from_utf8(api.expose()).unwrap();
+    let feed = db
+        .issue_feed_token("harness-feed", "public", "harness-source", None)
+        .await
+        .unwrap();
+    let feed = std::str::from_utf8(feed.expose()).unwrap();
+    let event = json!({"calendar_id":source["calendars"][0]["id"],"event":{"schema_version":"1.0","external_uid":"synthetic-ingest","title":"Synthetic integration","status":"confirmed","start":{"kind":"utc","value":"2026-11-02T17:00:00Z"}}});
+    assert_eq!(
+        client
+            .put(format!(
+                "{base}/api/ingest/v1/sources/harness-source/events/synthetic-ingest"
+            ))
+            .bearer_auth(api)
+            .header("idempotency-key", "integration-one")
+            .header("if-none-match", "*")
+            .json(&event)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        201
+    );
+    let response = client
+        .get(format!("{base}/feeds/public/{feed}.ics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "private, no-cache");
+    assert_eq!(
+        client
+            .get(format!("{base}/api/admin/v1/sources"))
+            .header("cf-access-jwt-assertion", jwt)
+            .header("cookie", format!("__Host-calrelay_admin={api}"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
     sqlx::query("UPDATE admin_sessions SET expires_at=created_at,created_at=created_at-1")
         .execute(db.pool())
         .await
