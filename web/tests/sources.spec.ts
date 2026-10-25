@@ -449,3 +449,20 @@ test("mobile source form fits the viewport", async ({ page }, testInfo) => {
     fullPage: true,
   });
 });
+
+test("the final required calendar mapping cannot be removed", async ({
+  page,
+}) => {
+  await backend(page).install();
+  await page.goto(fixture);
+  await createDraft(page);
+  const remove = page.getByRole("button", {
+    name: "移除此未保存映射",
+    exact: true,
+  });
+  await expect(remove).toBeDisabled();
+  await page.getByRole("button", { name: "添加日历映射", exact: true }).click();
+  await expect(remove.first()).toBeEnabled();
+  await remove.last().click();
+  await expect(remove).toBeDisabled();
+});

@@ -121,6 +121,12 @@ export function sourceForm(configuration?: SourceConfiguration): {
     element: HTMLElement;
     read: () => SourceConfiguration["calendars"][number];
   }[] = [];
+  const add = node("button", "添加日历映射");
+  const removals = new Map<HTMLElement, HTMLButtonElement>();
+  const updateRowControls = () => {
+    add.disabled = rows.length >= 256;
+    for (const button of removals.values()) button.disabled = rows.length <= 1;
+  };
   const addRow = (calendar?: SourceConfiguration["calendars"][number]) => {
     const row = node("div");
     row.className = "calendar-row";
@@ -162,20 +168,23 @@ export function sourceForm(configuration?: SourceConfiguration): {
     if (!calendar) {
       const remove = node("button", "移除此未保存映射");
       remove.type = "button";
+      removals.set(row, remove);
       remove.addEventListener("click", () => {
         if (rows.length > 1) {
           rows.splice(rows.indexOf(entry), 1);
           row.remove();
+          removals.delete(row);
+          updateRowControls();
           form.dispatchEvent(new Event("input", { bubbles: true }));
         }
       });
       row.append(remove);
     }
     calendars.append(row);
+    updateRowControls();
   };
   for (const calendar of configuration?.calendars ?? [undefined])
     addRow(calendar);
-  const add = node("button", "添加日历映射");
   add.type = "button";
   add.addEventListener("click", () => {
     if (rows.length < 256) {
