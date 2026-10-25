@@ -44,8 +44,8 @@
 | --- | --- |
 | AC1 | storage/feed：摘要、用途隔离、到期等号、撤销回跳不复活、重开、并发轮换唯一赢家；server/feed：缓存填充后撤销/禁用/过期/轮换与旧 ETag 均拒绝 |
 | AC2 | HTTP：200/HEAD/304、private no-cache、稳定 ETag、配置/数据 revision 分别失效；prepared response fence：独立任务提交 policy/data/expiry/rotation/revoke/disable 后拒绝旧表示 |
-| AC3 | application/feed_contract：逐字段及 override 独立投影、严格 schema 负例；storage：跨 source 拒绝、calendar 过滤、一致旧/新快照、缺 metadata 故障；HTTP：缩权后旧 ETag 得到新正文或空日历、renderer 边界；合并 #30 后验证 feed token 不能调用 ingest、有效 API delete 使 feed 缓存失效且保留 ingest OpenAPI；feed_process：真实日志无 URL/token |
-| 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007 与已合并 0007 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
+| AC3 | application/feed_contract：逐字段及 override 独立投影、严格 schema 负例；storage：跨 source 拒绝、calendar 过滤、一致旧/新快照、缺 metadata 故障；HTTP：缩权后旧 ETag 得到新正文或空日历、renderer 边界；合并 #30 后验证 feed token 不能调用 ingest、有效 API delete 使 feed 缓存失效且保留 ingest OpenAPI；启用 management 后仍允许无 Access/Turnstile 的 feed GET/304，模拟管理 transport 调用计数为零，admin/ingest OpenAPI 路径均保留；feed_process：真实日志无 URL/token |
+| 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007、已有 0007+0009 和已有 0007+0009+0010 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
 
 有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。最终完整验证和审核结果见 PR。
 

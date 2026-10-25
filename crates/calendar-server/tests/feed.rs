@@ -405,3 +405,69 @@ async fn integrated_ingest_keeps_feed_read_only_and_invalidates_its_representati
     assert!(body.contains("STATUS:CANCELLED"));
     assert!(body.contains("SEQUENCE:1"));
 }
+
+#[tokio::test]
+async fn enabled_management_guard_does_not_challenge_calendar_clients() {
+    use calendar_adapters::admin_auth::{
+        AdminConfig, AdminError, AdminTransport, CloudflareVerifier,
+    };
+    use calendar_application::SecretBytes;
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+    struct NeverNetwork(Arc<AtomicUsize>);
+    impl AdminTransport for NeverNetwork {
+        fn request(
+            &self,
+            _url: String,
+            _form: Option<Vec<(String, String)>>,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, AdminError>> + Send + '_>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err(AdminError) })
+        }
+    }
+    let (_dir, server, url) = fixture().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let verifier = CloudflareVerifier::with_transport(
+        AdminConfig {
+            team: "synthetic-team".into(),
+            audience: "admin-aud".into(),
+            origin: "https://admin.example.test".into(),
+            hostname: "admin.example.test".into(),
+            action: "admin-login".into(),
+            administrators: [("alice-sub".into(), "alice@example.test".into())].into(),
+            session_seconds: 120,
+        },
+        SecretBytes::new(b"synthetic-secret".to_vec()),
+        Arc::new(NeverNetwork(calls.clone())),
+    )
+    .unwrap();
+    let app = server.with_admin(Arc::new(verifier)).router();
+    let doc = calendar_server::openapi();
+    assert!(doc["paths"]["/api/admin/v1/session"].is_object());
+    assert!(doc["paths"]["/api/ingest/v1/sources/{source_id}/events/{uid}"].is_object());
+    assert_eq!(
+        request(app.clone(), "/api/admin/v1/session", None)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let response = request(app.clone(), &url, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key("set-cookie"));
+    let tag = response.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(
+        request(app, &url, Some(&tag)).await.status(),
+        StatusCode::NOT_MODIFIED
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "calendar routes must not call Access/Turnstile"
+    );
+}
