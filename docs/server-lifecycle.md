@@ -33,16 +33,18 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
 SIGTERM/Ctrl-C 或 `Services::stop` 将 ready 置为 false，并触发 Axum graceful shutdown，停止接受连接。所有未来的任务领取循环必须通过 `Services::run_task` 进入应用操作；停止后拒绝新的任务准入。已经准入的有界操作持有 permit，服务等待其短事务提交/回滚，再关闭 SQLite 连接池。网络 I/O 仍遵循 application 的事务外执行约定。不得将无界后台循环放进 permit，亦不得绕过该门直接启动领取循环。
 
+恢复数据库的持久 `recovery_control.paused` 和历史 cutoff 不由 server 启动或停止修改。HTTP ready 仅表示服务迁移和装配完成；恢复后的投递仍受存储 guard 约束，直到运维人员在隔离/停服状态下显式执行 resume，历史 cutoff 继续保留。
+
 此 Issue 没有配置生产 worker 或真实 Bark。生命周期测试用本地合成事务证明停止后不再准入、在途事务能提交并重开数据库；进程测试向合成服务进程发送真实 SIGTERM，验证退出、监听关闭及 SQLite 完整性。
 
 ## AC 与验证
 
 | AC | 自动验证 |
 | --- | --- |
-| AC1 | `http_contract_limits_ids_errors_and_openapi` 检查 ready 时迁移历史；`migration_failure_never_constructs_ready_service` 拒绝损坏 checksum；进程测试拒绝非数据库文件且保留原始文件 |
+| AC1 | `http_contract_limits_ids_errors_and_openapi` 检查 ready 时迁移历史；`migration_failure_never_constructs_ready_service` 拒绝损坏 checksum；进程测试拒绝非数据库文件且保留原始文件；`fresh_server_applies_migration_0009_before_ready` 核验恢复迁移与默认策略 |
 | AC2 | HTTP 集成测试覆盖版本、路径、404/405、实际正文限额、ID/错误、OpenAPI；边界单元测试覆盖精确响应预算、超限与总超时 |
-| AC3 | `shutdown_blocks_new_claims_and_drains_committing_transaction` 真实 SQLite 与服务 graceful shutdown；进程测试覆盖 SIGTERM、缺失配置和迁移错误不监听 |
+| AC3 | `shutdown_blocks_new_claims_and_drains_committing_transaction` 真实 SQLite 与服务 graceful shutdown；进程测试覆盖 SIGTERM、缺失配置和迁移错误不监听；`server_restart_preserves_recovery_pause_until_explicit_resume` 核验实际备份恢复后经两次 server 启停仍暂停、无租约/尝试，显式 resume 后仅 cutoff 当时及之后的任务可领取 |
 
-限额回归采用受控源码 mutation：临时取消请求字节上限，HTTP 契约测试必须从 413 退化为 200 而失败，再恢复生产实现验证 Green；编译失败不算 Red。实际执行结果见 PR。
+限额回归采用受控源码 mutation：临时取消请求字节上限，HTTP 契约测试必须从 413 退化为 200 而失败，再恢复生产实现验证 Green；编译失败不算 Red。恢复生命周期回归另经受控 mutation 验证：临时在启动中自动调用 resume，暂停断言实际从 `(1,1000)` 变为 `(0,1000)` 而失败；恢复原实现后通过。实际执行结果见 PR。
 
 实际参考：[Axum middleware](https://docs.rs/axum/0.8.6/axum/middleware/index.html)、[graceful shutdown](https://docs.rs/axum/0.8.6/axum/serve/struct.WithGracefulShutdown.html)、[有界 to_bytes](https://docs.rs/axum/0.8.6/axum/body/fn.to_bytes.html)。
