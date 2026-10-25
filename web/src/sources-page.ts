@@ -11,6 +11,8 @@ export function mountSources(
   let writing = false;
   let disposed = false;
   let selection = 0;
+  let listGeneration = 0;
+  let unlockDetail: (() => void) | undefined;
   let currentWrite: AbortController | undefined;
   const cancelCurrentWrite = () => {
     if (currentWrite) {
@@ -49,6 +51,35 @@ export function mountSources(
       button.disabled =
         !api.session.writable || writing || button.dataset.blocked === "true";
   };
+  const unlockEditor = () => {
+    const unlock = unlockDetail;
+    unlockDetail = undefined;
+    unlock?.();
+  };
+  const lockEditor = () => {
+    if (unlockDetail) return;
+    const controls = Array.from(
+      editor.querySelectorAll<
+        | HTMLInputElement
+        | HTMLSelectElement
+        | HTMLButtonElement
+        | HTMLFieldSetElement
+      >("input,select,button,fieldset"),
+    );
+    const states = controls.map(
+      (control) => [control, control.disabled] as const,
+    );
+    for (const control of controls) control.disabled = true;
+    editor.inert = true;
+    editor.setAttribute("aria-busy", "true");
+    unlockDetail = () => {
+      for (const [control, disabled] of states)
+        if (control.isConnected) control.disabled = disabled;
+      editor.inert = false;
+      editor.removeAttribute("aria-busy");
+      authorize();
+    };
+  };
   let previouslyAuthorized = api.session.writable;
   const sessionChanged = () => {
     authorize();
@@ -79,87 +110,111 @@ export function mountSources(
         ? "写入可能已到达服务端。离开后请读取来源核实，不能当作撤回。仍要离开？"
         : "尚有未保存输入。确定离开并放弃输入？",
     );
-  const run = async (operation: (signal: AbortSignal) => Promise<void>) => {
+  const run = async (
+    operation: (signal: AbortSignal) => Promise<void>,
+    isCurrent: () => boolean = () => true,
+  ) => {
     const controller = new AbortController();
     requests.add(controller);
     try {
       await operation(controller.signal);
     } catch (error) {
-      if (!disposed && !controller.signal.aborted) fail(error);
+      if (!disposed && !controller.signal.aborted && isCurrent()) fail(error);
     } finally {
       requests.delete(controller);
     }
   };
   const load = async (quiet = false) => {
     if (writing) return;
+    const generation = ++listGeneration;
     refresh.disabled = true;
     list.replaceChildren();
     if (!quiet) display("正在读取来源…", "pending");
     let after: string | undefined;
     const seen = new Set<string>();
     const appendPage = async () => {
-      await run(async (signal) => {
-        const page = await api.list(after, signal);
-        if (disposed || signal.aborted) return;
-        if (!after && page.items.length === 0)
-          list.append(
-            node(
-              "p",
-              "尚无托管来源。通过创建来源开始；旧的未托管来源不会自动迁移。",
-            ),
-          );
-        for (const item of page.items) {
-          if (seen.has(item.source_id)) continue;
-          seen.add(item.source_id);
-          const row = node("section");
-          row.className = "panel";
-          const open = node("button", "查看 / 编辑");
-          open.type = "button";
-          open.addEventListener("click", () => {
-            if (canLeave()) {
+      await run(
+        async (signal) => {
+          const page = await api.list(after, signal);
+          if (disposed || signal.aborted || generation !== listGeneration)
+            return;
+          if (!after && page.items.length === 0)
+            list.append(
+              node(
+                "p",
+                "尚无托管来源。通过创建来源开始；旧的未托管来源不会自动迁移。",
+              ),
+            );
+          for (const item of page.items) {
+            if (seen.has(item.source_id)) continue;
+            seen.add(item.source_id);
+            const row = node("section");
+            row.className = "panel";
+            const open = node("button", "查看 / 编辑");
+            open.type = "button";
+            open.addEventListener("click", () => {
+              if (!canLeave()) return;
               cancelCurrentWrite();
               const selected = ++selection;
-              void run(async (requestSignal) => {
-                const record = await api.read(item.source_id, requestSignal);
-                if (
-                  !disposed &&
-                  !requestSignal.aborted &&
-                  selected === selection
-                )
-                  edit(record);
+              lockEditor();
+              display("正在读取来源详情…", "pending");
+              void run(
+                async (requestSignal) => {
+                  const record = await api.read(item.source_id, requestSignal);
+                  if (
+                    !disposed &&
+                    !requestSignal.aborted &&
+                    selected === selection
+                  ) {
+                    edit(record);
+                    display(
+                      `已读取配置版本 ${record.config_revision}。`,
+                      "success",
+                    );
+                  }
+                },
+                () => selected === selection,
+              ).finally(() => {
+                if (selected === selection) unlockEditor();
               });
-            }
-          });
-          row.append(
-            node("h2", item.name),
-            node(
-              "p",
-              `ID：${item.source_id} · 配置版本：${item.config_revision} · ${item.retired_at !== null ? "已退休（不可复活）" : item.enabled ? "已启用" : "已禁用"}`,
-            ),
-            open,
-          );
-          list.append(row);
-        }
-        list.querySelector("[data-next]")?.remove();
-        if (page.next_after) {
-          const next = node("button", "加载下一页");
-          next.type = "button";
-          next.dataset.next = "true";
-          next.addEventListener("click", () => {
-            next.disabled = true;
-            after = page.next_after ?? undefined;
-            void appendPage();
-          });
-          list.append(next);
-        }
-        if (!quiet)
-          display("来源列表已读取。分页不是跨并发写入的一致快照。", "success");
-      });
-      refresh.disabled = false;
+            });
+            row.append(
+              node("h2", item.name),
+              node(
+                "p",
+                `ID：${item.source_id} · 配置版本：${item.config_revision} · ${item.retired_at !== null ? "已退休（不可复活）" : item.enabled ? "已启用" : "已禁用"}`,
+              ),
+              open,
+            );
+            list.append(row);
+          }
+          list.querySelector("[data-next]")?.remove();
+          if (page.next_after) {
+            const next = node("button", "加载下一页");
+            next.type = "button";
+            next.dataset.next = "true";
+            next.addEventListener("click", () => {
+              next.disabled = true;
+              after = page.next_after ?? undefined;
+              void appendPage();
+            });
+            list.append(next);
+          }
+          if (!quiet)
+            display(
+              "来源列表已读取。分页不是跨并发写入的一致快照。",
+              "success",
+            );
+        },
+        () => generation === listGeneration,
+      );
+      if (generation === listGeneration) refresh.disabled = false;
     };
     await appendPage();
   };
   const edit = (record?: SourceRecord) => {
+    unlockEditor();
+    selection++;
     dirty = false;
     editor.replaceChildren();
     for (const button of [...writes])
@@ -393,6 +448,7 @@ export function mountSources(
     canLeave,
     dispose: () => {
       disposed = true;
+      unlockEditor();
       for (const controller of requests) controller.abort();
       if (writing) api.session.clear();
       api.session.removeEventListener("change", sessionChanged);

@@ -134,3 +134,24 @@ test("session expiry emits a change and removes write capability", async () => {
   await expect.poll(() => changes, { timeout: 4000 }).toBe(1);
   expect(session.writable).toBe(false);
 });
+
+test("a stale denied read cannot clear a newer login grant", async () => {
+  let release: ((value: Response) => void) | undefined;
+  const session = new AdminSession(async (path) => {
+    if (path === "/api/admin/v1/sources")
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    return Response.json(grant);
+  });
+  const oldRead = session.read("/api/admin/v1/sources", signal());
+  await session.establish("test_challenge", signal());
+  expect(session.writable).toBe(true);
+  release?.(response(403));
+  await oldRead;
+  expect(session.writable).toBe(true);
+  const currentRead = session.read("/api/admin/v1/sources", signal());
+  release?.(response(403));
+  await currentRead;
+  expect(session.writable).toBe(false);
+});

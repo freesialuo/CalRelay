@@ -75,7 +75,7 @@ export function sourceForm(configuration?: SourceConfiguration): {
   interval.type = "number";
   interval.min = "60";
   interval.max = "604800";
-  interval.step = "1";
+  interval.step = "0.001";
   const [slaLabel, sla] = input(
     "新鲜度 SLA（秒；推送来源可留空）",
     configuration?.freshness_sla_ms
@@ -87,7 +87,7 @@ export function sourceForm(configuration?: SourceConfiguration): {
   sla.type = "number";
   sla.min = "60";
   sla.max = "2592000";
-  sla.step = "1";
+  sla.step = "0.001";
   const capabilities = node("fieldset");
   capabilities.append(node("legend", "来源声明的能力（不代表工作器已执行）"));
   const controls = new Map<
@@ -254,11 +254,13 @@ export function sourceForm(configuration?: SourceConfiguration): {
         enabled: enabled.checked,
         endpoint: pull ? url.value : null,
         credential_id: pull ? credential.value || null : null,
-        refresh_interval_ms: pull ? Number(interval.value) * 1000 : null,
+        refresh_interval_ms: pull
+          ? Math.round(Number(interval.value) * 1000)
+          : null,
         freshness_sla_ms:
           sourceMode === "manual-static" || !sla.value
             ? null
-            : Number(sla.value) * 1000,
+            : Math.round(Number(sla.value) * 1000),
         capabilities: Object.fromEntries(
           [...controls].map(([key, control]) => [key, control.checked]),
         ) as SourceConfiguration["capabilities"],

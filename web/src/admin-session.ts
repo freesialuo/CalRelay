@@ -189,6 +189,7 @@ export class AdminSession extends EventTarget {
       )
     )
       throw new AdminFailure("invalid", "无效的管理路径。");
+    const generation = this.#generation;
     let response: Response;
     try {
       response = await this.transport(path, {
@@ -201,7 +202,7 @@ export class AdminSession extends EventTarget {
         redirect: "error",
       });
     } catch {
-      if (unsafe) this.clear();
+      if (unsafe && generation === this.#generation) this.clear();
       throw new AdminFailure(
         "unknown",
         unsafe
@@ -209,7 +210,7 @@ export class AdminSession extends EventTarget {
           : "未取得可信结果，请手动重新读取。",
       );
     }
-    if (!response.ok) {
+    if (!response.ok && generation === this.#generation) {
       // Preserve rotation even on business rejection; the guard consumed the nonce.
       if (unsafe && this.#grant === undefined) {
         const next = response.headers.get("x-admin-write-nonce");

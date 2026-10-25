@@ -373,3 +373,52 @@ test("real source form fits a mobile browser", async ({ page }, testInfo) => {
     fullPage: true,
   });
 });
+
+test("late anonymous denial cannot replace a completed real login and list", async ({
+  page,
+}) => {
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let delayed = false;
+  await page.route("**/api/admin/v1/sources", async (route) => {
+    const response = await route.fetch({ maxRedirects: 0 });
+    if (response.status() === 403 && !delayed) {
+      delayed = true;
+      await held;
+    }
+    await route.fulfill({ response });
+  });
+  await login(page);
+  await expect.poll(() => delayed).toBe(true);
+  await expect(sourceStatus(page)).toContainText("来源列表已读取");
+  const oldResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/admin/v1/sources") &&
+      response.status() === 403,
+  );
+  release?.();
+  expect((await oldResponse).status()).toBe(403);
+  await create(page);
+  await expect(sourceStatus(page)).toContainText("服务端已确认保存配置版本 1");
+});
+
+test("real API preserves millisecond timings during unrelated edits", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await draft(page);
+  await page.getByLabel("刷新间隔（秒）", { exact: true }).fill("60.001");
+  await page.getByLabel("新鲜度 SLA", { exact: false }).fill("300.001");
+  await page.getByRole("button", { name: "保存禁用来源", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 1");
+  await page.getByLabel("名称", { exact: true }).fill("仅重命名毫秒配置");
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 2");
+  const response = await page.request.get(`/api/admin/v1/sources/${id}`);
+  expect(response.status()).toBe(200);
+  const record = await response.json();
+  expect(record.configuration.refresh_interval_ms).toBe(60001);
+  expect(record.configuration.freshness_sla_ms).toBe(300001);
+});

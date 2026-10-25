@@ -466,3 +466,104 @@ test("the final required calendar mapping cannot be removed", async ({
   await remove.last().click();
   await expect(remove).toBeDisabled();
 });
+
+for (const result of ["success", "failure"]) {
+  test(`pending detail transition locks the outgoing editor and restores on ${result}`, async ({
+    page,
+  }) => {
+    await backend(page).install();
+    const a = {
+      source_id: "source_a",
+      config_revision: 1,
+      source_revision: 1,
+      retired_at: null,
+      configuration: config(),
+    };
+    const b = {
+      ...a,
+      source_id: "source_b",
+      configuration: { ...config(), name: "第二来源" },
+    };
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/admin/v1/sources**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/sources"))
+        return route.fulfill({
+          json: {
+            items: [a, b].map((record) => ({
+              source_id: record.source_id,
+              name: record.configuration.name,
+              config_revision: 1,
+              source_revision: 1,
+              enabled: false,
+              retired_at: null,
+            })),
+            next_after: null,
+          },
+        });
+      if (url.pathname.endsWith("source_b")) {
+        await held;
+        if (result === "failure") return route.fulfill({ status: 500 });
+        return route.fulfill({ json: b, headers: { etag: '"1"' } });
+      }
+      return route.fulfill({ json: a, headers: { etag: '"1"' } });
+    });
+    await page.goto(fixture);
+    const row = (name: string) =>
+      page
+        .locator("section")
+        .filter({ has: page.getByRole("heading", { name, exact: true }) });
+    await row("测试来源")
+      .getByRole("button", { name: "查看 / 编辑", exact: true })
+      .click();
+    await expect(page.getByLabel("稳定来源 ID")).toHaveValue("source_a");
+    await row("第二来源")
+      .getByRole("button", { name: "查看 / 编辑", exact: true })
+      .click();
+    await expect(page.getByLabel("名称", { exact: true })).toBeDisabled();
+    await expect(
+      page.getByRole("button", {
+        name: "保存配置",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeDisabled();
+    release?.();
+    await expect(page.getByLabel("名称", { exact: true })).toBeEnabled();
+    await expect(page.getByLabel("稳定来源 ID")).toHaveValue(
+      result === "success" ? "source_b" : "source_a",
+    );
+  });
+}
+
+test("unrelated edits preserve valid millisecond interval and SLA precision", async ({
+  page,
+}) => {
+  const api = backend(page, {
+    source_id: "source_a",
+    config_revision: 1,
+    source_revision: 1,
+    retired_at: null,
+    configuration: {
+      ...config(),
+      refresh_interval_ms: 60001,
+      freshness_sla_ms: 300001,
+    },
+  });
+  await api.install();
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "查看 / 编辑", exact: true }).click();
+  const interval = page.getByLabel("刷新间隔（秒）", { exact: true });
+  await expect(interval).toHaveValue("60.001");
+  expect(
+    await interval.evaluate((input: HTMLInputElement) => input.validity.valid),
+  ).toBe(true);
+  await page.getByLabel("名称", { exact: true }).fill("仅重命名");
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("配置版本 2");
+  expect(api.record?.configuration.refresh_interval_ms).toBe(60001);
+  expect(api.record?.configuration.freshness_sla_ms).toBe(300001);
+});
