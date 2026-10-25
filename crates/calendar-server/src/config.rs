@@ -158,6 +158,13 @@ impl DeploymentConfig {
         Ok(self.server)
     }
     pub async fn initialize(self) -> Result<crate::Server, crate::StartError> {
+        self.initialize_with_supervision(crate::supervision::SupervisionConfig::default())
+            .await
+    }
+    pub async fn initialize_with_supervision(
+        self,
+        budgets: crate::supervision::SupervisionConfig,
+    ) -> Result<crate::Server, crate::StartError> {
         // Bad secrets fail before migrations create or modify a database.
         let verifier = if let Some(admin) = &self.admin {
             Some(std::sync::Arc::new(admin.load_verifier().await?))
@@ -165,7 +172,7 @@ impl DeploymentConfig {
             None
         };
         let keys = self.credentials.as_ref().map(|c| c.load()).transpose()?;
-        let mut server = crate::Server::initialize(self.server).await?;
+        let mut server = crate::Server::initialize_with_supervision(self.server, budgets).await?;
         if let Some(keys) = keys {
             server = server.with_credential_keys(keys)?;
         }
