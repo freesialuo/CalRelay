@@ -18,6 +18,17 @@ fn db_error(error: sqlx::Error) -> DeliveryError {
     }
 }
 
+impl Storage {
+    /// Read-only scheduling hint. The database lease/cutoff triggers remain authoritative.
+    /// Operators change recovery policy only while the service is stopped/isolated.
+    pub async fn delivery_paused(&self) -> Result<bool, DeliveryError> {
+        sqlx::query_scalar("SELECT paused FROM recovery_control WHERE id=1")
+            .fetch_one(self.pool())
+            .await
+            .map_err(db_error)
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct Job {
     id: String,

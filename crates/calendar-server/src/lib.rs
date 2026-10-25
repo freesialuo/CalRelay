@@ -1,6 +1,7 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
 pub mod admin;
 mod config;
+pub mod delivery_worker;
 mod http;
 mod ingest;
 use calendar_adapters::IcsLimits;
