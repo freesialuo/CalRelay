@@ -339,3 +339,69 @@ async fn deleted_event_retains_uid_document_and_latest_revision_timestamp() {
         assert!(body.contains(retained), "missing {retained}");
     }
 }
+
+#[tokio::test]
+async fn integrated_ingest_keeps_feed_read_only_and_invalidates_its_representation() {
+    let (_dir, server, url) = fixture().await;
+    let app = server.router();
+    let db = &server.services.storage;
+    let document = calendar_server::openapi();
+    assert!(
+        document["paths"]["/api/ingest/v1/sources/{source_id}/events/{uid}"]["delete"].is_object()
+    );
+    let first = request(app.clone(), &url, None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let old_tag = first.headers()["etag"].to_str().unwrap().to_owned();
+    let feed_token = url
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .strip_suffix(".ics")
+        .unwrap();
+    let write = |token: &str| {
+        Request::builder()
+            .uri("/api/ingest/v1/sources/s/events/private-source-id")
+            .method("DELETE")
+            .header("authorization", format!("Bearer {token}"))
+            .header("idempotency-key", "feed-integration-delete")
+            .header("if-match", "\"1\"")
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(write(feed_token))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(app.clone(), &url, Some(&old_tag)).await.status(),
+        StatusCode::NOT_MODIFIED
+    );
+    let api = db
+        .issue_api_token("writer", "s", false, true, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(write(std::str::from_utf8(api.expose()).unwrap()))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let response = request(app, &url, Some(&old_tag)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_ne!(response.headers()["etag"], old_tag);
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), 16384)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("STATUS:CANCELLED"));
+    assert!(body.contains("SEQUENCE:1"));
+}

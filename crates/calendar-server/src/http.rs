@@ -20,6 +20,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn router(services: Arc<Services>, config: Config) -> Router {
     Router::new()
+        .merge(crate::ingest::router())
         .route("/health/live", get(|| async { Json(json!({"status":"live"})) }))
         .route("/health/ready", get(|State(s): State<Arc<Services>>| async move {
             if s.ready() { (StatusCode::OK, Json(json!({"status":"ready"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
@@ -137,8 +138,10 @@ pub fn openapi() -> Value {
         }
         paths.insert(path.into(), json!({"get":{"responses":responses}}));
     }
-    json!({"openapi":"3.1.0","info":{"title":"CalRelay service API","version":env!("CARGO_PKG_VERSION")},
-        "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}})
+    let mut document = json!({"openapi":"3.1.0","info":{"title":"CalRelay service API","version":env!("CARGO_PKG_VERSION")},
+        "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
+    crate::ingest::describe(&mut document);
+    document
 }
 
 #[cfg(test)]

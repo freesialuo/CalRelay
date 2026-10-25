@@ -77,49 +77,51 @@ async fn authorization_uses_digest_expiry_scope_source_and_rotation() -> Result 
 }
 #[tokio::test]
 async fn out_of_order_0008_upgrade_preserves_0009_checksums_and_restores() -> Result {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("db");
-    let mut conn = sqlx::SqliteConnection::connect_with(
-        &sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true),
-    )
-    .await?;
-    // Reconstruct the exact deployed history (0009 already applied, no 0008).
-    static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-    conn.execute("CREATE TABLE _sqlx_migrations(version BIGINT PRIMARY KEY,description TEXT NOT NULL,installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,success BOOLEAN NOT NULL,checksum BLOB NOT NULL,execution_time BIGINT NOT NULL)").await?;
-    for m in MIGRATIONS
-        .iter()
-        .filter(|m| m.version <= 9 && m.version != 8)
-    {
-        conn.execute(m.sql.as_ref()).await?;
-        sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES (?,?,1,?,0)").bind(m.version).bind(m.description.as_ref()).bind(m.checksum.as_ref()).execute(&mut conn).await?;
+    for had_ingest in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("db");
+        let mut conn = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await?;
+        // Reconstruct the exact deployed history (0009 already applied, no 0008).
+        static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+        conn.execute("CREATE TABLE _sqlx_migrations(version BIGINT PRIMARY KEY,description TEXT NOT NULL,installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,success BOOLEAN NOT NULL,checksum BLOB NOT NULL,execution_time BIGINT NOT NULL)").await?;
+        for m in MIGRATIONS
+            .iter()
+            .filter(|m| m.version <= 9 && m.version != 8 && (m.version != 7 || had_ingest))
+        {
+            conn.execute(m.sql.as_ref()).await?;
+            sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES (?,?,1,?,0)").bind(m.version).bind(m.description.as_ref()).bind(m.checksum.as_ref()).execute(&mut conn).await?;
+        }
+        conn.close().await?;
+        // A valid pre-upgrade backup must remain accepted by the new binary.
+        let old_backup = dir.path().join("old-backup");
+        backup::backup(&path, &old_backup).await?;
+        let recovered = dir.path().join("old-restored");
+        backup::restore(&old_backup, &recovered, 1000).await?;
+        let old = Storage::open(recovered.join("database.sqlite3")).await?;
+        old.close().await;
+        let db = Storage::open(&path).await?;
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(db.pool())
+                .await?;
+        assert_eq!(
+            versions,
+            MIGRATIONS.iter().map(|m| m.version).collect::<Vec<_>>()
+        );
+        let upgraded_backup = dir.path().join("upgraded-backup");
+        backup::backup(&path, &upgraded_backup).await?;
+        let recovered = dir.path().join("restored");
+        backup::restore(&upgraded_backup, &recovered, 1000).await?;
+        let restored = Storage::open(recovered.join("database.sqlite3")).await?;
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='feed_configuration_revision'").fetch_one(restored.pool()).await?,1);
+        restored.close().await;
+        db.close().await;
     }
-    conn.close().await?;
-    // A valid pre-upgrade backup must remain accepted by the new binary.
-    let old_backup = dir.path().join("old-backup");
-    backup::backup(&path, &old_backup).await?;
-    let recovered = dir.path().join("old-restored");
-    backup::restore(&old_backup, &recovered, 1000).await?;
-    let old = Storage::open(recovered.join("database.sqlite3")).await?;
-    old.close().await;
-    let db = Storage::open(&path).await?;
-    let versions: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(db.pool())
-            .await?;
-    assert_eq!(
-        versions,
-        MIGRATIONS.iter().map(|m| m.version).collect::<Vec<_>>()
-    );
-    let upgraded_backup = dir.path().join("upgraded-backup");
-    backup::backup(&path, &upgraded_backup).await?;
-    let recovered = dir.path().join("restored");
-    backup::restore(&upgraded_backup, &recovered, 1000).await?;
-    let restored = Storage::open(recovered.join("database.sqlite3")).await?;
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='feed_configuration_revision'").fetch_one(restored.pool()).await?,1);
-    restored.close().await;
-    db.close().await;
     Ok(())
 }
 

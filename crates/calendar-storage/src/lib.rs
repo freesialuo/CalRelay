@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod feed;
+pub mod ingest;
 pub mod security;
 
 mod ingestion;
