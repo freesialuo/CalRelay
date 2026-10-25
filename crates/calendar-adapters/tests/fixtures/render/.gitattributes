@@ -1,2 +1,3 @@
-*.ics -text
-*.vtimezone -text
+# RFC 5545 goldens preserve CRLF; CR is a protocol delimiter, not trailing space.
+*.ics -text whitespace=cr-at-eol
+*.vtimezone -text whitespace=cr-at-eol
