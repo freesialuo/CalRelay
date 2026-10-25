@@ -8,16 +8,16 @@
 docker build --target runtime --tag calrelay:local .
 cp examples/docker-deployment.json deployment.json
 mkdir -p secrets
-# 按下文/credential-bootstrap 准备 secrets/calrelay-master-v1（32 原始字节）
+# 按下文准备32字节 master-key、Turnstile secret，并替换全部合成身份配置
 docker compose config --quiet
 docker compose up -d
 ```
 
-示例 JSON 显式选用容器监听 `0.0.0.0:3000`，Compose 只发布到宿主 loopback；它配置实际 KeyRing 文件路径，但不启用管理员身份。没有内置 key；先由部署者按自己的密钥流程准备恰好32个原始字节的 master-key，保存在只读 secrets/calrelay-master-v1，缺失时应启动失败。该地址/端口只是部署示例，不是项目默认值或新的接口契约。监听只能由 `--deployment-config` JSON 配置，不能使用 `CALRELAY_BIND` 或其他监听 env。`CALRELAY_DATABASE=/data/calrelay.db` 是现有路径 env；业务来源、周期、规则和输出仍由管理 API/SQLite 决定。
+示例 JSON 显式选用容器监听 `0.0.0.0:3000`，Compose 只发布到宿主 loopback；它包含完整但全部为合成值的 admin 信任元数据与实际 KeyRing 文件路径。部署者必须替换 Access team/audience/subject、公开 HTTPS origin/hostname/sitekey 等值，按自己的密钥流程准备恰好32个原始字节的 master-key 和独立 Turnstile secret，分别保存在只读 secrets/calrelay-master-v1 与 secrets/turnstile；没有内置 key，缺失或错误应启动失败。示例不会赋予真实身份或绕过鉴权。该地址/端口只是部署示例，不是项目默认值或新的接口契约。监听只能由 `--deployment-config` JSON 配置，不能使用 `CALRELAY_BIND` 或其他监听 env。`CALRELAY_DATABASE=/data/calrelay.db` 是现有路径 env；业务来源、周期、规则和输出仍由管理 API/SQLite 决定。
 
 实际管理部署须在部署文件配置 [已有 admin bootstrap](admin-auth.md)，通过可信代理提供 HTTPS/Access，令 bootstrap hostname 与公开管理页面域名一致。管理入口是 `/admin/`，不能通过放宽 CSP、mock JWT 或 harness 替代真实身份。Turnstile secret 只读挂在 `/run/secrets/`，文件及目录须让 UID/GID 65532 可读/可遍历；应用不修改权限。保留只读文件挂载，部署者按自己的密钥管理流程准备文件，不把内容放 env、build arg 或镜像。KeyRing/Bark provisioning 复用已合并的 [正式凭据 CLI](credential-bootstrap.md)：在容器里执行 calrelay credential provision-bark/rotate-bark，使用同一部署 JSON、持久卷与只读 secret 文件；仅 credential_id 回填管理 UI，不手改 DB 或复制 secret 进镜像。命令不会调用 Bark/Cloudflare；真实凭据值只由部署者的文件管理流程提供。
 
-Compose 的 `deployment.json` 与 `secrets` bind 必须预先存在（`create_host_path: false`），配置错误应明确失败。不要把示例无管理员模式用于生产管理。可把整个服务接入受控内部代理网络；不要直接公开管理端口、Docker socket 或任意来源 CORS。更改示例端口时同时修改 JSON bind 与 Compose 端口映射；不新增监听 env。
+Compose 的 `deployment.json` 与 `secrets` bind 必须预先存在（`create_host_path: false`），配置错误应明确失败。不要把合成身份配置当作真实生产账号。可把整个服务接入受控内部代理网络；不要直接公开管理端口、Docker socket 或任意来源 CORS。更改示例端口时同时修改 JSON bind 与 Compose 端口映射；不新增监听 env。
 
 ## 构建与运行边界
 
@@ -42,7 +42,7 @@ CD 构建接口：context 为仓库根 `.`，file 为根 `Dockerfile`，最终 t
 python3 scripts/check_docker_image.py calrelay:local
 ```
 
-脚本只创建带随机本任务前缀的容器与 named volumes，使用实际 credentials 配置、合成32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟鉴权，不 seed 业务源、不发送 Bark、不连接生产账号。当前 runtime 未组合时应观察 ready=503；后续真实组合可为 200，测试不会伪造 readiness。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
+脚本只创建带随机本任务前缀的容器与 named volumes，使用完整实际 admin/credentials 配置、合成身份/32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟/禁用鉴权，验证缺失管理身份真实拒绝，不 seed 业务源、不发送 Bark、不连接生产账号。当前 runtime 未组合时应观察 ready=503；后续真实组合可为 200，测试不会伪造 readiness。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
 
 镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地尚未完成完整镜像构建/运行，arm64 亦未验证，index 存在 arm64 不等于已验收。
 

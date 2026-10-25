@@ -1,1 +1,22 @@
-{"bind":"0.0.0.0:3000","credentials":{"current_key_version":1,"key_files":{"1":"/run/secrets/calrelay-master-v1"}}}
+{
+  "bind": "0.0.0.0:3000",
+  "credentials": {
+    "current_key_version": 1,
+    "key_files": {
+      "1": "/run/secrets/calrelay-master-v1"
+    }
+  },
+  "admin": {
+    "team": "synthetic-team",
+    "audience": "synthetic-audience",
+    "origin": "https://admin.example.test",
+    "hostname": "admin.example.test",
+    "action": "admin-login",
+    "site_key": "synthetic-site-key",
+    "administrators": {
+      "synthetic-subject": "admin@example.test"
+    },
+    "session_seconds": 300,
+    "turnstile_secret_file": "/run/secrets/turnstile"
+  }
+}

@@ -72,10 +72,14 @@ try:
     with tempfile.TemporaryDirectory(prefix=PREFIX) as temporary:
         directory = Path(temporary)
         deployment = directory / "deployment.json"
-        deployment.write_text(json.dumps({
-            "bind": "0.0.0.0:3000",
-            "credentials": {"current_key_version": 1, "key_files": {"1": "/run/secrets/calrelay-master-v1"}},
-        }))
+        configuration = json.loads((Path(__file__).resolve().parents[1] / "examples/docker-deployment.json").read_text())
+        deployment.write_text(json.dumps(configuration))
+        turnstile = directory / "turnstile"
+        turnstile.write_bytes(MARKER + b"_TURNSTILE")
+        configuration["admin"]["turnstile_secret_file"] = "/run/secrets/intentionally-missing"
+        configuration["credentials"]["key_files"] = {"1": "/run/secrets/intentionally-missing"}
+        probe_only = directory / "probe-only.json"
+        probe_only.write_text(json.dumps(configuration))
         master = directory / "master"
         master.write_bytes(bytes(range(32)))  # Synthetic CI material, never copied into the image.
         secret = directory / "canary"
@@ -83,6 +87,8 @@ try:
         docker("cp", str(deployment), SEED + ":/run/calrelay/deployment.json")
         docker("cp", str(secret), SEED + ":/run/secrets/canary")
         docker("cp", str(master), SEED + ":/run/secrets/calrelay-master-v1")
+        docker("cp", str(turnstile), SEED + ":/run/secrets/turnstile")
+        docker("cp", str(probe_only), SEED + ":/run/calrelay/probe-only.json")
         docker("run", "--detach", "--name", CONTAINER, "--read-only",
                "--user", "65532:65532", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--pids-limit", "128",
@@ -116,6 +122,7 @@ try:
             status, headers, body = get(base, asset.decode())
             require(status == 200 and body and "immutable" in headers["Cache-Control"], "real built asset")
         require(json.loads(get(base, "/api/v1/version")[2])["name"] == "CalRelay", "real API coexistence")
+        require(get(base, "/api/admin/v1/sources")[0] in (401, 403), "real management auth must reject missing identity")
         for path in ("/api/unknown", "/admin/assets/%2e%2e%2fdeployment.json", "/run/secrets/canary"):
             require(get(base, path)[0] == 404, "path boundary " + path)
         readiness = get(base, "/health/ready")[0]
@@ -123,6 +130,9 @@ try:
         print("Observed runtime readiness HTTP", readiness, flush=True)
         docker("exec", CONTAINER, "/usr/local/bin/calrelay", "healthcheck", "live",
                "--deployment-config", "/run/calrelay/deployment.json", "--timeout-ms", "2000")
+        docker("exec", "-e", "CALRELAY_DATABASE=/run/secrets/no-database", CONTAINER,
+               "/usr/local/bin/calrelay", "healthcheck", "live", "--deployment-config",
+               "/run/calrelay/probe-only.json", "--timeout-ms", "2000")
         while inspect()["State"]["Health"]["Status"] != "healthy":
             require(time.monotonic() < deadline, "Docker live health deadline")
             time.sleep(0.2)
