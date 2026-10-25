@@ -19,6 +19,38 @@ docker compose up -d
 
 Compose 的 `deployment.json` 与 `secrets` bind 必须预先存在（`create_host_path: false`），配置错误应明确失败。不要把合成身份配置当作真实生产账号。可把整个服务接入受控内部代理网络；不要直接公开管理端口、Docker socket 或任意来源 CORS。更改示例端口时同时修改 JSON bind 与 Compose 端口映射；不新增监听 env。
 
+### 首次运行的最小旅程与限制
+
+1. 先按上文及[认证装配](admin-auth.md)、[凭据初始化](credential-bootstrap.md)填完真实 `admin` / `credentials`。master-key 必须是32个原始字节；配置和所有 secret 文件须让 UID/GID 65532 可读，父目录可遍历，并通过 Compose 只读挂载。应用不代改权限。
+2. 用自己的安全文件流程把 Bark device key 放入 `secrets/bark-main`（文件格式见凭据手册，不放 argv/env/UI）。现有整个 `secrets` 目录挂载会使其成为 `/run/secrets/bark-main`。仅创建一次 handle：
+
+   ```sh
+   docker compose run --rm --no-deps calrelay credential provision-bark --deployment-config /run/calrelay/deployment.json --credential-id bark-main --secret-file /run/secrets/bark-main
+   ```
+
+   将成功回执的 `credential_id` 填入 UI 的 Bark 输出引用，不填 device key。已存在时不覆盖；替换/轮换须按[正式 CLI 的 revision/CAS 流程](credential-bootstrap.md)，不去掉检查反复重试。
+3. `docker compose up -d` 后，在有限启动宽限内等待 fresh live/ready 成功：
+
+   ```sh
+   docker compose exec calrelay /usr/local/bin/calrelay healthcheck live --deployment-config /run/calrelay/deployment.json
+   docker compose exec calrelay /usr/local/bin/calrelay healthcheck ready --deployment-config /run/calrelay/deployment.json
+   ```
+
+   新建且非暂停的数据卷应最终二者均成功；全局 ready 不证明某个 ICS 已同步或 Bark 已送达设备。
+4. 通过已配置的 HTTPS/Access 管理入口登录。第一个自动拉取来源使用**公共 HTTPS ICS URL、一个日历映射、先禁用保存再显式启用**；pull 的周期/新鲜度和 snapshot 能力按[来源配置](source-configuration.md)、[实际扫描器](runtime-source-scanning.md)设置。当前 `IcsSourceRunner` 只处理 ICS pull 且 `calendars.len()==1`，否则 Unsupported；配置能保存不表示 runner 支持或已经同步。URL 不能带 userinfo（用户名/密码）、query 或 fragment；需要签名 query 的供应商 URL 首版暂不支持，不能删掉签名参数冒充可用公共 URL。需要另外取得供应商正式支持的公共 HTTPS ICS 入口，或等待后续能力。
+5. 按[主要配置页面](configuration-web.md)设置这个日历的规则、Bark 输出及聚合订阅。manual/static/push 配置页面本身不是自动导入入口，不能当作文件上传、浏览器抓取或完整自动导入已经交付；独立机器写入能力以[其自身契约](protected-ingest.md)为准。
+6. 停止用 `docker compose stop`，保留同一 Compose 项目的 `data` named volume、部署 JSON 和只读 secret 文件；以后从同一项目启动会重开这些数据。升级/恢复先按[一致性备份与恢复](backup-recovery.md)操作，不自动解除恢复暂停。
+
+### 分域部署：复制的订阅链接还需手工换 origin
+
+首版 UI 用 `location.origin` 将服务返回的相对 capability path 拼成绝对 URL。因此在 `admin.example.com` 经 Access、`feed.example.com` 仅用 capability 的分域部署中，**复制出来的管理域链接不能直接当作普通日历客户端的最终订阅地址**，否则会遇到 Access 登录。这是当前手工前置，不是已实现的 `public_feed_origin` 配置或 UI 自动转换功能。
+
+1. 先由部署者配置自己控制的可信 HTTPS feed origin，反向代理至同一 CalRelay 实例/数据库。该 host 仅允许 GET/HEAD 匹配 `/feeds/{public_id}/{secret}.ics` 和 `/feeds/aggregates/{public_id}/{secret}.ics` 的路由；其余路径/方法拒绝，不能转发管理 API 或 `/admin/`。管理 host 的 Access 保护保持开启；普通日历客户端通过 feed host 的 capability 访问，不依赖管理 Cookie/JWT/Turnstile。
+2. 在本地将 UI 复制链接的 **origin（scheme、host及端口）** 替换为上述已配置的 feed HTTPS origin，然后才粘贴到日历客户端。完整 secret path、public_id、`.ics` 后缀和若有的 query 必须原样保留，不解码/重拼 token 或删参数。只替换为自己的可信入口，不把完整链接发送到第三方转换、短链或检测服务。
+3. 在 feed 的代理/Cloudflare等层关闭完整 capability URL 日志；仅使用固定 `/feeds/[REDACTED]` 模板及不含 URL 的状态/请求 ID。不要记录原始 path/query/Referer，保留应用的 private cache 指令、不启用共享缓存；详见[feed 隐私与部署边界](readonly-feed.md)。
+
+当前应用授权不绑定 HTTP Host/origin：两条 feed handler 向存储授权传入 public_id、secret 和当前时间，校验用途摘要、期限/撤销和订阅/来源 scope。上述 origin 替换不改变这些值，因而当前实现支持；Host/路由隔离仍须由可信代理执行。源码依据为 `web/src/configuration-api.ts` 的 capability URL 拼接、`calendar-server/src/feed.rs` / `aggregate_feed.rs` 的路由与 handler，以及 `calendar-storage/src/feed.rs` / `aggregate.rs` 的授权查询。应用不会自动配置或证明这些外部域名、代理与日志策略。
+
 ## 构建与运行边界
 
 CD 构建接口：context 为仓库根 `.`，file 为根 `Dockerfile`，最终 target 为 `runtime`（也是默认最后阶段）；中间阶段为 `web` / `rust`。无 secret/build arg、无可开启 harness 的参数，Rust feature 固定在 Dockerfile 内。PR 构建不 push，发布 workflow 由独立流程 owner 维护，本叶子不执行首次发布。
@@ -46,9 +78,13 @@ python3 scripts/check_docker_image.py calrelay:local
 
 镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地常规多阶段 Dockerfile 网络构建尚未完成，arm64 亦未验证，index 存在 arm64 不等于已验收。
 
-本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据，不能声称本地镜像运行通过；真实受控 CI 结果以当前 PR head Checks 为准。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。
+本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据；这次常规网络构建未完成，不能当作完整构建成功。后续离线镜像运行与标准 runner 的成功证据分别见下。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。
 
 
-离线实际镜像验证：在相同固定 Node/Rust 基础镜像中，以禁网容器和只读挂载的专用公开依赖缓存执行 `npm ci --offline --ignore-scripts`、真实 typecheck/build/bundle canary，以及 `cargo build --release --offline --locked -p calendar-server --bin calendar-server --no-default-features --features production-web`。缓存只挂 npm `_cacache` 和 Cargo `registry`，不挂用户凭据或工具配置。将该实际编译 payload 交给 Dockerfile 未改动的最终 `runtime` 阶段，本地镜像 `sha256:2cd06b1baa28387a05dc902e5a45f709751ac3f9ffcca201fbad07ffc1e0e119` 通过完整脚本：真实 HTTP/管理拒绝/健康、非 root/只读挂载、30秒内 SIGTERM、SQLite/正式凭据 CLI 重开旋转、CA/时区与镜像内容。实际 ready=503，符合本批尚未装配生产 worker 的 main；这不代表三 worker/完整产品已验收。
+历史离线验证（#112 合并前的未装配 worker 基线）：在相同固定 Node/Rust 基础镜像中，以禁网容器和只读挂载的专用公开依赖缓存执行 `npm ci --offline --ignore-scripts`、真实 typecheck/build/bundle canary，以及 `cargo build --release --offline --locked -p calendar-server --bin calendar-server --no-default-features --features production-web`。缓存只挂 npm `_cacache` 和 Cargo `registry`，不挂用户凭据或工具配置。将该实际编译 payload 交给 Dockerfile 未改动的最终 `runtime` 阶段，本地镜像 `sha256:2cd06b1baa28387a05dc902e5a45f709751ac3f9ffcca201fbad07ffc1e0e119` 通过当时版本的 smoke：真实 HTTP/管理拒绝/健康、非 root/只读挂载、30秒内 SIGTERM、SQLite/正式凭据 CLI 重开旋转、CA/时区与镜像内容。当时实际 ready=503，只反映该旧基线没有装配生产 worker；保留这个真实历史结果，不作为当前正常服务的通过条件。
+
+当前生产基线（#112 合并后，`main@0067635`）已注册真实 source/planner/delivery 三工作器。新建、非恢复暂停的数据卷和正常持久重开必须达到 ready=200；本地正式三工作器镜像 `sha256:4b12e1495f388b9788d9382533eeba898aaf7a46102ec43dc364c3a3c742f655` 已通过收紧后的 smoke：启动/重开 ready=200、live/ready CLI、缺少 admin/credentials 时在创建 DB 前拒绝、只读挂载、SIGTERM 及凭据/SQLite 持久化。统一 CD 的[标准多阶段构建与实际镜像 smoke（run 40189519609）](https://github.com/freesialuo/CalRelay/actions/runs/40189519609)亦成功，publish 跳过；此处仅记录已确认结果，纯文档修订不使这些对应代码/构建输入的证据失效。
+
+恢复暂停是独立状态：可以 ready=false，但 live 应保持健康，不能自动 resume 或改变 cutoff。当前 smoke 使用新建且非暂停的数据卷；显式备份恢复后的 image pause 演练尚未执行，不能用上述 fresh-start 成功替代它，也不能把历史未装配 worker 的 503 当作当前正常启动预期。
 
 这项证据验证真实编译与 runtime 容器，**不把离线分步构建称为常规多阶段 Dockerfile 已在本地完整通过**。后者的标准网络构建/运行由统一 CD runner 验证，结果以对应提交的实际检查为准。首轮本地 smoke 还检出了测试输入默认0600、docker cp后root所有导致非root不可读的问题；仅合成测试文件显式0444，生产权限和鉴权保持严格，失败时输出有界脱敏诊断。
