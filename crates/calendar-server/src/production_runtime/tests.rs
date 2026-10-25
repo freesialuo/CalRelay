@@ -733,3 +733,112 @@ async fn concurrent_sqlite_writer_retains_planning_scope_for_retry() {
     assert_eq!(count, 1);
     s.drain().await;
 }
+
+#[cfg(feature = "test-harness")]
+#[tokio::test]
+async fn harness_ports_run_the_actual_three_loops_with_mock_http_and_secure_provider() {
+    use axum::{
+        http::StatusCode,
+        routing::{get, post},
+        Router,
+    };
+    use std::sync::atomic::AtomicUsize;
+    let stamp = chrono::DateTime::from_timestamp_millis(RuntimeClock::new().utc_now_ms() + 10_000)
+        .unwrap()
+        .format("%Y%m%dT%H%M%SZ")
+        .to_string();
+    let ics=format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//Runtime//EN\r\nBEGIN:VEVENT\r\nUID:one\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:{stamp}\r\nSUMMARY:Runtime mock\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+    let fetched = Arc::new(AtomicUsize::new(0));
+    let fetch_count = fetched.clone();
+    let pushed = Arc::new(AtomicUsize::new(0));
+    let push_count = pushed.clone();
+    let router = Router::new()
+        .route(
+            "/ics",
+            get(move || {
+                let ics = ics.clone();
+                let count = fetch_count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    ics
+                }
+            }),
+        )
+        .route(
+            "/push",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let count = push_count.clone();
+                async move {
+                    assert_eq!(body["device_key"], "synthetic-runtime-bark");
+                    if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        StatusCode::OK
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let http = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+    });
+    let f = fixture().await;
+    configure(&f.server.services).await;
+    let runner = IcsSourceRunner {
+        fetcher: Arc::new(MockFetcher {
+            origin: origin.clone(),
+        }),
+        ics_limits: f.server.services.ics_limits,
+        sync_limits: SyncLimits::default(),
+    };
+    let output = MockPush {
+        origin,
+        credentials: f.server.services.credential_provider().unwrap(),
+    };
+    let server = f.server.with_test_runtime_ports(runner, output).unwrap();
+    let services = server.services.clone();
+    let listener = server.bind().await.unwrap();
+    let running = tokio::spawn(server.serve(listener, std::future::pending()));
+    wait_ready(&services, false).await;
+    tokio::time::timeout(Duration::from_secs(25), async {
+        loop {
+            let accepted: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM logical_deliveries WHERE accepted_at IS NOT NULL",
+            )
+            .fetch_one(services.storage.pool())
+            .await
+            .unwrap();
+            if accepted == 1 {
+                break;
+            }
+            assert!(services.health.snapshot().live);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+    assert_eq!(pushed.load(Ordering::SeqCst), 2);
+    let outcomes: Vec<String> =
+        sqlx::query_scalar("SELECT outcome FROM delivery_attempts ORDER BY attempt_no")
+            .fetch_all(services.storage.pool())
+            .await
+            .unwrap();
+    assert_eq!(outcomes, ["retryable", "accepted"]);
+    assert!(services.health.snapshot().ready);
+    services.stop();
+    tokio::time::timeout(Duration::from_secs(3), running)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    stop.send(()).unwrap();
+    http.await.unwrap();
+}

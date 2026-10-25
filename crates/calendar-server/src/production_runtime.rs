@@ -1,7 +1,9 @@
 //! Concrete first-version composition. Business configuration stays in the existing ports.
 use crate::{
     delivery_worker::{delivery_round, DeliveryProgress, DeliveryWorkerLimits},
-    source_worker::{IcsSourceRunner, SourceProgress, SourceScanLimits, SourceScanner},
+    source_worker::{
+        IcsSourceRunner, SourceProgress, SourceRunner, SourceScanLimits, SourceScanner,
+    },
     supervision::{Progress, SupervisionConfig, WorkerFailure, WorkerKind},
     ConfigError, DeploymentConfig, Server, Services, StartError,
 };
@@ -73,8 +75,8 @@ impl Clock for RuntimeClock {
 struct ConfiguredBark {
     services: Arc<Services>,
     credentials: Arc<crate::credentials_bootstrap::RuntimeCredentialProvider>,
-    degraded: AtomicBool,
-    storage_failed: AtomicBool,
+    degraded: Arc<AtomicBool>,
+    storage_failed: Arc<AtomicBool>,
 }
 impl ConfiguredBark {
     fn new(services: Arc<Services>) -> Result<Self, StartError> {
@@ -84,8 +86,8 @@ impl ConfiguredBark {
         Ok(Self {
             services,
             credentials: Arc::new(credentials),
-            degraded: AtomicBool::new(false),
-            storage_failed: AtomicBool::new(false),
+            degraded: Arc::new(AtomicBool::new(false)),
+            storage_failed: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -228,7 +230,7 @@ async fn wait(services: &Services) {
     }
 }
 impl Server {
-    pub fn with_production_runtime(mut self) -> Result<Self, StartError> {
+    pub fn with_production_runtime(self) -> Result<Self, StartError> {
         if self.admin.is_none() {
             return Err(ConfigError("production runtime requires admin bootstrap").into());
         }
@@ -250,6 +252,44 @@ impl Server {
             ics_limits: self.services.ics_limits,
             sync_limits: SyncLimits::default(),
         };
+        let degraded = output.degraded.clone();
+        let storage_failed = output.storage_failed.clone();
+        self.install_runtime_ports(runner, output, degraded, storage_failed)
+    }
+
+    /// Explicit isolated test harness only: reuse the exact business loops with loopback
+    /// transport ports. The production initializer never calls this entry point.
+    #[cfg(feature = "test-harness")]
+    pub fn with_test_runtime_ports<R, O>(self, runner: R, output: O) -> Result<Self, StartError>
+    where
+        R: SourceRunner + Send + 'static,
+        O: PushOutput + Send + 'static,
+    {
+        if self.admin.is_none() || self.services.credential_provider().is_err() {
+            return Err(
+                ConfigError("test runtime requires real admin and credential bootstrap").into(),
+            );
+        }
+        let degraded = Arc::new(AtomicBool::new(false));
+        let storage_failed = Arc::new(AtomicBool::new(false));
+        let output = TestObservedOutput {
+            output,
+            degraded: degraded.clone(),
+        };
+        self.install_runtime_ports(runner, output, degraded, storage_failed)
+    }
+
+    fn install_runtime_ports<R, O>(
+        mut self,
+        runner: R,
+        output: O,
+        degraded: Arc<AtomicBool>,
+        storage_failed: Arc<AtomicBool>,
+    ) -> Result<Self, StartError>
+    where
+        R: SourceRunner + Send + 'static,
+        O: PushOutput + Send + 'static,
+    {
         let source_limits =
             SourceScanLimits::new(1, 8, 16_384, ROUND, DELAY, DELAY, Duration::from_secs(300))
                 .map_err(|_| ConfigError("invalid source runtime limits"))?;
@@ -321,15 +361,13 @@ impl Server {
                     |p| {
                         context.progress(match p {
                             DeliveryProgress::RecoveryPaused => Progress::RecoveryPaused,
-                            _ if output.degraded.load(Ordering::SeqCst) => {
-                                Progress::ExternalDegraded
-                            }
+                            _ if degraded.load(Ordering::SeqCst) => Progress::ExternalDegraded,
                             _ => Progress::Completed,
                         })
                     },
                 )
                 .await;
-                if output.storage_failed.load(Ordering::SeqCst) {
+                if storage_failed.load(Ordering::SeqCst) {
                     return Err(WorkerFailure);
                 }
                 match result {
@@ -341,6 +379,22 @@ impl Server {
             Ok(())
         })
         .map_err(|_| ConfigError("delivery worker already installed").into())
+    }
+}
+
+#[cfg(feature = "test-harness")]
+struct TestObservedOutput<O> {
+    output: O,
+    degraded: Arc<AtomicBool>,
+}
+#[cfg(feature = "test-harness")]
+impl<O: PushOutput> PushOutput for TestObservedOutput<O> {
+    async fn deliver(&self, envelope: DeliveryEnvelope) -> DeliveryOutcome {
+        self.degraded.store(true, Ordering::SeqCst);
+        let result = self.output.deliver(envelope).await;
+        self.degraded
+            .store(result != DeliveryOutcome::Accepted, Ordering::SeqCst);
+        result
     }
 }
 

@@ -29,3 +29,11 @@ CALRELAY_DATABASE=/data/calrelay.sqlite3 calendar-server --deployment-config /ru
 仅启用 production-web（未启用 test-harness）的最终标准 binary 另经真实子进程测试：显式凭据 CLI 创建加密 handle；按现有配置 API 持久化来源/规则/输出并提交事件；实际 source 刷新与 Bark 目标的私网拒绝不关闭 HTTP，planner 生成水位/任务，投递 attempt 完整入库；同进程 /admin/、受保护 API、live/ready 均按契约响应，SIGTERM 后 SQLite 重开保持结果与零 accepted。成功 ICS/304/503 及 Bark 重试/accepted/重开去重在 loopback 模拟 transport 组合测试中覆盖，没有访问生产。
 
 同镜像 UI 静态托管/Docker 打包复用已合并 #103。本批不修改 assets server、Docker 恢复或 supervisor 内部，不关闭 #75/#74/#36 的其他 AC。此文档必须与正式基线 CI 和依赖合并状态一起验收，隔离分支不能视为已发布闭环。
+
+## #78 隔离系统验收入口
+
+显式构建 `test-harness` feature 后，`Server::with_test_runtime_ports<R: SourceRunner + Send + 'static, O: PushOutput + Send + 'static>(runner, output)` 复用生产的同一 source/planner/delivery 循环、真实时钟、预算及停止协议。它要求已装配 admin 与实际 KeyRing provider；调用者可先使用 `DeploymentConfig::initialize_with_supervision(production_runtime::supervision_budgets())`，按独立 harness 的既有方式装配本地 verifier，再调用该方法。Bark handle 由正式本地 CLI 创建，`server.services.credential_provider()` 返回可克隆的真实解密 provider。
+
+来源可传入 `IcsSourceRunner<仅测试的 RemoteFetcher>`；输出传入仅测试的 PushOutput，并按 envelope.job_id/output_id 通过已有 output_for_delivery 查询当前配置/credential handle，再访问 loopback 模拟 Bark。mock 只替代外部 transport，不复制 planner/领取循环或构造生产 fake 数据。现有生产适配器的 TLS/SSRF 验证保留独立矩阵；该 harness 证据不冒充标准 image 的外部连接验收。
+
+测试 `harness_ports_run_the_actual_three_loops_with_mock_http_and_secure_provider` 证明三循环实际持续运行：loopback ICS 自动同步、配置驱动规划、Bark503后自动重试/accepted，以及正常停止。标准入口始终调用 `with_production_runtime`，不接受生产 mock 字段、环境变量或测试路由；仅 `production-web` 构建不包含该注入入口。
