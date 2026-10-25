@@ -168,7 +168,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let listener = server.bind().await?;
     println!(
         "{}",
-        json!({"upstream":format!("http://{}",listener.local_addr()?),"browser_origin":origin,"access_jwt":jwt,"challenge_prefix":"synthetic-challenge:","synthetic_only":true})
+        json!({"upstream":format!("http://{}",listener.local_addr()?),"browser_origin":origin,"access_jwt":jwt,"challenge_prefix":"synthetic-challenge:","synthetic_only":true,"system_runtime":system.is_some()})
     );
     server
         .serve(listener, async move {

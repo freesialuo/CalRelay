@@ -21,7 +21,7 @@ const SOURCE_B: &str = "https://ics-b.system.invalid/calendar.ics";
 
 #[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum DatabaseMode {
+enum DatabaseMode {
     #[default]
     Fresh,
     Reopen,
@@ -31,7 +31,7 @@ pub enum DatabaseMode {
 #[serde(deny_unknown_fields)]
 pub struct SystemHarnessConfig {
     version: u8,
-    pub root: PathBuf,
+    root: PathBuf,
     deployment_config: PathBuf,
     #[serde(default)]
     mode: DatabaseMode,
@@ -64,7 +64,7 @@ impl SystemHarnessConfig {
         FileClock::load(&config.root, &config.clock_file)?;
         Ok(config)
     }
-    pub fn prepare_database(&self, path: &Path) -> Result<(), ConfigError> {
+    fn prepare_database(&self, path: &Path) -> Result<(), ConfigError> {
         controlled_path(&self.root, path)?;
         match self.mode {
             DatabaseMode::Fresh => {
@@ -137,7 +137,7 @@ impl SystemHarnessConfig {
 
 /// The explicit system mode only accepts private, caller-owned fixture roots. Default legacy
 /// harness invocation never reaches this code and continues exclusive create_new behavior.
-pub fn validate_root(root: &Path) -> Result<(), ConfigError> {
+fn validate_root(root: &Path) -> Result<(), ConfigError> {
     let metadata = std::fs::symlink_metadata(root).map_err(|_| ERROR)?;
     if !root.is_absolute()
         || !metadata.is_dir()
@@ -161,7 +161,7 @@ pub fn validate_root(root: &Path) -> Result<(), ConfigError> {
     return Err(ERROR);
     Ok(())
 }
-pub fn controlled_path(root: &Path, path: &Path) -> Result<(), ConfigError> {
+fn controlled_path(root: &Path, path: &Path) -> Result<(), ConfigError> {
     validate_root(root)?;
     let relative = path.strip_prefix(root).map_err(|_| ERROR)?;
     if relative.as_os_str().is_empty() {
@@ -307,7 +307,7 @@ fn client() -> reqwest::Client {
 async fn bounded(mut response: reqwest::Response) -> Result<Vec<u8>, ()> {
     let mut bytes = vec![];
     while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
-        if bytes.len() + chunk.len() > 65_536 {
+        if chunk.len() > 65_536 - bytes.len() {
             return Err(());
         }
         bytes.extend_from_slice(&chunk);
@@ -407,7 +407,7 @@ impl PushOutput for LoopbackBark {
             .description
             .as_deref()
             .unwrap_or(&envelope.event.title);
-        if key.is_empty()
+        if !key.starts_with("synthetic_")
             || key.len() > 4096
             || !key.bytes().all(|b| b.is_ascii_graphic())
             || envelope.event.title.len() + body.len() > 65_536
