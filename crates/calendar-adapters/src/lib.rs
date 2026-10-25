@@ -1,10 +1,9 @@
 //! External protocol adapters for CalRelay.
 
-pub mod ics;
-pub use ics::*;
-
-pub mod remote;
-
-pub mod ingestion;
-
 pub mod bark;
+pub mod ics;
+pub mod ingestion;
+pub mod remote;
+pub mod renderer;
+
+pub use ics::*;
