@@ -1,4 +1,5 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
+pub mod admin;
 mod config;
 mod http;
 mod ingest;
@@ -68,6 +69,7 @@ impl Services {
 pub struct Server {
     pub services: Arc<Services>,
     config: Config,
+    admin: Option<admin::AdminState>,
 }
 impl Server {
     /// Validate and migrate before constructing a ready service or opening the listener.
@@ -78,6 +80,7 @@ impl Server {
         let (shutdown, _) = watch::channel(false);
         Ok(Self {
             config,
+            admin: None,
             services: Arc::new(Services {
                 storage,
                 ingest_policy,
@@ -92,8 +95,20 @@ impl Server {
     pub async fn bind(&self) -> Result<TcpListener, StartError> {
         Ok(TcpListener::bind(self.config.bind).await?)
     }
+    /// Explicit trusted assembly opt-in. The standard binary leaves management disabled.
+    pub fn with_admin(
+        mut self,
+        verifier: Arc<calendar_adapters::admin_auth::CloudflareVerifier>,
+    ) -> Self {
+        self.admin = Some(admin::AdminState::new(self.services.clone(), verifier));
+        self
+    }
     pub fn router(&self) -> axum::Router {
-        router(self.services.clone(), self.config.clone())
+        http::router_with_admin(
+            self.services.clone(),
+            self.config.clone(),
+            self.admin.clone(),
+        )
     }
     pub async fn serve(
         self,

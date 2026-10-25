@@ -18,6 +18,8 @@ base64 = "=0.22.1"
 zeroize = { version = "=1.9.1", features = ["serde"] }
 httpdate = "=1.0.3"
 sha2 = "0.10"
+ring = "=0.17.14"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "sync"] }
