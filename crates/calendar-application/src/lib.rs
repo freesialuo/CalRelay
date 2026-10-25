@@ -11,6 +11,8 @@ pub use ingestion::*;
 mod remote;
 pub use remote::*;
 
+pub mod aggregate;
+
 mod feed;
 pub use feed::*;
 
