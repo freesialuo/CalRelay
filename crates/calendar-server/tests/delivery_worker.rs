@@ -647,3 +647,44 @@ async fn supervised_stuck_send_has_bounded_drain_and_preserves_unfinished_intent
     reopened.drain().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn budget_rechecked_after_pause_read_prevents_a_new_claim() -> Result {
+    struct MetadataDeadline(AtomicUsize);
+    impl Clock for MetadataDeadline {
+        fn utc_now_ms(&self) -> i64 {
+            1000
+        }
+        fn monotonic_now_ms(&self) -> u64 {
+            // Start and initial admission are in budget; the next observation after
+            // the persistent pause read has exhausted it. No timers or real network.
+            if self.0.fetch_add(1, Ordering::SeqCst) < 2 {
+                0
+            } else {
+                1000
+            }
+        }
+    }
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    seed(&services).await?;
+    let round = delivery_round(
+        &services,
+        &Accepted,
+        "deadline",
+        limits(3),
+        &MetadataDeadline(AtomicUsize::new(0)),
+        |_| panic!("no completed queue operation"),
+    )
+    .await?;
+    assert_eq!(
+        (round.processed, round.end),
+        (0, DeliveryRoundEnd::Deadline)
+    );
+    let attempts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM delivery_attempts")
+        .fetch_one(services.storage.pool())
+        .await?;
+    assert_eq!(attempts, 0);
+    services.drain().await;
+    Ok(())
+}

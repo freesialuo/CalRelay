@@ -4,7 +4,7 @@
 
 `DeliveryWorkerLimits::new` 限制每轮 1–256 个操作、1ms–120s 单调准入预算、1ms–60s 扫描间隔。每次操作单独经过 `Services::run_task`，复用 claim/prepare/finish 的持久租约、generation/revision/freshness fence、accepted 去重、取消竞争审计与重启恢复。网络仍在事务外；该模块不绕过 Bark 的 HTTPS/SSRF/credential 边界。
 
-轮次到达上限或单调预算后停止新准入，已开始的操作继续执行到 finish；UTC 跳变不改变轮次耗时预算。每轮之后有可被停止通知打断的等待，包含满轮次，避免持续忙转。存储错误返回调用方；外部渠道结果继续沿用持久重试，不能仅因输出离线就将核心判为故障。
+持久恢复状态读取后再次检查单调期限，避免查询耗时越过预算后仍开始领取。轮次到达上限或单调预算后停止新准入，已开始的操作继续执行到 finish；UTC 跳变不改变轮次耗时预算。每轮之后有可被停止通知打断的等待，包含满轮次，避免持续忙转。存储错误返回调用方；外部渠道结果继续沿用持久重试，不能仅因输出离线就将核心判为故障。
 
 `DeliveryProgress::{Processed, Empty, RecoveryPaused}` 只在真实操作完成后调用观察者，不在等待时打 heartbeat。Processed 只表示处理了领取结果，不表示 Bark 接受或设备展示。只读 `Storage::delivery_paused` 将恢复暂停与数据库故障分开；最终租约/cutoff guard 仍由 SQLite 强制，worker 从不写 pause/cutoff。恢复策略仍只允许隔离/停服运维操作更改。
 

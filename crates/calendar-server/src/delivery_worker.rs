@@ -87,31 +87,35 @@ pub async fn delivery_round<O: PushOutput, C: Clock + ?Sized>(
         let result = services
             .run_task(async |repository| {
                 if repository.delivery_paused().await? {
-                    return Ok(DeliveryProgress::RecoveryPaused);
+                    return Ok(Some(DeliveryProgress::RecoveryPaused));
+                }
+                if clock.monotonic_now_ms().saturating_sub(started) >= limits.round_budget_ms {
+                    return Ok(None);
                 }
                 deliver_one(repository, output, owner, &services.delivery_policy, clock)
                     .await
                     .map(|processed| {
-                        if processed {
+                        Some(if processed {
                             DeliveryProgress::Processed
                         } else {
                             DeliveryProgress::Empty
-                        }
+                        })
                     })
             })
             .await;
         match result {
             None => break DeliveryRoundEnd::Stopped,
             Some(Err(error)) => return Err(error),
-            Some(Ok(DeliveryProgress::RecoveryPaused)) => {
+            Some(Ok(None)) => break DeliveryRoundEnd::Deadline,
+            Some(Ok(Some(DeliveryProgress::RecoveryPaused))) => {
                 progress(DeliveryProgress::RecoveryPaused);
                 break DeliveryRoundEnd::RecoveryPaused;
             }
-            Some(Ok(DeliveryProgress::Empty)) => {
+            Some(Ok(Some(DeliveryProgress::Empty))) => {
                 progress(DeliveryProgress::Empty);
                 break DeliveryRoundEnd::Empty;
             }
-            Some(Ok(DeliveryProgress::Processed)) => {
+            Some(Ok(Some(DeliveryProgress::Processed))) => {
                 processed += 1;
                 progress(DeliveryProgress::Processed);
             }
