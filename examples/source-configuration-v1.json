@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "name": "Manual calendar",
+  "enabled": false,
+  "adapter": "ics",
+  "mode": "manual-static",
+  "endpoint": null,
+  "credential_id": null,
+  "refresh_interval_ms": null,
+  "freshness_sla_ms": null,
+  "capabilities": {"snapshot": true, "delta": false, "upsert": true, "delete": false, "conditional_read": false, "pagination": false},
+  "calendars": [{"id": "calendar-a", "external_id": "main", "selected": true, "timezone": "UTC"}]
+}

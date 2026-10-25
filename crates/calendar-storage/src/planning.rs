@@ -159,12 +159,13 @@ impl ReminderPlanner for Storage {
         let allowed_calendars: HashSet<&str> =
             policy.calendar_ids.iter().map(String::as_str).collect();
 
-        let calendar_rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, timezone_policy FROM calendars WHERE source_id = ?")
-                .bind(&request.source_id)
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(db_err)?;
+        let calendar_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, timezone_policy FROM calendars WHERE source_id = ? AND selected=1",
+        )
+        .bind(&request.source_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
         check_budget()?;
         let mut calendar_tzids: HashMap<String, Option<String>> =
             HashMap::with_capacity(calendar_rows.len());
@@ -187,7 +188,10 @@ impl ReminderPlanner for Storage {
         let mut live_event_revisions: HashMap<String, i64> = HashMap::new();
         for (event_id, calendar_id, revision, document_json, deleted_at) in event_rows {
             check_budget()?;
-            if deleted_at.is_some() || !allowed_calendars.contains(calendar_id.as_str()) {
+            if deleted_at.is_some()
+                || !allowed_calendars.contains(calendar_id.as_str())
+                || !calendar_tzids.contains_key(&calendar_id)
+            {
                 continue;
             }
             let event: EventV1 = serde_json::from_str(&document_json)

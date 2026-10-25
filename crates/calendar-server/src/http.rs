@@ -151,6 +151,7 @@ pub fn openapi() -> Value {
     let mut document = json!({"openapi":"3.1.0","info":{"title":"CalRelay service API","version":env!("CARGO_PKG_VERSION")},
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
     crate::ingest::describe(&mut document);
+    crate::source_configuration::describe(&mut document);
     document
 }
 

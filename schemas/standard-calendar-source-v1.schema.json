@@ -1,0 +1,197 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {
+      "const": "standard-calendar-source/v1"
+    },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "mode": {
+      "enum": [
+        "snapshot",
+        "delta"
+      ]
+    },
+    "base_source_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "base_config_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "base_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "proposed_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "complete": {
+      "const": true
+    },
+    "pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "collection_tag": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "operations": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "upsert"
+              },
+              "calendar_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "event": {
+                "$ref": "urn:calrelay:schema:event:1.0"
+              }
+            },
+            "required": [
+              "op",
+              "calendar_id",
+              "event"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "delete"
+              },
+              "external_uid": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "expected_event_revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "op",
+              "external_uid",
+              "expected_event_revision"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "protocol_version",
+    "batch_id",
+    "mode",
+    "base_source_revision",
+    "base_config_revision",
+    "base_checkpoint",
+    "proposed_checkpoint",
+    "complete",
+    "pages",
+    "collection_tag",
+    "operations"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:calrelay:schema:standard-calendar-source:v1",
+  "title": "Standard calendar source v1 envelope (not yet a mounted API)",
+  "description": "Authentication context supplies source. This schema does not authorize a batch or prove completeness. See docs/source-configuration.md for semantic/CAS/receipt rules and staged implementation.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "base_checkpoint": {
+            "type": "null"
+          },
+          "operations": {
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "op": {
+                  "const": "upsert"
+                },
+                "calendar_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                },
+                "event": {
+                  "$ref": "urn:calrelay:schema:event:1.0"
+                }
+              },
+              "required": [
+                "op",
+                "calendar_id",
+                "event"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pages": {
+            "minimum": 2
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "collection_tag": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    }
+  ]
+}

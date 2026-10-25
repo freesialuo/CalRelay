@@ -1068,3 +1068,59 @@ async fn ac2_job_timezone_context_is_independent_of_other_outputs_and_window_mov
     db.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn configuration_rename_replans_unaccepted_jobs_and_calendar_selection_is_enforced() -> Result
+{
+    use calendar_application::configuration::{ConfigurationCondition, SourceConfigurationV1};
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    commit(&db, 0, vec![event(json!({}))]).await?;
+    db.reconcile(request(1), &FakeClock::fixed()).await?;
+    let original = jobs(&db).await?;
+    assert_eq!(original.len(), 1);
+    let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))?;
+    config.enabled = true;
+    config.calendars[0].id = "c".into();
+    config.calendars[0].timezone = Some("America/Vancouver".into());
+    sqlx::query("UPDATE sources SET config_revision=1,config_json=? WHERE id='s'")
+        .bind(serde_json::to_string(&config)?)
+        .execute(db.pool())
+        .await?;
+    config.name = "Renamed only".into();
+    db.put_source_configuration(
+        "s",
+        ConfigurationCondition::Revision(1),
+        config.clone(),
+        "alice",
+        NOW,
+    )
+    .await?;
+    assert!(jobs(&db).await?.is_empty());
+    assert!(matches!(
+        db.reconcile(request(1), &FakeClock::fixed()).await,
+        Err(PlanningError::Conflict)
+    ));
+    db.reconcile(request(2), &FakeClock::fixed()).await?;
+    let replanned = jobs(&db).await?;
+    assert_eq!(replanned.len(), 1);
+    assert_eq!(replanned[0].4, original[0].4 + 1);
+    assert_eq!(replanned[0].6, original[0].6);
+    config.calendars[0].selected = false;
+    db.put_source_configuration(
+        "s",
+        ConfigurationCondition::Revision(2),
+        config,
+        "alice",
+        NOW + 1,
+    )
+    .await?;
+    db.reconcile(request(3), &FakeClock::fixed()).await?;
+    assert!(jobs(&db).await?.is_empty());
+    assert_eq!(count(&db, "logical_deliveries").await?, 1); // Identity/history retained.
+    db.close().await;
+    Ok(())
+}

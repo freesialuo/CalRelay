@@ -146,6 +146,434 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover managed sources including retired records; at most 100 summaries
+         * @description Binary source_id cursor. Not snapshot pagination under concurrent writes. Unknown query fields rejected. No config bodies, tokens or credential handles.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    after?: string;
+                };
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path?: never;
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bounded no-store page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceConfigurationPage"];
+                    };
+                };
+                /** @description Invalid query */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management identity denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid cursor */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read, conditionally save, or retire source configuration (optional admin assembly)
+         * @description GET/PUT ETag is config_revision, never event/source revision. PUT requires exactly one of If-None-Match: * (disabled creation) or If-Match: quoted positive config revision. DELETE requires If-Match and empty body. No secret material accepted. All responses no-store. Authorized unsafe requests consume and rotate the existing #34 nonce even on downstream failure; read X-Admin-Write-Nonce before retry.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Committed configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceConfigurationRecord"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed configuration; legacy sources are not reinterpreted */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, identity conflict, existing or retired source */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Request budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration or condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Read, conditionally save, or retire source configuration (optional admin assembly)
+         * @description GET/PUT ETag is config_revision, never event/source revision. PUT requires exactly one of If-None-Match: * (disabled creation) or If-Match: quoted positive config revision. DELETE requires If-Match and empty body. No secret material accepted. All responses no-store. Authorized unsafe requests consume and rotate the existing #34 nonce even on downstream failure; read X-Admin-Write-Nonce before retry.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match"?: string;
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SourceConfigurationV1"];
+                };
+            };
+            responses: {
+                /** @description Committed configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceConfigurationRecord"];
+                    };
+                };
+                /** @description Committed configuration receipt */
+                201: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceConfigurationRecord"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed configuration; legacy sources are not reinterpreted */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, identity conflict, existing or retired source */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Request budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration or condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Read, conditionally save, or retire source configuration (optional admin assembly)
+         * @description GET/PUT ETag is config_revision, never event/source revision. PUT requires exactly one of If-None-Match: * (disabled creation) or If-Match: quoted positive config revision. DELETE requires If-Match and empty body. No secret material accepted. All responses no-store. Authorized unsafe requests consume and rotate the existing #34 nonce even on downstream failure; read X-Admin-Write-Nonce before retry.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Source retired; history retained */
+                204: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed configuration; legacy sources are not reinterpreted */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, identity conflict, existing or retired source */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Request budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration or condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        /** @description Rotated after an authorized unsafe request */
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/v1/sources/{source_id}/events/{uid}": {
         parameters: {
             query?: never;
@@ -754,6 +1182,58 @@ export interface components {
                 code: string;
                 request_id: string;
             };
+        };
+        SourceConfigurationPage: {
+            items: components["schemas"]["SourceConfigurationSummary"][];
+            next_after: string | null;
+        };
+        SourceConfigurationRecord: {
+            config_revision: number;
+            configuration: components["schemas"]["SourceConfigurationV1"];
+            /** @description Unix milliseconds */
+            retired_at: number | null;
+            source_id: string;
+            source_revision: number;
+        };
+        SourceConfigurationSummary: {
+            config_revision: number;
+            enabled: boolean;
+            name: string;
+            retired_at: number | null;
+            source_id: string;
+            source_revision: number;
+        };
+        /**
+         * SourceConfigurationV1
+         * @description Structural shape. Application validation additionally enforces capability/mode/URL/timezone/calendar identity semantics. See docs/source-configuration.md.
+         */
+        SourceConfigurationV1: {
+            /** @enum {unknown} */
+            adapter: "ics" | "standard-calendar";
+            calendars: {
+                external_id: string;
+                id: string;
+                selected: boolean;
+                timezone?: string | null;
+            }[];
+            capabilities: {
+                conditional_read: boolean;
+                delete: boolean;
+                delta: boolean;
+                pagination: boolean;
+                snapshot: boolean;
+                upsert: boolean;
+            };
+            credential_id?: string | null;
+            enabled: boolean;
+            endpoint?: string | null;
+            freshness_sla_ms?: number | null;
+            /** @enum {unknown} */
+            mode: "pull" | "manual-static" | "push-only";
+            name: string;
+            refresh_interval_ms?: number | null;
+            /** @constant */
+            version: "v1";
         };
     };
     responses: never;
