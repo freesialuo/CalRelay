@@ -65,7 +65,7 @@ session 最晚于初始 Access JWT 到期或 session TTL 到期失效。配置�
 
 ## 标准 binary 的部署装配（#93）
 
-`--deployment-config FILE` 仍是监听地址唯一入口，`CALRELAY_BIND` 继续拒绝。部署 JSON 只追加可选 `admin`；不含该字段时保持关闭，`GET /api/admin/v1/bootstrap` 返回 `{"enabled":false}`。配置 admin 后，标准 binary 在打开数据库和监听之前验证并加载 secret、构造既有 Cloudflare verifier，再调用同一管理装配。缺失/错误字段不回退关闭，直接启动失败。旧 `Config` 解析入口遇到 admin 会显式拒绝，生产调用使用 `DeploymentConfig`，避免配置被静默丢弃。
+`--deployment-config FILE` 仍是监听地址唯一入口，`CALRELAY_BIND` 继续拒绝。库的部署 JSON 支持 `admin`；显式嵌入未装配时 `GET /api/admin/v1/bootstrap` 返回 `{"enabled":false}`。标准 binary 的完整运行时要求 admin 与 credentials 都存在，缺失即启动失败，见[生产运行时](production-runtime.md)。配置 admin 后，标准 binary 在打开数据库和监听之前验证并加载 secret、构造既有 Cloudflare verifier，再调用同一管理装配。缺失/错误字段不回退关闭，直接启动失败。旧 `Config` 解析入口遇到 admin 会显式拒绝，生产调用使用 `DeploymentConfig`，避免配置被静默丢弃。
 
 以下全部是合成示例，不是账号或密钥：
 
