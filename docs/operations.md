@@ -125,7 +125,7 @@ SQLite WAL 需要同主机本地文件系统，不能把多节点容器共享的
 
 ## 8. Docker 恢复语义与验收
 
-目标部署组合：Dockerfile HEALTHCHECK 调用镜像自带 CLI；启动宽限后连续核心失败达到阈值，外部恢复执行者先 SIGTERM、等待有限宽限，必要时 SIGKILL；`restart: unless-stopped` 保持非手动停止实例的重启能力。HEALTHCHECK 不负责 kill，核心不主动操纵 Docker。具体外部机制/权限方案尚未选型，不默认引入 autoheal sidecar 或给主服务 socket。见[部署 UML](product-design.md#uml-部署恢复时序目标外部执行者待选型)。
+目标部署组合：Dockerfile HEALTHCHECK 调用镜像自带 CLI 的 live 检查；启动宽限后连续核心失败达到阈值，外部恢复执行者先 SIGTERM、等待有限宽限，必要时 SIGKILL；`restart: unless-stopped` 保持非手动停止实例的重启能力。HEALTHCHECK 不负责 kill，核心不主动操纵 Docker。恢复资格依据持续核心 liveness 故障与真实组件证据；readiness=false 单独不足以触发终止，恢复暂停、迁移/配置未就绪及来源 freshness 均不得被当成 kill 理由。外部执行者必须识别启动中/暂停/维护状态并遵守手动停止 fence，避免恢复暂停造成重启循环。具体外部机制/权限方案尚未选型，不默认引入 autoheal sidecar 或给主服务 socket。见[部署 UML](product-design.md#uml-部署恢复时序目标外部执行者待选型)。
 
 | 核对项 | 事实、推断与实现边界 |
 | --- | --- |

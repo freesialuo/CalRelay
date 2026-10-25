@@ -220,10 +220,10 @@ sequenceDiagram
     participant R as 外部恢复执行者 待选型
     participant S as SQLite 持久卷
     E->>H: 按 interval timeout start-period retries 执行
-    H->>C: 有界尽量只读的真实健康查询
+    H->>C: 有界尽量只读的真实 live 查询
     C-->>H: HTTP DB 必需工作器诊断
     H-->>E: 健康退出码 不执行 kill
-    alt 启动宽限内或瞬时失败或仅接入器离线
+    alt 启动宽限内 瞬时失败 恢复暂停或仅来源离线
         Note over E,R: 不执行全局恢复 来源 freshness 独立
     else 超过宽限且连续核心健康失败
         E-->>R: 持续 unhealthy 证据与容器身份
@@ -245,7 +245,7 @@ sequenceDiagram
     end
 ```
 
-图中 R 是部署边界外的责任占位，不代表已有实现或获准部署有权限的 autoheal sidecar。核心没有 Docker socket/API；R 也不同时承担独立 start 循环与 Docker restart policy 争夺生命周期。具体信号路径、最小权限、容器/进程身份 fence、手动停止意图与并发恢复仲裁由 #38 冻结并在指定 Engine 版本验证。不能每次探针失败就 kill；失败计数、启动宽限、重置规则、终止宽限、恢复冷却/限次及告警要形成一个可审计契约。
+图中 R 是部署边界外的责任占位，不代表已有实现或获准部署有权限的 autoheal sidecar。核心没有 Docker socket/API；R 也不同时承担独立 start 循环与 Docker restart policy 争夺生命周期。具体信号路径、最小权限、容器/进程身份 fence、手动停止意图与并发恢复仲裁由 #38 冻结并在指定 Engine 版本验证。恢复只依据核心 liveness 与真实组件故障证据，单独 ready=false、恢复暂停、维护/迁移状态或来源 freshness 不触发终止；不能每次探针失败就 kill。失败计数、启动宽限、重置规则、终止宽限、恢复冷却/限次及告警要形成一个可审计契约。
 
 经 Docker 官方文档与固定 Moby 源码核对：HEALTHCHECK 管理健康状态；stop 发送终止信号后可升级 KILL，但属于手动停止路径；kill API 也会设置手动停止标记。因此不能承诺调用 docker stop/kill 后 unless-stopped 自动重启。直接向目标进程发 OS 信号不经过该 API 标记，按源码推断在其他重启条件满足时可触发 restart policy；这仍是待 #38 在选定部署机制/Engine 上实际验收的候选，不是已验证恢复脚本。详见[部署语义与来源](operations.md#8-docker-恢复语义与验收)。本轮仅核对规范/源码，没有连接实际 Docker daemon 或执行 stop/kill。
 
