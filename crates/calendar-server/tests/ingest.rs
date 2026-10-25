@@ -428,3 +428,67 @@ async fn expired_disabled_action_and_malformed_conditions_fail_closed() {
         0
     );
 }
+
+#[tokio::test]
+async fn schema_constraints_are_checked_before_typed_normalization() {
+    let (_dir, s, t) = setup().await;
+    for (field, value) in [
+        ("title", json!("x".repeat(65_537))),
+        ("url", json!("not a URI")),
+        ("categories", json!([""])),
+        ("description", Value::Null),
+    ] {
+        let mut value_body = serde_json::from_str::<Value>(&body("a", "A")).unwrap();
+        value_body["event"][field] = value;
+        send(
+            &s,
+            request(
+                &t,
+                "PUT",
+                "s",
+                "a",
+                "schema",
+                ("if-none-match", "*"),
+                value_body.to_string(),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM events")
+            .fetch_one(s.services.storage.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    // JSON Schema length counts Unicode scalar values, not UTF-8 bytes.
+    send(
+        &s,
+        request(
+            &t,
+            "PUT",
+            "s",
+            "a",
+            "schema",
+            ("if-none-match", "*"),
+            body("a", &"中".repeat(65_536)),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    send(
+        &s,
+        request(
+            &t,
+            "PUT",
+            "s",
+            &"%E4%B8%AD".repeat(512),
+            "unicode-uid",
+            ("if-none-match", "*"),
+            body(&"中".repeat(512), "A"),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+}

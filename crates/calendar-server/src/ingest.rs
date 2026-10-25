@@ -13,7 +13,7 @@ use calendar_storage::ingest::IngestError;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -31,6 +31,16 @@ impl Clock for SystemClock {
         0
     }
 }
+// Trusted embedded schema only. HTTP/file retrieval features are disabled.
+static EVENT_SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../../schemas/event-v1.schema.json"))
+            .expect("embedded event schema JSON");
+    jsonschema::options()
+        .should_validate_formats(true)
+        .build(&schema)
+        .expect("embedded event schema")
+});
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Upsert {
@@ -51,6 +61,13 @@ async fn upsert(
     Extension(id): Extension<RequestId>,
     body: Bytes,
 ) -> Response {
+    let raw: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+    };
+    if !EVENT_SCHEMA.is_valid(&raw["event"]) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
     let body: Upsert = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(_) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),

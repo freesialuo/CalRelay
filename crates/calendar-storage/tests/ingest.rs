@@ -247,3 +247,68 @@ async fn v9_without_v7_upgrades_and_backup_restore_preserves_receipts() {
         1
     );
 }
+
+#[tokio::test]
+async fn new_unchanged_writes_verify_source_but_receipt_replays_do_not() {
+    let dir = tempdir().unwrap();
+    let db = Storage::open(dir.path().join("db")).await.unwrap();
+    let token = seed(&db).await;
+    let clock = Time::new(10);
+    db.ingest(
+        &token,
+        request("create"),
+        IngestPolicy::default(),
+        &clock,
+        "first",
+    )
+    .await
+    .unwrap();
+    clock.set(20);
+    let mut no_op = request("new-key");
+    no_op.condition = IngestCondition::Revision(1);
+    let result = db
+        .ingest(
+            &token,
+            no_op.clone(),
+            IngestPolicy::default(),
+            &clock,
+            "second",
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.event_revision, 1);
+    assert_eq!(result.source_revision, 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_verified_at FROM sources")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        20
+    );
+    clock.set(30);
+    assert!(
+        db.ingest(&token, no_op, IngestPolicy::default(), &clock, "third")
+            .await
+            .unwrap()
+            .replayed
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_verified_at FROM sources")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        20
+    );
+    for query in [
+        "SELECT count(*) FROM event_revisions",
+        "SELECT count(*) FROM source_changes",
+    ] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(query)
+                .fetch_one(db.pool())
+                .await
+                .unwrap(),
+            1
+        );
+    }
+}

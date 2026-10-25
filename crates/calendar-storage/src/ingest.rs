@@ -172,13 +172,19 @@ impl Storage {
             sqlx::query("INSERT INTO source_changes(source_id,source_revision,event_id,event_revision,change_kind) VALUES(?,?,?,?,?)")
                 .bind(&request.source_id).bind(committed_source_revision).bind(&id).bind(event_revision).bind(kind).execute(&mut *tx).await?;
             // A machine write must not erase the remote adapter's checkpoint or snapshot proof.
-            sqlx::query("UPDATE sources SET revision=?,last_verified_at=? WHERE id=?")
+            sqlx::query("UPDATE sources SET revision=? WHERE id=?")
                 .bind(committed_source_revision)
-                .bind(now)
                 .bind(&request.source_id)
                 .execute(&mut *tx)
                 .await?;
         }
+        // A newly executed successful no-op proves current source freshness too. Receipt
+        // replays return above and intentionally do not extend verification or retention.
+        sqlx::query("UPDATE sources SET last_verified_at=? WHERE id=?")
+            .bind(now)
+            .bind(&request.source_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("INSERT INTO ingest_requests(token_id,key_digest,request_digest,event_revision,source_revision,deleted,created,expires_at,request_id) VALUES(?,?,?,?,?,?,?,?,?)")
             .bind(token_id).bind(key).bind(hash).bind(event_revision).bind(committed_source_revision).bind(deleting).bind(created).bind(expires_at).bind(request_id).execute(&mut *tx).await?;
         tx.commit().await?;

@@ -2,7 +2,7 @@
 
 `PUT|DELETE /api/ingest/v1/sources/{source_id}/events/{uid}` 使用独立 API bearer token。
 这细化了架构文档的路由示意：来源显式在路径中，并必须等于 token 的绑定来源。
-PUT 正文为 `{ "calendar_id": "…", "event": EventV1 }`；拒绝未知字段，event.external_uid 必须与解码后的路径 UID 完全一致。
+PUT 正文为 `{ "calendar_id": "…", "event": EventV1 }`；先对原始 event JSON 执行仓库 EventV1 Schema（含 format）校验，再类型化并执行领域校验；拒绝未知字段，event.external_uid 必须与解码后的路径 UID 完全一致。
 正文不能指定 source_id。calendar 必须属于同一来源。DELETE 正文必须为空。
 不提供管理登录、feed、外部格式解析、生产任务或真实推送。
 
@@ -12,7 +12,7 @@ PUT 正文为 `{ "calendar_id": "…", "event": EventV1 }`；拒绝未知字段�
 必须恰好一个条件头：初次 PUT 用 `If-None-Match: *`；修改、删除及恢复 tombstone 用 `If-Match: "N"`，N 为当前事件正整数 revision。
 不接受弱 ETag、列表、通配 If-Match、重复条件头、双条件或缺失条件。
 不存在事件的 DELETE 返回 409；tombstone 保留身份，不能用初次写条件复活。
-删除已删除事件若 revision 匹配则不再新增修订；相同内容、日历的 PUT 也不新增修订。
+删除已删除事件若 revision 匹配则不再新增修订；相同内容、日历的 PUT 也不新增修订。新键成功执行（包括无变化 PUT/重复 DELETE）刷新来源 last_verified_at；receipt 重放不刷新。
 事件内容改变/恢复/删除同时推进事件和来源 revision，写 event_revisions/source_changes，保留远程 checkpoint。
 source_sequence 递减返回 409，与既有同步规则一致。
 
@@ -58,7 +58,7 @@ UTC 回跳不会提前清理旧 receipt；时钟向前跳变可能提前到期�
 备份可回滚 token 撤销，恢复库须继续按既有隔离流程核实；receipt 不是抗恶意数据库回滚日志。
 共享生产改动仅 application/storage 模块导出、token digest 的 crate 内复用，以及 server 模块/Services policy/HTTP router/OpenAPI 的最小追加。
 0008 feed、0010 管理认证未纳入本分支；父任务仍需在实际合入后组合验证。
-无 Cargo.toml/lock 改动或依赖升级。
+仅 server 新增固定 jsonschema 0.58.6（default-features=false，关闭 HTTP/文件取用），锁文件新增其必要依赖，保留全部既有包版本。
 
 ## AC 与验证证据
 
@@ -76,4 +76,6 @@ UTC 回跳不会提前清理旧 receipt；时钟向前跳变可能提前到期�
 
 实现采用 [SQLite 官方事务说明](https://www.sqlite.org/lang_transaction.html)：IMMEDIATE 先取得写事务，SQLite 只允许一个同时写入者；WAL 仍需短事务及 busy timeout。
 
-本轮实际本地 gate：cargo test --workspace --all-features --locked 共 229 项通过（新增 7 项），专项 HTTP 最终 4 项通过；fmt、workspace/all-targets/all-features Clippy -D warnings、Python unittest 17 项、check_repository.py、git diff --check 通过。requirements/ci.txt 在既有 .venv 中确认满足；Cargo 1.99.1 使用保存环境既有工具，不重装或更新锁文件。远端 CI/review 以 PR 当前 head 为准。
+本轮实际本地 gate：cargo test --workspace --all-features --locked 共 231 项通过（新增 9 项），专项 HTTP 最终 5 项、存储 4 项通过；fmt、workspace/all-targets/all-features Clippy -D warnings、Python unittest 17 项、check_repository.py、git diff --check 通过。requirements/ci.txt 在既有 .venv 中确认满足；Cargo 1.99.1 使用保存环境既有工具，不重装或更新锁文件。远端 CI/review 以 PR 当前 head 为准。
+
+首轮 Codex 审核两项 P2 均补有效 Red/Green：超长 title 得到 201!=422、无变化写的核验时间为 10!=20。修复使用嵌入原始 Schema 的复用 validator 并显式启用 formats；URI、空 category、原始 null、Unicode 字符计数与无持久化负例通过。无变化新键刷新来源核验时间但不增加修订，重放保持旧核验时间。参照 [jsonschema ValidationOptions 官方文档](https://docs.rs/jsonschema/0.58.6/jsonschema/struct.ValidationOptions.html)；仅本地固定 Schema，禁用外部引用取用功能。

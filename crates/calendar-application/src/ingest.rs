@@ -30,7 +30,7 @@ impl IngestRequest {
         if self.source_id.is_empty()
             || self.source_id.len() > 256
             || self.uid.is_empty()
-            || self.uid.len() > 1024
+            || self.uid.chars().count() > 1024
             || self.key.is_empty()
             || self.key.len() > 128
             || !self.key.bytes().all(|b| b.is_ascii_graphic())
