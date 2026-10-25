@@ -36,6 +36,8 @@ flowchart LR
 flowchart LR
     Admin[管理员 UI] -->|会话与 CRUD 请求| P1(1 管理鉴权与配置)
     P1 -->|配置结果与审计摘要| Admin
+    P1 -->|身份与人机验证请求| Identity[Access 与 Turnstile]
+    Identity -->|签名材料与验证结果| P1
     P1 -->|配置与修订| D1[(SQLite 配置与凭据)]
     D1 -->|能力与周期及日历映射| P2(2 能力协调与协议适配)
     P1 -->|ICS 上传与来源上下文| P2
@@ -66,6 +68,8 @@ flowchart LR
     P5 -->|真实工作轮次与进度| P8
     P6 -->|真实工作轮次与进度| P8
     D1 -->|有界 DB 探测结果与恢复状态| P8
+    P8 -->|有界内部探测请求| P0(核心现有 HTTP 请求处理)
+    P0 -->|真实 HTTP 响应与探测证据| P8
     P8 -->|live ready 与故障诊断| Deploy
 ```
 
@@ -203,7 +207,47 @@ sequenceDiagram
 
 核心持续运行但不能承诺永不掉线。liveness 检查核心 HTTP 处理能力及实际必需工作器的进度；readiness 检查迁移、配置、安全装配、真实 DB 读写能力与必需工作器注册就绪，恢复 pause/cutoff 按安全契约反映且不得自动解除；freshness 是按来源能力的业务状态，与上述健康分离。探针使用现有 runtime 的有界操作，不再启动一套服务、任务循环或第二个 runtime，不写入敏感数据。DB 写探测仅用受控非敏感探测记录/事务且限频，具体方式由 #36/#75 冻结。
 
-工作器报告实际工作轮次/完成与失败进度，长等待状态也有可核实生命周期；独立 ticker 不能掩盖死锁。启动宽限、超时与停滞期限使用单调时钟，业务到期时间使用 UTC Clock。HTTP/DB/必需工作器故障或停滞须暴露真实健康诊断，不能始终 200；本轮不要求核心主动自动退出或自重启，不新增恢复控制策略。已有正常关闭/实际崩溃的退出语义保留。外部源/Bark 故障隔离、退避和降级，部分接入器按能力设计间歇上线，其离线不等于核心不健康或重启理由。Docker HEALTHCHECK 只改变健康状态，普通 restart policy 主要响应进程退出；持续不健康或完全卡死时的重启控制属于系统边界外，具体部署机制/选型待 #38 确定，核心不调用 Docker API、不持有 Docker socket。健康探针无权恢复 pause 或更改 cutoff，任务与水位依然以 SQLite 为真相源。
+工作器报告实际工作轮次/完成与失败进度，长等待状态也有可核实生命周期；独立 ticker 不能掩盖死锁。启动宽限、超时与停滞期限使用单调时钟，业务到期时间使用 UTC Clock。HTTP/DB/必需工作器故障或停滞须暴露真实健康诊断，不能始终 200；本轮不要求核心主动自动退出或自重启，不新增恢复控制策略。已有正常关闭/实际崩溃的退出语义保留。外部源/Bark 故障隔离、退避和降级，部分接入器按能力设计间歇上线，其离线不等于核心不健康或重启理由。Docker HEALTHCHECK 只改变健康状态，普通 restart policy 主要响应进程退出；持续不健康或完全卡死时的重启控制属于系统边界外，部署方向为 Dockerfile HEALTHCHECK + 持续核心失效后由外部执行有界终止 + restart: unless-stopped；具体外部机制仍由 #38 选型，核心不调用 Docker API、不持有 Docker socket。健康探针无权恢复 pause 或更改 cutoff，任务与水位依然以 SQLite 为真相源。
+
+## UML 部署恢复时序（目标，外部执行者待选型）
+
+```mermaid
+sequenceDiagram
+    actor M as 维护者
+    participant E as Docker Engine
+    participant H as 镜像 HEALTHCHECK CLI
+    participant C as 核心健康接口
+    participant R as 外部恢复执行者 待选型
+    participant S as SQLite 持久卷
+    E->>H: 按 interval timeout start-period retries 执行
+    H->>C: 有界尽量只读的真实健康查询
+    C-->>H: HTTP DB 必需工作器诊断
+    H-->>E: 健康退出码 不执行 kill
+    alt 启动宽限内或瞬时失败或仅接入器离线
+        Note over E,R: 不执行全局恢复 来源 freshness 独立
+    else 超过宽限且连续核心健康失败
+        E-->>R: 持续 unhealthy 证据与容器身份
+        R->>R: 复核 desired-running 手动停止 fence 与恢复预算
+        R->>C: 经选定机制发送 SIGTERM
+        opt 有界宽限后同一进程仍存活
+            R->>C: 经选定机制发送 SIGKILL
+        end
+        Note over R,E: 不将 docker stop 或 docker kill 等同于直接进程信号
+        E->>E: 未被标记手动停止时按 unless-stopped 重启
+        E->>C: 重新启动相同产品镜像
+        C->>S: 读取配置 修订 水位 租约 pause cutoff
+        Note over C,S: 重启不自动解除恢复暂停或重放 accepted
+    else deliberate manual stop
+        M->>R: 停止意图 优先于恢复
+        M->>E: docker stop 或部署停止操作
+        E->>E: 标记手动停止 unless-stopped 保持停止
+        R->>R: 禁止 kill 后再 start 等方式复活
+    end
+```
+
+图中 R 是部署边界外的责任占位，不代表已有实现或获准部署有权限的 autoheal sidecar。核心没有 Docker socket/API；R 也不同时承担独立 start 循环与 Docker restart policy 争夺生命周期。具体信号路径、最小权限、容器/进程身份 fence、手动停止意图与并发恢复仲裁由 #38 冻结并在指定 Engine 版本验证。不能每次探针失败就 kill；失败计数、启动宽限、重置规则、终止宽限、恢复冷却/限次及告警要形成一个可审计契约。
+
+经 Docker 官方文档与固定 Moby 源码核对：HEALTHCHECK 管理健康状态；stop 发送终止信号后可升级 KILL，但属于手动停止路径；kill API 也会设置手动停止标记。因此不能承诺调用 docker stop/kill 后 unless-stopped 自动重启。直接向目标进程发 OS 信号不经过该 API 标记，按源码推断在其他重启条件满足时可触发 restart policy；这仍是待 #38 在选定部署机制/Engine 上实际验收的候选，不是已验证恢复脚本。详见[部署语义与来源](operations.md#8-docker-恢复语义与验收)。本轮仅核对规范/源码，没有连接实际 Docker daemon 或执行 stop/kill。
 
 ## 标准日历源契约（目标 v1，尚待 #73 冻结）
 
@@ -243,8 +287,8 @@ pull 仅在支持时使用周期与成功核验时间做 freshness；manual/stat
 
 #35 保留原整体验收与 #6 归属，#4/#15 维持关闭，不新增重复基础任务。首次 UI 全旅程、修改/删除在途失效、取消发送竞争审计、独立源失败、DST/UTC 跳变、重启恢复暂停、跨源稳定身份、external/browser producer 的鉴权/schema 负例均由上述任务保留 Given/When/Then 与实际验证证据。
 
-新增逻辑依赖图 `72→73→{74,75,76,77}→78→38`，另有 `32→76`、`75→36→78`、`35/37→38`，人工拓扑检查无环。当前连接器不暴露原生 parent/sub-issue/dependency API，云端 gh 注入凭据认证失败，故既有原生关系未核实、新关系未创建；上述表仅为规划说明，不冒充 GitHub 原生关系，也不声称既有完整原生图已检查无环。未读取实际保护规则的能力限制同样保留，不修改权限/设置。
+新增逻辑依赖图 `72→73→{74,75,76,77}→78→38`，另有 `32→76`、`75→36→78`、`35/37→38`。原生关系已通过 GitHub 通用 GET 查询核实：父任务读取 47 个非 PR Issue、20 个有依赖计数项与既有 35 条依赖边，既有图及合入新规划后的图均无环；#35 parent=#6，#36/#38 parent=#7；#72–#78 当前无原生 parent/dependency。本任务再次读取 #35 parent 与 #38 blocked_by 确认现有关系。当前可用原生关系写入接口不足，新增关系尚未创建；表中是规划，不冒充原生关系，既有父归属保持不变。云端 gh 注入凭据认证失败，不改凭据或权限。
 
 ## 图的验证边界
 
-使用 Mermaid 11.12.1 的实际 parser（Node.js + jsdom）验证 README 概览和本文四幅图；只使用 GitHub 原生 flowchart/sequenceDiagram 语法，不依赖插件、外部图片或初始化指令。未进行 GitHub 页面截图/浏览器布局验证，GitHub 当前渲染器版本及最终排版仍需 PR 页面复核；parser 通过不等于截图验收。
+使用 Mermaid 11.12.1 的实际 parser（Node.js + jsdom）验证 README 概览和本文五幅图；只使用 GitHub 原生 flowchart/sequenceDiagram 语法，不依赖插件、外部图片或初始化指令。未进行 GitHub 页面截图/浏览器布局验证，GitHub 当前渲染器版本及最终排版仍需 PR 页面复核；parser 通过不等于截图验收。

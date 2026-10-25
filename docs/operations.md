@@ -51,7 +51,7 @@ Docker 是产品交付要求；#38 可提前准备 Dockerfile，但最终验收�
 | 持久化 | 整个 `/data` 目录本地持久卷，包含 SQLite DB/WAL/SHM |
 | 临时目录 | `/tmp` 独立 tmpfs，限定大小 |
 | 敏感配置 | `/run/secrets/*` 只读挂载，不写入镜像或前端 bundle |
-| 外部恢复 | restart policy 与持续不健康/卡死恢复机制由部署层 #38 确定，核心只暴露健康 |
+| 外部恢复 | 目标 restart: unless-stopped；HEALTHCHECK 持续失败后由外部执行有界终止，机制由 #38 确定，手动停止保持停止 |
 | 健康检查 | 镜像内提供 `calrelay healthcheck` 子命令，不依赖镜像恰好存在 curl |
 | 资源 | CPU、内存、PID、连接池、队列批次和网络超时限制 |
 | 停止 | SIGTERM，建议 30 秒宽限；停止领任务，结束短事务，在途结果尽量落盘 |
@@ -69,7 +69,7 @@ SQLite WAL 需要同主机本地文件系统，不能把多节点容器共享的
 | `/health/ready` | 迁移完成、数据库可读写、配置加载完成、核心工作器已启动 | 不接收新管理写入与 ingest |
 | 功能状态 | 各来源同步时间、Bark 错误、队列延迟、磁盘容量 | 降级告警，不直接判定进程死亡 |
 
-探针复用同一核心 runtime，不创建第二套服务/调度循环，不写敏感数据；真实 HTTP/DB/必需工作器进度不得用独立 ticker 假冒。数据库写探测需限频、短超时，不在每次检查写大量审计。迁移期间 ready=false；live 给明确启动宽限，心跳/宽限/探测截止使用单调时钟。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启；部分接入器按设计间歇上线，应按能力展示来源状态，不能成为全局不健康理由。
+探针复用同一核心 runtime，不创建第二套服务/调度循环，不写敏感数据；真实 HTTP/DB/必需工作器进度不得用独立 ticker 假冒。HEALTHCHECK CLI 尽量只读；DB 读写就绪性可读取同一 runtime 的有界背景探测/真实写入进度，必要写探测限频、短超时、非敏感且不在每次 CLI 检查产生写入。迁移期间 ready=false；live 给明确启动宽限，心跳/宽限/探测截止使用单调时钟。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启；部分接入器按设计间歇上线，应按能力展示来源状态，不能成为全局不健康理由。
 
 **Docker healthcheck 将容器标记为 unhealthy，不会单独使普通 Compose 容器重启；restart 策略主要响应进程退出。** 核心只负责暴露真实健康/组件诊断，本次不新增主动退出、自重启或恢复控制策略。已有正常关闭/实际崩溃的退出行为保留；持续不健康或完全卡死后的恢复由系统边界外的部署机制负责，具体控制器、阈值、限次与告警选型待 #38 确定。核心不调用 Docker API、不持有 Docker socket 或宿主机权限。[Docker 重启策略](https://docs.docker.com/engine/containers/start-containers-automatically/)、[Compose healthcheck](https://docs.docker.com/reference/compose-file/services/#healthcheck)
 
@@ -122,3 +122,23 @@ SQLite WAL 需要同主机本地文件系统，不能把多节点容器共享的
 | worker 心跳阈值/启动宽限/探测预算 | #36 与 #75 的监督部署契约，唯一入口待冻结 | 是否动态或重启待冻结，不与业务周期混用 | 非密钥；不得以配置替代真实进度检测；保留 #71 已有成果 |
 
 #73 先发布配置迁移/兼容与失效契约，再由后续实现移除 runtime 的监听 env；本 PR 不改现有启动行为。恢复 pause/cutoff 是 DB 持久安全状态，普通启动 env、UI 配置保存、探针或监督不能悄悄复位，显式恢复授权流程独立验证。
+
+## 8. Docker 恢复语义与验收
+
+目标部署组合：Dockerfile HEALTHCHECK 调用镜像自带 CLI；启动宽限后连续核心失败达到阈值，外部恢复执行者先 SIGTERM、等待有限宽限，必要时 SIGKILL；`restart: unless-stopped` 保持非手动停止实例的重启能力。HEALTHCHECK 不负责 kill，核心不主动操纵 Docker。具体外部机制/权限方案尚未选型，不默认引入 autoheal sidecar 或给主服务 socket。见[部署 UML](product-design.md#uml-部署恢复时序目标外部执行者待选型)。
+
+| 核对项 | 事实、推断与实现边界 |
+| --- | --- |
+| HEALTHCHECK | interval/timeout/start-period/retries 控制探测和连续失败状态，不自行重启；探针只报告真实健康，不能把普通来源离线计为核心失败。[Dockerfile 官方说明](https://docs.docker.com/reference/dockerfile/#healthcheck) |
+| unless-stopped | 手动停止保持停止，含 daemon 重启后的该状态；进程退出的重启与健康状态本身是不同机制。[Docker restart policy](https://docs.docker.com/engine/containers/start-containers-automatically/) |
+| docker stop | 默认先 SIGTERM，再按停止宽限升级 SIGKILL；是手动停止操作，不能当作自动恢复触发器。[stop 官方说明](https://docs.docker.com/reference/cli/docker/container/stop/) |
+| docker kill API | 发送所选信号不等于无副作用的 OS kill：核对的 Moby killWithSignal 会设置 HasBeenManuallyStopped；restartmanager 对 unless-stopped 检查该标记，不能承诺 API kill 后自动重启。[kill 说明](https://docs.docker.com/reference/cli/docker/container/kill/)、[固定源码 kill.go](https://github.com/moby/moby/blob/b711d21792db6db488de976eb3c4a653c92c3bc3/daemon/kill.go#L89)、[restartmanager](https://github.com/moby/moby/blob/b711d21792db6db488de976eb3c4a653c92c3bc3/daemon/internal/restartmanager/restartmanager.go#L78) |
+| 直接进程信号 | 不经 Docker kill API 的进程终止与上述手动标记不同；可触发非手动退出重启是基于源码的推断，受实际 Engine/进程身份与启动条件约束。外部路径须防 PID 复用、旧容器 generation、手动 stop 竞争；选型后实际验收，不在本文提供可直接执行的 kill 命令 |
+
+核对日期 2026-10-25，Moby 快照 `b711d21792db6db488de976eb3c4a653c92c3bc3`；这不是目标运行环境版本承诺。本轮未连接 Docker daemon，也未运行容器/信号实验。#38 必须固定测试 Engine/Compose/镜像版本，并证明：
+
+- deliberate manual stop 及 daemon 重启后仍停止，外部执行者不会 start/revive，含 stop 与恢复并发竞争。
+- 启动宽限与瞬时失败不终止；连续核心失效才恢复，来源/Bark 离线不触发全局恢复。
+- 真实进程崩溃与完全卡死分别覆盖，SIGTERM 宽限、必要 SIGKILL、冷却/限次/告警和失败现场可审计。
+- 对比 stop、kill API 与所选进程信号路径的实际 restart-policy 行为，不把信号名称相同当成语义相同。
+- 重启后配置、事件修订、水位、租约回收与 accepted 去重保留；restore pause/cutoff 不自动解除，不补发已禁止的历史任务。
