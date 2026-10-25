@@ -1,6 +1,7 @@
 //! Service assembly, health observation and lifecycle.
 pub mod admin;
 mod config;
+mod feed;
 mod http;
 mod ingest;
 mod source_configuration;
