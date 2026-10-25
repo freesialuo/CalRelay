@@ -18,6 +18,12 @@ impl Config {
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
         DeploymentConfig::from_args(args)?.server_only()
     }
+    /// Parse only deployment addressing; never load credentials or initialize storage.
+    pub fn deployment_bind_from_args(
+        args: impl IntoIterator<Item = String>,
+    ) -> Result<SocketAddr, ConfigError> {
+        Ok(DeploymentConfig::document_from_args(args)?.bind)
+    }
     pub fn from_deployment(
         bytes: &[u8],
         get: impl Fn(&str) -> Option<String>,
@@ -79,6 +85,10 @@ pub struct DeploymentConfig {
 }
 impl DeploymentConfig {
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
+        let document = Self::document_from_args(args)?;
+        Self::from_document(document, |key| std::env::var(key).ok())
+    }
+    fn document_from_args(args: impl IntoIterator<Item = String>) -> Result<Document, ConfigError> {
         if std::env::var_os("CALRELAY_BIND").is_some() {
             return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
         }
@@ -96,7 +106,7 @@ impl DeploymentConfig {
         file.take(65537)
             .read_to_end(&mut bytes)
             .map_err(|_| ConfigError("cannot read deployment configuration"))?;
-        Self::from_deployment(&bytes, |key| std::env::var(key).ok())
+        Self::parse_document(&bytes)
     }
     pub fn from_deployment(
         bytes: &[u8],
@@ -105,21 +115,22 @@ impl DeploymentConfig {
         if get("CALRELAY_BIND").is_some() {
             return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
         }
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Document {
-            bind: SocketAddr,
-            #[serde(default, deserialize_with = "crate::admin_bootstrap::configured_admin")]
-            admin: Option<crate::admin_bootstrap::AdminBootstrapConfig>,
-        }
+        Self::from_document(Self::parse_document(bytes)?, get)
+    }
+    fn parse_document(bytes: &[u8]) -> Result<Document, ConfigError> {
         if bytes.len() > 65536 {
             return Err(ConfigError("deployment configuration exceeds limit"));
         }
-        let document: Document = serde_json::from_slice(bytes).map_err(|_| {
+        serde_json::from_slice(bytes).map_err(|_| {
             ConfigError(
                 "invalid deployment configuration; expected explicit bind and optional admin",
             )
-        })?;
+        })
+    }
+    fn from_document(
+        document: Document,
+        get: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
         if let Some(admin) = &document.admin {
             admin.validate()?;
         }
@@ -150,4 +161,12 @@ impl DeploymentConfig {
             Ok(server)
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Document {
+    bind: SocketAddr,
+    #[serde(default, deserialize_with = "crate::admin_bootstrap::configured_admin")]
+    admin: Option<crate::admin_bootstrap::AdminBootstrapConfig>,
 }

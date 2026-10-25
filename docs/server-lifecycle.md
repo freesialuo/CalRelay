@@ -4,11 +4,13 @@
 
 ## 启动
 
+监听配置由 #80/#82 的单一部署 JSON 契约定义，#96 扩展可选 admin 装配。健康命令复用同一 bind 读取函数，不读取监听环境变量、不加载数据库；监督预算通过 typed API 配置，不新增环境变量绑定。
+
 ```sh
 CALRELAY_DATABASE=/data/calrelay.db cargo run -p calendar-server --locked -- --deployment-config /path/to/deployment.json
 ```
 
-deployment.json 只包含 `{"bind":"部署者明确选择的数值地址:端口"}`（此文字是格式占位，不是有效地址）；不提供默认监听或替代监听 env。旧 `CALRELAY_BIND`（包括空值）在读取文件/打开 DB 前拒绝，给出移除该项并使用 `--deployment-config FILE` 的升级诊断，不回显值。未知/重复字段、非法地址、缺参数或不可读文件均启动失败。必须显式指定监听地址与持久化数据库文件，数据库父目录必须已存在。先校验配置，注册 SIGTERM 处理器，再通过 `Storage::open` 完成迁移，最后绑定监听器；配置、迁移或绑定失败使进程非零退出。不存在“迁移失败但健康检查成功”的降级空服务。错误诊断不回显配置值或数据库内部错误。
+deployment.json 最小内容为 `{"bind":"部署者明确选择的数值地址:端口"}`（此文字是格式占位，不是有效地址）；不提供默认监听或替代监听 env。旧 `CALRELAY_BIND`（包括空值）在读取文件/打开 DB 前拒绝，给出移除该项并使用 `--deployment-config FILE` 的升级诊断，不回显值。未知/重复字段、非法地址、缺参数或不可读文件均启动失败。必须显式指定监听地址与持久化数据库文件，数据库父目录必须已存在。可选 admin 字段沿用 [管理认证契约](admin-auth.md)，标准启动在打开数据库前校验并加载其密钥；healthcheck 不加载密钥。先校验配置，注册 SIGTERM 处理器，再通过 `Storage::open` 完成迁移，最后绑定监听器；配置、迁移或绑定失败使进程非零退出。不存在“迁移失败但健康检查成功”的降级空服务。错误诊断不回显配置值或数据库内部错误。
 
 HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
@@ -22,7 +24,7 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
 ## HTTP 契约
 
-- `GET /health/live` 返回 `{"status":"live"}`；`GET /health/ready` 在迁移完成后返回 `{"status":"ready"}`，停止时返回 503。
+- `GET /health/live` 检查真实核心进展；`GET /health/ready` 检查迁移后装配、DB 读写和 worker 初始进展。标准入口尚无必需生产 worker，明确返回 503；成功响应形状仍为 `{"status":"live"}` / `{"status":"ready"}`。恢复暂停 live 可保持、ready=false，停止时 ready=false。见 [核心监督](core-supervision.md)。
 - `GET /api/v1/version` 返回 `name`、包 `version`、`api_version: "v1"`；`GET /api/v1/openapi.json` 返回 OpenAPI 3.1 文档及统一错误 schema。
 - 每个请求由服务生成 `X-Request-Id`，不信任客户端提供的同名头；下游通过 `RequestId` extension 读取。失败响应形如 `{"error":{"code":"not_found","request_id":"…"}}`，正文 ID 与响应头一致，不包含底层异常细节。替换错误正文时保留 `Allow`、`WWW-Authenticate`、`Retry-After` 等协议头，移除旧正文长度、编码和校验缓存元数据。
 - 全局边界在路由匹配之外运行，涵盖 404/405。读取请求正文时按实际字节计数，超限返回 413，不能靠缺失或伪造 Content-Length 绕过。响应先有界收集，超限整体替换为 500 `response_too_large`，不发送截断成功内容；错误 envelope 小于最小响应预算。当前边界面向有限 JSON 响应，未来流式路由需单独定义契约。
@@ -31,9 +33,9 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
 ## 停止
 
-SIGTERM/Ctrl-C 或 `Services::stop` 将 ready 置为 false，并触发 Axum graceful shutdown，停止接受连接。所有未来的任务领取循环必须通过 `Services::run_task` 进入应用操作；停止后拒绝新的任务准入。已经准入的有界操作持有 permit，服务等待其短事务提交/回滚，再关闭 SQLite 连接池。网络 I/O 仍遵循 application 的事务外执行约定。不得将无界后台循环放进 permit，亦不得绕过该门直接启动领取循环。
+SIGTERM/Ctrl-C 或 `Services::stop` 将健康就绪与业务准入置为 false，并触发 Axum graceful shutdown，停止接受连接。所有未来的任务领取循环必须通过 `Services::run_task` 进入应用操作；停止后拒绝新的任务准入。已经准入的有界操作持有 permit，服务等待其短事务提交/回滚，再关闭 SQLite 连接池。网络 I/O 仍遵循 application 的事务外执行约定。不得将无界后台循环放进 permit，亦不得绕过该门直接启动领取循环。
 
-恢复数据库的持久 `recovery_control.paused` 和历史 cutoff 不由 server 启动或停止修改。HTTP ready 仅表示服务迁移和装配完成；恢复后的投递仍受存储 guard 约束，直到运维人员在隔离/停服状态下显式执行 resume，历史 cutoff 继续保留。
+恢复数据库的持久 `recovery_control.paused` 和历史 cutoff 不由 server 启动或停止修改。HTTP ready 与 `Services::ready` 的业务准入分离，恢复暂停时健康 ready=false；恢复后的投递仍受存储 guard 约束，直到运维人员在隔离/停服状态下显式执行 resume，历史 cutoff 继续保留。
 
 此 Issue 没有配置生产 worker 或真实 Bark。生命周期测试用本地合成事务证明停止后不再准入、在途事务能提交并重开数据库；进程测试向合成服务进程发送真实 SIGTERM，验证退出、监听关闭及 SQLite 完整性。
 
@@ -48,3 +50,6 @@ SIGTERM/Ctrl-C 或 `Services::stop` 将 ready 置为 false，并触发 Axum grac
 限额回归采用受控源码 mutation：临时取消请求字节上限，HTTP 契约测试必须从 413 退化为 200 而失败，再恢复生产实现验证 Green；编译失败不算 Red。恢复生命周期回归另经受控 mutation 验证：临时在启动中自动调用 resume，暂停断言实际从 `(1,1000)` 变为 `(0,1000)` 而失败；恢复原实现后通过。实际执行结果见 PR。
 
 实际参考：[Axum middleware](https://docs.rs/axum/0.8.6/axum/middleware/index.html)、[graceful shutdown](https://docs.rs/axum/0.8.6/axum/serve/struct.WithGracefulShutdown.html)、[有界 to_bytes](https://docs.rs/axum/0.8.6/axum/body/fn.to_bytes.html)。
+
+
+#86 关闭补充：正常停止先保留 shutdown_timeout 供在途操作排空；超时后广播取消所有 run_task 操作（包括独立嵌入任务），并 abort 受监督 future，再以等长窗口等待回滚与池收尾。取消返回 None；确认收尾后仍返回 ShutdownTimeout，无法确认则返回 ShutdownIncomplete，均不当作成功。不要把事务/连接带出有界操作。健康发现从不触发这些关闭步骤。
