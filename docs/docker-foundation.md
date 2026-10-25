@@ -44,6 +44,6 @@ python3 scripts/check_docker_image.py calrelay:local
 
 脚本只创建带随机本任务前缀的容器与 named volumes，使用实际 credentials 配置、合成32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟鉴权，不 seed 业务源、不发送 Bark、不连接生产账号。当前 runtime 未组合时应观察 ready=503；后续真实组合可为 200，测试不会伪造 readiness。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
 
-CI 的 docker job 使用隔离 GitHub runner，执行同一锁定构建和实际 Engine 脚本，并加入 quality-gate；不登录 registry、不推镜像、不注入生产 secrets。当前仅验证 runner 原生 amd64；index 存在 arm64 不等于 arm64 构建/运行已验证。
+镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地尚未完成完整镜像构建/运行，arm64 亦未验证，index 存在 arm64 不等于已验收。
 
 本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据，不能声称本地镜像运行通过；真实受控 CI 结果以当前 PR head Checks 为准。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。

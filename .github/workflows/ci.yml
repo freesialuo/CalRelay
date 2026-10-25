@@ -119,25 +119,10 @@ jobs:
         working-directory: web
         run: npm test
 
-  docker:
-    name: docker
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Validate Compose
-        run: docker compose config --quiet
-      - name: Build locked production image
-        run: docker build --target runtime --tag calrelay:ci .
-      - name: Real isolated Engine packaging checks
-        run: python3 scripts/check_docker_image.py calrelay:ci
-
   quality-gate:
     name: quality-gate
     if: ${{ always() }}
-    needs: [contracts, pr-policy, rust, frontend, docker]
+    needs: [contracts, pr-policy, rust, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -147,10 +132,8 @@ jobs:
           PR_POLICY_RESULT: ${{ needs.pr-policy.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
-          DOCKER_RESULT: ${{ needs.docker.result }}
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$PR_POLICY_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FRONTEND_RESULT" = success
-          test "$DOCKER_RESULT" = success

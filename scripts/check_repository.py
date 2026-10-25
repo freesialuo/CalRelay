@@ -26,7 +26,7 @@ def main():
     assert 'pull_request' in workflow['on'] and 'push' in workflow['on']
     assert 'pull_request_target' not in workflow['on']
     assert workflow['permissions'] == {'contents': 'read'}
-    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust', 'frontend', 'docker'}
+    assert set(workflow['jobs']['quality-gate']['needs']) == {'contracts', 'pr-policy', 'rust', 'frontend'}
     assert 'kani' not in workflow['jobs']
     kani = yaml.load((ROOT / '.github/workflows/kani.yml').read_text(), Loader=yaml.BaseLoader)
     assert set(kani['on']) == {'pull_request', 'workflow_dispatch'}
