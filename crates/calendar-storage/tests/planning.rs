@@ -135,10 +135,15 @@ async fn jobs(db: &Storage) -> Result<Vec<Job>> {
 }
 
 async fn count(db: &Storage, table: &str) -> Result<i64> {
-    // table names come only from constants in this test file.
-    Ok(sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(db.pool())
-        .await?)
+    let query = match table {
+        "occurrences" => "SELECT count(*) FROM occurrences",
+        "delivery_jobs" => "SELECT count(*) FROM delivery_jobs",
+        "logical_deliveries" => "SELECT count(*) FROM logical_deliveries",
+        "planning_watermarks" => "SELECT count(*) FROM planning_watermarks",
+        "source_changes" => "SELECT count(*) FROM source_changes",
+        _ => panic!("unsupported test table"),
+    };
+    Ok(sqlx::query_scalar(query).fetch_one(db.pool()).await?)
 }
 
 type Watermark = (i64, i64, i64, String);
@@ -505,7 +510,8 @@ async fn ac3_write_failures_roll_back_occurrences_jobs_and_watermark_together() 
         let db = Storage::open(&path).await?;
         seed(&db).await?;
         commit(&db, 0, vec![event(json!({}))]).await?;
-        sqlx::raw_sql(&format!("CREATE TRIGGER fail_plan BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected planning failure'); END;")).execute(db.pool()).await?;
+        // Audited: table is from the fixed list above; no external input.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE TRIGGER fail_plan BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected planning failure'); END;"))).execute(db.pool()).await?;
         assert!(matches!(
             db.reconcile(request(1), &FakeClock::fixed()).await,
             Err(PlanningError::Database(_))
@@ -720,9 +726,13 @@ async fn ac3_rule_and_output_generations_are_checked_before_publishing() -> Resu
         let db = Storage::open(dir.path().join("db")).await?;
         seed(&db).await?;
         commit(&db, 0, vec![event(json!({}))]).await?;
-        sqlx::query(&format!("UPDATE {table} SET generation=2"))
-            .execute(db.pool())
-            .await?;
+        sqlx::query(match table {
+            "reminder_rules" => "UPDATE reminder_rules SET generation=2",
+            "outputs" => "UPDATE outputs SET generation=2",
+            _ => unreachable!(),
+        })
+        .execute(db.pool())
+        .await?;
         assert!(matches!(
             db.reconcile(request(1), &FakeClock::fixed()).await,
             Err(PlanningError::Conflict)
@@ -985,7 +995,8 @@ async fn ac2_budget_expiring_during_sql_writes_rolls_back_even_the_watermark() -
             connections.push(connection);
         }
         drop(connections);
-        sqlx::raw_sql(&format!("CREATE TRIGGER exhaust_budget AFTER INSERT ON {table} BEGIN SELECT 'a' COLLATE exhaust_budget = 'b'; END;"))
+        // Audited: table is from the fixed list above; no external input.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE TRIGGER exhaust_budget AFTER INSERT ON {table} BEGIN SELECT 'a' COLLATE exhaust_budget = 'b'; END;")))
             .execute(db.pool()).await?;
         let result = db
             .reconcile(request(1), &DatabaseClock(elapsed.clone()))
