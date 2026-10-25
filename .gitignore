@@ -18,3 +18,5 @@ coverage/
 secrets/
 web/test-results/
 web/playwright-report/
+
+web/.test-admin-state.json
