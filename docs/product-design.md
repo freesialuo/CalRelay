@@ -25,7 +25,7 @@ flowchart LR
     Platform -->|管理身份与人机验证请求| Identity[Access 与 Turnstile]
     Identity -->|签名材料与验证结果| Platform
     Deploy[Docker 与宿主机监督] -->|健康探测请求| Platform
-    Platform -->|live ready 与退出状态| Deploy
+    Platform -->|live ready 与诊断状态| Deploy
 ```
 
 ## DFD Level 1：主要数据流
@@ -189,11 +189,11 @@ sequenceDiagram
     Core->>Sup: 健康请求读取真实探针与工作进度
     Sup->>S: 有界 DB 读写探测与恢复暂停查询
     Sup-->>Core: live ready 与独立 freshness 诊断
-    alt 不可恢复核心故障
-        Sup->>Core: 停止领取 有界 drain 非零退出
-        Note over Core,Sup: 部署重启进程 完全卡死由宿主监督处理
+    alt 真实核心组件故障或停滞
+        Sup-->>Core: 暴露不健康与组件诊断
+        Note over Core,Sup: 外部部署机制决定恢复 核心不调用 Docker
     else 单源或 Bark 外部失败
-        Note over C,B: 源级隔离 有界退避与业务降级 不整体重启
+        Note over C,B: 能力感知来源状态 隔离退避 不触发全局重启
     end
 ```
 
@@ -203,7 +203,7 @@ sequenceDiagram
 
 核心持续运行但不能承诺永不掉线。liveness 检查核心 HTTP 处理能力及实际必需工作器的进度；readiness 检查迁移、配置、安全装配、真实 DB 读写能力与必需工作器注册就绪，恢复 pause/cutoff 按安全契约反映且不得自动解除；freshness 是按来源能力的业务状态，与上述健康分离。探针使用现有 runtime 的有界操作，不再启动一套服务、任务循环或第二个 runtime，不写入敏感数据。DB 写探测仅用受控非敏感探测记录/事务且限频，具体方式由 #36/#75 冻结。
 
-工作器报告实际工作轮次/完成与失败进度，长等待状态也有可核实生命周期；独立 ticker 不能掩盖死锁。启动宽限、超时与停滞期限使用单调时钟，业务到期时间使用 UTC Clock。不可恢复 HTTP/DB/必需工作器故障须停止新领取、有界关闭并非零退出，由部署 restart policy 恢复；外部源/Bark 故障隔离、退避和降级，不造成整体重启风暴。Docker HEALTHCHECK 只改变健康状态，普通 restart policy 主要响应进程退出，完全卡死另由宿主外部监督探测并有限重启/告警。健康探针无权恢复 pause 或更改 cutoff，任务与水位依然以 SQLite 为真相源。
+工作器报告实际工作轮次/完成与失败进度，长等待状态也有可核实生命周期；独立 ticker 不能掩盖死锁。启动宽限、超时与停滞期限使用单调时钟，业务到期时间使用 UTC Clock。HTTP/DB/必需工作器故障或停滞须暴露真实健康诊断，不能始终 200；本轮不要求核心主动自动退出或自重启，不新增恢复控制策略。已有正常关闭/实际崩溃的退出语义保留。外部源/Bark 故障隔离、退避和降级，部分接入器按能力设计间歇上线，其离线不等于核心不健康或重启理由。Docker HEALTHCHECK 只改变健康状态，普通 restart policy 主要响应进程退出；持续不健康或完全卡死时的重启控制属于系统边界外，具体部署机制/选型待 #38 确定，核心不调用 Docker API、不持有 Docker socket。健康探针无权恢复 pause 或更改 cutoff，任务与水位依然以 SQLite 为真相源。
 
 ## 标准日历源契约（目标 v1，尚待 #73 冻结）
 

@@ -65,15 +65,13 @@ SQLite WAL 需要同主机本地文件系统，不能把多节点容器共享的
 
 | 检查 | 判断 | 后果 |
 | --- | --- | --- |
-| `/health/live` | HTTP 事件循环、规划/调度核心心跳是否前进 | 本地检查失败，需恢复或退出 |
+| `/health/live` | 真实核心 HTTP 与必需工作器进度，不以假心跳代替 | 暴露真实不健康及诊断，恢复由外部部署机制决定 |
 | `/health/ready` | 迁移完成、数据库可读写、配置加载完成、核心工作器已启动 | 不接收新管理写入与 ingest |
 | 功能状态 | 各来源同步时间、Bark 错误、队列延迟、磁盘容量 | 降级告警，不直接判定进程死亡 |
 
-探针复用同一核心 runtime，不创建第二套服务/调度循环，不写敏感数据；真实 HTTP/DB/必需工作器进度不得用独立 ticker 假冒。数据库写探测需限频、短超时，不在每次检查写大量审计。迁移期间 ready=false；live 给明确启动宽限，心跳/宽限/探测截止使用单调时钟。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启。
+探针复用同一核心 runtime，不创建第二套服务/调度循环，不写敏感数据；真实 HTTP/DB/必需工作器进度不得用独立 ticker 假冒。数据库写探测需限频、短超时，不在每次检查写大量审计。迁移期间 ready=false；live 给明确启动宽限，心跳/宽限/探测截止使用单调时钟。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启；部分接入器按设计间歇上线，应按能力展示来源状态，不能成为全局不健康理由。
 
-**Docker healthcheck 将容器标记为 unhealthy，不会单独使普通 Compose 容器重启；restart 策略作用于进程退出。** 因此采用两层机制：核心任务监督器发现不可恢复故障时安全退出非零；宿主机独立监督（如 systemd timer）在持续 live 失败后执行受控重启。后者覆盖进程完全卡死的情况，必须按实际部署系统提供配置与演练。[Docker 重启策略](https://docs.docker.com/engine/containers/start-containers-automatically/)、[Compose healthcheck](https://docs.docker.com/reference/compose-file/services/#healthcheck)
-
-建议初始阈值：10 秒检查一次、启动宽限 60 秒、连续 6 次 live 失败触发外部监督恢复，10 分钟最多 3 次恢复，超限告警并保留现场。外部监督器运行于宿主机，由其管理 Docker；应用自身不获得该权限。
+**Docker healthcheck 将容器标记为 unhealthy，不会单独使普通 Compose 容器重启；restart 策略主要响应进程退出。** 核心只负责暴露真实健康/组件诊断，本次不新增主动退出、自重启或恢复控制策略。已有正常关闭/实际崩溃的退出行为保留；持续不健康或完全卡死后的恢复由系统边界外的部署机制负责，具体控制器、阈值、限次与告警选型待 #38 确定。核心不调用 Docker API、不持有 Docker socket 或宿主机权限。[Docker 重启策略](https://docs.docker.com/engine/containers/start-containers-automatically/)、[Compose healthcheck](https://docs.docker.com/reference/compose-file/services/#healthcheck)
 
 磁盘满、SQLite 损坏、无效主密钥不能靠无限重启修复：停止新写入/投递，报告故障并保留数据；不得自动删除数据库或重建空库伪装恢复成功。
 
