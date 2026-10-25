@@ -12,6 +12,7 @@ use calendar_server::{
 };
 use serde_json::json;
 use std::{
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -33,10 +34,11 @@ impl Fixture {
             .prefix("calrelay-system-")
             .tempdir()
             .unwrap();
-        let root = HarnessRoot::new(dir.path().into()).unwrap();
-        let key = dir.path().join("key");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = HarnessRoot::new(std::fs::canonicalize(dir.path()).unwrap()).unwrap();
+        let key = root.path().join("key");
         std::fs::write(&key, [82u8; 32]).unwrap();
-        let deployment = dir.path().join("deployment.json");
+        let deployment = root.path().join("deployment.json");
         std::fs::write(&deployment,json!({"bind":"127.0.0.1:0","credentials":{"current_key_version":1,"key_files":{"1":key}}}).to_string()).unwrap();
         let now = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -45,8 +47,8 @@ impl Fixture {
             / 1000)
             * 1000
             + 86400000;
-        let clock = dir.path().join("clock.json");
-        let db = dir.path().join("db");
+        let clock = root.path().join("clock.json");
+        let db = root.path().join("db");
         let f = Self {
             _dir: dir,
             root,
@@ -520,6 +522,14 @@ fn controlled_clock_has_real_elapsed_floor_and_rejects_monotonic_rewind() {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| clock.monotonic_now_ms()))
             .is_err()
     );
+}
+#[test]
+fn controlled_root_rejects_shared_directory_permissions() {
+    let f = Fixture::new();
+    std::fs::set_permissions(f.root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(HarnessRoot::new(f.root.path().into()).is_err());
+    std::fs::set_permissions(f.root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(HarnessRoot::new(f.root.path().into()).is_ok());
 }
 #[tokio::test]
 async fn bad_keys_paths_and_modes_do_not_create_or_overwrite_a_database() {
