@@ -35,6 +35,7 @@ fn target(value: &str, path: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 fn client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(3))
         .build()
@@ -189,13 +190,11 @@ impl PushOutput for Output {
     }
 }
 pub fn attach(server: Server, path: &Path) -> Result<Server, Box<dyn std::error::Error>> {
-    if !path.is_absolute()
-        || std::fs::symlink_metadata(path)?.file_type().is_symlink()
-        || std::fs::metadata(path)?.len() > 4096
-    {
+    if !path.is_absolute() {
         return Err("invalid offline fixture file".into());
     }
-    let targets: Targets = serde_json::from_slice(&std::fs::read(path)?)?;
+    let document = calendar_storage::security::read_secret_file(path, 4096)?;
+    let targets: Targets = serde_json::from_slice(document.expose())?;
     target(&targets.a, "/ics/a")?;
     target(&targets.b, "/ics/b")?;
     target(&targets.bark, "/bark")?;

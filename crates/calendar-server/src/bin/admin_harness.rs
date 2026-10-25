@@ -136,7 +136,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let server = if let Some((_, deployment)) = runtime {
-        let config = DeploymentConfig::from_deployment(&std::fs::read(deployment)?, |key| {
+        let deployment = std::path::Path::new(deployment);
+        if !deployment.is_absolute() {
+            return Err("invalid isolated deployment file".into());
+        }
+        let document = calendar_storage::security::read_secret_file(deployment, 65536)?;
+        let config = DeploymentConfig::from_deployment(document.expose(), |key| {
             (key == "CALRELAY_DATABASE").then(|| path.clone())
         })?;
         if !config.server.bind.ip().is_loopback()

@@ -31,7 +31,10 @@ const close = async () => {
   if (child?.pid && child.exitCode === null && child.signalCode === null) {
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.kill("SIGTERM");
-    const forced = setTimeout(() => child.kill("SIGKILL"), 4000);
+    const forced = setTimeout(
+      () => child.kill("SIGKILL"),
+      systemMode ? 22000 : 4000,
+    );
     await exited;
     clearTimeout(forced);
   }

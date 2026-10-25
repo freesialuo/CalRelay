@@ -69,9 +69,9 @@ npm run build
 npm run test:system
 ```
 
-npm test也包含该唯一串联场景，现有7个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
+npm test也包含该唯一串联场景，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
 
-仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`，不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式也只能创建新DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用正式DeploymentConfig/KeyRing与CLI；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
+仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`，不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式也只能创建新DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用正式DeploymentConfig/KeyRing与CLI；新增fixture/deployment控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
 
 共享Rust所有权：#116只维护 `src/bin/admin_harness.rs` 的显式system模式/原认证复用及新 `src/bin/admin_harness/runtime_ports.rs` 网络替身；#115维护shared runtime Clock与fresh/reopen/restored typed接口。#116不改production_runtime.rs、不复制loops、不接reopen/restore控制。夹具新增只读/status返回脱敏journal，不提供远程控制操作。
 
