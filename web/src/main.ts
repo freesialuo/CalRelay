@@ -186,3 +186,6 @@ window.addEventListener("pagehide", () => {
   for (const controller of active) controller.abort();
 });
 render();
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) render();
+});

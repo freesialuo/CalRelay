@@ -37,6 +37,7 @@ export async function readProbe(
   const requestId =
     rawId && /^[a-zA-Z0-9_-]{1,128}$/.test(rawId) ? rawId : undefined;
   if (!response.ok) {
+    await response.body?.cancel();
     const messages: Record<number, string> = {
       401: "管理身份未验证。请通过管理入口重新认证。",
       403: "管理请求被拒绝。请重新认证；会话、身份或安全策略可能已失效。写入还需 CSRF 与精确 Origin 校验。",
@@ -54,6 +55,7 @@ export async function readProbe(
     };
   }
   if (path === "/api/admin/v1/session") {
+    await response.body?.cancel();
     if (response.status !== 204) throw new Error("Invalid session response");
     return {
       ok: true,
@@ -61,6 +63,10 @@ export async function readProbe(
         "本次管理身份与会话检查通过；不代表已保存配置或取得长期写入授权。",
       requestId,
     };
+  }
+  if (response.status !== 200) {
+    await response.body?.cancel();
+    throw new Error("Unexpected response status");
   }
   if (!response.headers.get("content-type")?.includes("application/json"))
     throw new Error("Invalid content type");

@@ -123,9 +123,15 @@ for (const failure of [
   "malformed",
   "oversized",
   "redirect",
+  "unexpected-status",
 ]) {
   test(`untrusted ${failure} response stays unknown`, async ({ page }) => {
     await page.route("**/api/v1/version", (route) => {
+      if (failure === "unexpected-status")
+        return route.fulfill({
+          status: 201,
+          json: { name: "CalRelay", version: "0.1.0", api_version: "v1" },
+        });
       if (failure === "network") return route.abort("failed");
       if (failure === "redirect")
         return route.fulfill({ status: 302, headers: { location: "/admin/" } });
@@ -163,4 +169,50 @@ test("mobile navigation fits viewport", async ({ page }) => {
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+});
+
+test("restored browser page clears stale diagnostic evidence", async ({
+  page,
+}) => {
+  await page.goto("/admin/#diagnostics");
+  const card = page.locator("section").filter({ hasText: "服务版本" });
+  await card.getByRole("button", { name: "检查", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("CalRelay 0.1.0");
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    ),
+  );
+  await expect(card.getByRole("status")).toHaveText("尚未检查");
+});
+
+for (const status of [200, 204]) {
+  test(`session HTTP ${status} is interpreted according to its contract`, async ({
+    page,
+  }) => {
+    await page.route("**/api/admin/v1/session", (route) =>
+      route.fulfill({ status }),
+    );
+    await page.goto("/admin/#diagnostics");
+    const card = page.locator("section").filter({ hasText: "管理会话" });
+    await card.getByRole("button", { name: "检查", exact: true }).click();
+    await expect(card.getByRole("status")).toContainText(
+      status === 204 ? "本次管理身份与会话检查通过" : "未取得可信结果",
+    );
+  });
+}
+
+test("a stalled read has a bounded unknown outcome and can be retried", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/version", () => new Promise(() => {}));
+  await page.goto("/admin/#diagnostics");
+  const card = page.locator("section").filter({ hasText: "服务版本" });
+  await card.getByRole("button", { name: "检查", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("未取得可信结果", {
+    timeout: 11000,
+  });
+  await expect(
+    card.getByRole("button", { name: "检查", exact: true }),
+  ).toBeEnabled();
 });
