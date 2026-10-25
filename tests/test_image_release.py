@@ -14,7 +14,7 @@ PREFIX = f'repos/{REPOSITORY}'
 class API:
     def __init__(self):
         self.responses = {
-            PREFIX: {'private': True, 'default_branch': 'main'},
+            PREFIX: {'full_name': REPOSITORY, 'private': False, 'default_branch': 'main'},
             PREFIX + '/git/ref/tags/v1.2.3': {
                 'ref': 'refs/tags/v1.2.3', 'object': {'type': 'commit', 'sha': SHA}},
             PREFIX + f'/compare/{SHA}...main': {
@@ -127,6 +127,14 @@ class ImageReleasePolicyTests(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(PolicyError):
                 source_plan(**args)
             self.api = API()
+
+    def test_source_visibility_is_separate_from_private_package_requirement(self):
+        for private in (False, True):
+            self.api.responses[PREFIX]['private'] = private
+            self.assertTrue(self.plan()['publish'])
+        self.api.responses[PREFIX]['full_name'] = 'other/repository'
+        with self.assertRaises(PolicyError):
+            self.plan()
 
     def test_canonical_versions_and_prerelease_rules(self):
         self.assertEqual(parse_version('v0.1.0').core, (0, 1, 0))

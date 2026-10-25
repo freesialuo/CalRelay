@@ -4,6 +4,8 @@
 
 ## 触发与权限
 
+源仓库现在 public；资格按精确 approved repo/main 校验，与 GHCR 可见性分离。GHCR 仍须 private，原 registry/不可变版本校验不放宽。PR Docker 路由和去重见 [CI 范围](ci.md)。
+
 - 面向 main 的 PR：只构建和运行真实镜像验收，不登录 GHCR、不推送，不取得 packages 写权限。
 - 普通 git push 到 `release-request/vMAJOR.MINOR.PATCH[-prerelease]`：仅允许本仓库且非删除/非强推事件，请求分支必须指向 main 历史中已通过确切 main push CI 的提交，workflow SHA 与事件 SHA 相同，当前请求 ref 仍指向该提交。版本来自分支名，目标是已存在的同名版本 tag。
 - Release `published`：只接受 `vMAJOR.MINOR.PATCH[-prerelease]`，Release 的 prerelease 标志必须与版本一致。
