@@ -74,3 +74,34 @@ class SourceContractTests(unittest.TestCase):
         body['operations'][0]['expected_event_revision'] = 1
         body['mode'] = 'snapshot'
         self.assertFalse(self.envelope.is_valid(body))
+
+
+class ReminderConfigurationContractTests(unittest.TestCase):
+    def test_existing_rule_policy_and_bark_reference_examples_match_schema(self):
+        for name in ['rule', 'bark-output']:
+            schema = json.loads((ROOT / f'schemas/{name}-configuration-v1.schema.json').read_text())
+            example = json.loads((ROOT / f'examples/{name}-configuration-v1.json').read_text())
+            Draft202012Validator.check_schema(schema)
+            validator = Draft202012Validator(schema, format_checker=FormatChecker())
+            validator.validate(example)
+            body = deepcopy(example)
+            body['version'] = 'v2'
+            self.assertFalse(validator.is_valid(body))
+            body = deepcopy(example)
+            body['device_key'] = 'synthetic-never-a-real-token'
+            self.assertFalse(validator.is_valid(body))
+
+    def test_rule_binding_and_budget_shapes_reject_ambiguous_configuration(self):
+        rule = json.loads((ROOT / 'examples/rule-configuration-v1.json').read_text())
+        validator = Draft202012Validator(json.loads((ROOT / 'schemas/rule-configuration-v1.schema.json').read_text()))
+        for mutate in [
+            lambda r: r['policy'].update(calendar_ids=[]),
+            lambda r: r['policy'].update(calendar_ids=['calendar-a', 'calendar-a']),
+            lambda r: r['policy'].update(lead_ms=604800001),
+            lambda r: r['policy'].update(all_day_time='24:00'),
+            lambda r: r['policy'].update(unknown=True),
+            lambda r: r.update(output_ids=[]),
+        ]:
+            body = deepcopy(rule)
+            mutate(body)
+            self.assertFalse(validator.is_valid(body))

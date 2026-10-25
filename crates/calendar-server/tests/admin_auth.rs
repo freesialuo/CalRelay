@@ -646,3 +646,273 @@ async fn source_configuration_budget_does_not_expand_session_login_body_budget()
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     server.services.drain().await;
 }
+
+#[tokio::test]
+async fn rule_and_bark_management_share_guards_cas_and_secret_free_persistence() {
+    use calendar_application::{configuration::*, SecretBytes};
+    use calendar_storage::security::{KeyRing, SecurityStore};
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let server = Server::initialize(server_config(&db_path)).await.unwrap();
+    let key = dir.path().join("mock-key");
+    std::fs::write(&key, [11; 32]).unwrap();
+    let keys = KeyRing::from_files(1, &std::collections::BTreeMap::from([(1, key)])).unwrap();
+    SecurityStore {
+        storage: &server.services.storage,
+        keys: &keys,
+    }
+    .create_credential(
+        "bark-credential",
+        "bark",
+        &SecretBytes::new(b"synthetic-http-secret".to_vec()),
+        NOW * 1000,
+    )
+    .await
+    .unwrap();
+    let source: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))
+    .unwrap();
+    server
+        .services
+        .storage
+        .put_source_configuration(
+            "source-a",
+            ConfigurationCondition::Absent,
+            source,
+            "test",
+            NOW * 1000,
+        )
+        .await
+        .unwrap();
+    let state = AdminState::with_clock(
+        server.services.clone(),
+        verifier(Arc::new(Fake::default())),
+        Arc::new(|| NOW),
+    );
+    let app = admin::router(state);
+    let jwt = sign(claims());
+    let login = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            SESSION,
+            &jwt,
+            None,
+            None,
+            None,
+            Some(ORIGIN),
+            json!({"turnstile_token":"reminder-configuration"}),
+        ))
+        .await
+        .unwrap();
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let tokens: Value =
+        serde_json::from_slice(&to_bytes(login.into_body(), 4096).await.unwrap()).unwrap();
+    let csrf = tokens["csrf_token"].as_str().unwrap();
+    let mut nonce = tokens["write_nonce"].as_str().unwrap().to_owned();
+    let output: Value = serde_json::from_str(include_str!(
+        "../../../examples/bark-output-configuration-v1.json"
+    ))
+    .unwrap();
+    let rule: Value =
+        serde_json::from_str(include_str!("../../../examples/rule-configuration-v1.json")).unwrap();
+    for (path, body, expected) in [
+        (
+            "/api/admin/v1/outputs/bark-a",
+            output.clone(),
+            StatusCode::CREATED,
+        ),
+        (
+            "/api/admin/v1/rules/rule-a",
+            rule.clone(),
+            StatusCode::CREATED,
+        ),
+    ] {
+        // Invalid management identities/Origin/CSRF have no resource side effects.
+        for (cookie, csrf, origin) in [
+            (None, Some(csrf), Some(ORIGIN)),
+            (Some(cookie.as_str()), None, Some(ORIGIN)),
+            (Some(cookie.as_str()), Some(csrf), Some("https://evil.test")),
+        ] {
+            let mut req = request(
+                "PUT",
+                path,
+                &jwt,
+                cookie,
+                csrf,
+                Some(&nonce),
+                origin,
+                body.clone(),
+            );
+            req.headers_mut()
+                .insert("if-none-match", "*".parse().unwrap());
+            assert_eq!(
+                app.clone().oneshot(req).await.unwrap().status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        let mut req = request(
+            "PUT",
+            path,
+            &jwt,
+            Some(&cookie),
+            Some(csrf),
+            Some(&nonce),
+            Some(ORIGIN),
+            body,
+        );
+        req.headers_mut()
+            .insert("if-none-match", "*".parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["etag"], "\"1\"");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        nonce = response.headers()["x-admin-write-nonce"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = to_bytes(response.into_body(), 8192).await.unwrap();
+        assert!(!String::from_utf8_lossy(&body).contains("synthetic-http-secret"));
+    }
+    for (path, mut body, condition, expected) in [
+        (
+            "/api/admin/v1/outputs/bark-a",
+            output.clone(),
+            "\"1\"",
+            StatusCode::OK,
+        ),
+        (
+            "/api/admin/v1/outputs/bark-a",
+            output.clone(),
+            "\"1\"",
+            StatusCode::CONFLICT,
+        ),
+        (
+            "/api/admin/v1/outputs/bark-a",
+            output.clone(),
+            "\"2\"",
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "/api/admin/v1/rules/rule-a",
+            rule.clone(),
+            "\"1\"",
+            StatusCode::OK,
+        ),
+    ] {
+        if expected == StatusCode::UNPROCESSABLE_ENTITY {
+            body["device_key"] = json!("synthetic-http-secret");
+        }
+        let mut req = request(
+            "PUT",
+            path,
+            &jwt,
+            Some(&cookie),
+            Some(csrf),
+            Some(&nonce),
+            Some(ORIGIN),
+            body,
+        );
+        req.headers_mut()
+            .insert("if-match", condition.parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), expected);
+        nonce = response.headers()["x-admin-write-nonce"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+    }
+    let mut duplicate = request(
+        "PUT",
+        "/api/admin/v1/outputs/bark-a",
+        &jwt,
+        Some(&cookie),
+        Some(csrf),
+        Some(&nonce),
+        Some(ORIGIN),
+        output.clone(),
+    );
+    duplicate
+        .headers_mut()
+        .insert("if-match", "\"2\"".parse().unwrap());
+    *duplicate.body_mut() = Body::from(
+        output
+            .to_string()
+            .replace("\"enabled\":false", "\"enabled\":false,\"enabled\":true"),
+    );
+    let duplicate = app.clone().oneshot(duplicate).await.unwrap();
+    assert_eq!(duplicate.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    nonce = duplicate.headers()["x-admin-write-nonce"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    for path in [
+        "/api/admin/v1/rules",
+        "/api/admin/v1/outputs",
+        "/api/admin/v1/rules/rule-a",
+        "/api/admin/v1/outputs/bark-a",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                "GET",
+                path,
+                &jwt,
+                Some(&cookie),
+                None,
+                None,
+                None,
+                Value::Null,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 8192).await.unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("synthetic-http-secret"));
+        assert!(!text.contains("ciphertext"));
+    }
+    for path in ["/api/admin/v1/rules/rule-a", "/api/admin/v1/outputs/bark-a"] {
+        let mut req = request(
+            "DELETE",
+            path,
+            &jwt,
+            Some(&cookie),
+            Some(csrf),
+            Some(&nonce),
+            Some(ORIGIN),
+            Value::Null,
+        );
+        *req.body_mut() = Body::empty();
+        req.headers_mut()
+            .insert("if-match", "\"2\"".parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        nonce = response.headers()["x-admin-write-nonce"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+    }
+    server.services.drain().await;
+    let reopened = calendar_storage::Storage::open(&db_path).await.unwrap();
+    assert!(reopened
+        .rule_configuration("rule-a")
+        .await
+        .unwrap()
+        .retired_at
+        .is_some());
+    assert!(reopened
+        .bark_output_configuration("bark-a")
+        .await
+        .unwrap()
+        .retired_at
+        .is_some());
+    reopened.close().await;
+}
