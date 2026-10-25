@@ -1,0 +1,142 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #17322e;
+  background: #f4f7f4;
+  line-height: 1.6;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+.shell {
+  max-width: 1040px;
+  margin: auto;
+  padding: 32px 24px;
+}
+header {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #cfdbd4;
+}
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #12614b;
+}
+p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+header p,
+footer {
+  color: #50675e;
+  font-size: 0.9rem;
+}
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 24px 0 32px;
+}
+a {
+  color: #275a48;
+  padding: 9px 17px;
+  text-decoration: none;
+  border-radius: 6px;
+}
+a[aria-current] {
+  background: #173e31;
+  color: white;
+}
+a:hover {
+  text-decoration: underline;
+}
+:focus-visible {
+  outline: 3px solid #98671d;
+  outline-offset: 4px;
+}
+h1 {
+  font-size: 2.25rem;
+  letter-spacing: -0.04em;
+  margin: 30px 0 8px;
+}
+h2 {
+  font-size: 1.12rem;
+  margin: 0 0 12px;
+}
+.intro {
+  color: #50675e;
+  margin-bottom: 26px;
+}
+.notice {
+  background: #fff4da;
+  border-left: 4px solid #b98527;
+  padding: 14px 18px;
+  border-radius: 4px;
+  color: #664818;
+}
+.panel {
+  background: white;
+  border: 1px solid #dae3dc;
+  padding: 24px;
+  margin: 16px 0;
+  border-radius: 10px;
+}
+.panel p {
+  color: #486054;
+}
+button {
+  font: inherit;
+  background: #176348;
+  border: 1px solid #176348;
+  color: white;
+  padding: 7px 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin: 12px 10px 0 0;
+}
+button.secondary {
+  background: white;
+  color: #176348;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.result[data-state="error"] {
+  color: #9b302b;
+}
+.result[data-state="success"] {
+  color: #176348;
+}
+footer {
+  margin-top: 36px;
+  padding: 18px 0;
+  border-top: 1px solid #cfdbd4;
+}
+@media (max-width: 600px) {
+  .shell {
+    padding: 18px 16px;
+  }
+  header {
+    display: block;
+  }
+  nav {
+    gap: 4px;
+  }
+  a {
+    padding: 8px 11px;
+  }
+  h1 {
+    font-size: 1.8rem;
+  }
+  .panel {
+    padding: 18px;
+  }
+}
