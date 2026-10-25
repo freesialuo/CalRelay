@@ -94,7 +94,7 @@ async fn migrations_are_repeatable_and_committed_data_survives_reopen() -> Resul
             sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success=1")
                 .fetch_one(db.pool())
                 .await?;
-        assert_eq!(migrations, 8);
+        assert_eq!(migrations, 9);
         let health: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(db.pool())
             .await?;
@@ -344,7 +344,7 @@ async fn upgrades_v1_database_to_latest_preserving_history_and_enforcing_plannin
     )
     .fetch_all(db.pool())
     .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10]);
     let event_row: (String, i64, String) =
         sqlx::query_as("SELECT external_uid, revision, content_hash FROM events WHERE id = 'e1'")
             .fetch_one(db.pool())
@@ -414,7 +414,7 @@ async fn upgrades_v2_jobs_to_nullable_planning_context_without_losing_history() 
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(db.pool())
                 .await?;
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10]);
         rejected(
             &db,
             "UPDATE delivery_jobs SET planning_context='invalid json' WHERE id='j'",

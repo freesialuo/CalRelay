@@ -1,0 +1,16 @@
+{
+  "notice": "PUBLIC SYNTHETIC TEST KEY ONLY; never use outside offline tests",
+  "pkcs8": "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDd-GkqT3RoEIJgPcfQD0Z02F5vwgriT1Y3NuREAkWecQ0xNfzywfw3HEopSBp140bK0JvuJcCDiDku1iggF6oQjGfbX4a5y8DxUST4R-rPqId6ptvwpp3BXAp4IM-pGtBruXMPgsJnZfOOhcyugzkHyf047pz-BDLAnrh7AED2OyFYQvfXoBonwFbZMmM7gnHFjAzkxMumUSQdoj7d3qc4Pa6nCj-_EoQa-OJ3Ugj0O6A9CFyNsuw7rKAhe2lBFkNiyckXjDDKtkE6lfGqYDk1RxtZI89vhUp51gzxi5ZC4d1VLANL5EAF0Yjfe97Y8NlvMxX5dGWwc7s4AYzjvlXnAgMBAAECggEAGg1p6nlg5EXrx3f418azMkui6eMQe_dr2xcqO4E4wpvqPHhls-hovd8oJSg9UtDWIj_RzWXI7qcybvjbxMiCQWb5WZogqfXsM2aevDVUrgLNw-uJrPkhUuyGngrb1LE8_SfLBWsHfjNNHtE9cM4eB3gBrIj1DCtZ-ZmndWhWN5AJHolGznOIuWVbm9MqkEv1AYp1T-AejdVG-lZUNfRkIB1sEhmeUtKy56KKoLoDz7QeNO3YZnneQr-OzgDqyL2QonFdvLk3Qx2ZZyiGzFPfih8QRlVLYaz5kWHYoKQFuAdt4QIXgfFEorDrLuSu_gWuApZSHRzVbSMgxvpbKU-P4QKBgQD3kyUVzjYvmd11R0f7dUTBfU48fruLlBVR5GSjyrsyfapSj-jWPYr7aoPijqTejgzrJbsUj7_v4zCfvt4lmqO0jabmFWJTBBDSjL0CpAVqihYdjKswCU3cQYmVUuI_18dDR34wgHG4GNwtGHY2zGaUtQMXXvjsCYBVchQFSJBmmwKBgQDlhjOruw7izVFXesrohkHFql9mWmgWeJzXsc8G5ZbwhL3SDienqSqwJluhag2Hy8JptQ28d0ixpE4nmu-Cbh-1Tja3aCwhQmySELH--K_g-T_SWnazqyngfwH7uv7bzujh7TKIPk8IqL8dNvwkTEjnIZ1mdcZXG2q_S-F6K-3cpQKBgQCQ7sVBFK1IBI1OwOH05VvQ4ehRJefo-FHa1RfNgzs_fa2eE7083l5kfKCkmtkNqJ8LcdUpXlYAu0GV4wjtfq_jXSGdhFtBOhoXCGkGCLta-Wek-NqmjmvUS1Gd5x2oPkvaqRnIjwkDuxn6FF3wCozq9WTP47tZgt5sJxJtXWObjQKBgQCpl0eGlGijXGHF6Y0T0l-21fQ3hIV0VRpOpar6xZmJjgtTsfHLCEvqa-04j0wAEqZLxOOpZdnoqCa3TNu72_LB3FDBo883pATkyEE8zDPoX0KxAvbCOq5ummm0vq6ha3jXtpOn56IuG8FarM4RY-xaG5RZqJwssK1nO4IW626NoQKBgQCdgmDF3NMAEQwy4qSO5mR8E6zBd2XiOLNCY6AZXyKwbKHEq73ho-n4orxQyQozKe_cNEJD_TROIzC1jSeTxDDamwV-5oU-P3k0TVLsXpmCStodgmxb-FFuLwN7rQ-wbJIkeYEtG5Dei_2jGxjiCXGSqW9khYWIO-T6XyMv3_CUVA",
+  "jwks": {
+    "keys": [
+      {
+        "kid": "synthetic",
+        "kty": "RSA",
+        "alg": "RS256",
+        "use": "sig",
+        "n": "3fhpKk90aBCCYD3H0A9GdNheb8IK4k9WNzbkRAJFnnENMTX88sH8NxxKKUgadeNGytCb7iXAg4g5LtYoIBeqEIxn21-GucvA8VEk-Efqz6iHeqbb8KadwVwKeCDPqRrQa7lzD4LCZ2XzjoXMroM5B8n9OO6c_gQywJ64ewBA9jshWEL316AaJ8BW2TJjO4JxxYwM5MTLplEkHaI-3d6nOD2upwo_vxKEGvjid1II9DugPQhcjbLsO6ygIXtpQRZDYsnJF4wwyrZBOpXxqmA5NUcbWSPPb4VKedYM8YuWQuHdVSwDS-RABdGI33ve2PDZbzMV-XRlsHO7OAGM475V5w",
+        "e": "AQAB"
+      }
+    ]
+  }
+}
