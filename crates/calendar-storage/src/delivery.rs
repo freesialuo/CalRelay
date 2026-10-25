@@ -57,7 +57,7 @@ struct Job {
     latest_generation: bool,
     occurrence_cancelled: bool,
 }
-const JOB_SELECT: &str = "SELECT j.id,j.logical_delivery_id AS logical_id,j.state,
+const JOB_BY_ID: &str = "SELECT j.id,j.logical_delivery_id AS logical_id,j.state,
  j.event_revision,j.rule_revision,j.output_revision,j.due_at,j.next_attempt_at,j.deadline_at,j.lease_owner,j.lease_token,j.lease_until,j.planning_context,
  l.accepted_at,e.document_json,e.deleted_at,e.revision AS current_event,
  s.enabled AS source_enabled,s.revision AS source_revision,s.last_verified_at,
@@ -71,10 +71,10 @@ const JOB_SELECT: &str = "SELECT j.id,j.logical_delivery_id AS logical_id,j.stat
  JOIN events e ON e.id=l.event_id JOIN sources s ON s.id=e.source_id
  JOIN calendars c ON c.id=e.calendar_id JOIN reminder_rules r ON r.id=l.rule_id
  JOIN outputs o ON o.id=l.output_id
- LEFT JOIN planning_watermarks w ON w.source_id=s.id AND w.rule_id=r.id AND w.output_id=o.id";
+ LEFT JOIN planning_watermarks w ON w.source_id=s.id AND w.rule_id=r.id AND w.output_id=o.id WHERE j.id=?";
 
 async fn load(tx: &mut Transaction<'_, Sqlite>, id: &str) -> Result<Job, DeliveryError> {
-    sqlx::query_as(&format!("{JOB_SELECT} WHERE j.id=?"))
+    sqlx::query_as(JOB_BY_ID)
         .bind(id)
         .fetch_optional(&mut **tx)
         .await

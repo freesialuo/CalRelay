@@ -21,7 +21,7 @@ async fn seed(db: &Storage) -> Result {
     Ok(())
 }
 
-async fn rejected(db: &Storage, sql: &str, code: &str) {
+async fn rejected(db: &Storage, sql: &'static str, code: &str) {
     let error = sqlx::query(sql).execute(db.pool()).await.unwrap_err();
     let actual = error.as_database_error().and_then(|e| e.code());
     assert_eq!(actual.as_deref(), Some(code), "{sql}: {error}");
@@ -45,9 +45,14 @@ async fn every_connection_has_durable_pragmas_and_the_pool_is_bounded() -> Resul
             ("synchronous", 2),
             ("busy_timeout", 5000),
         ] {
-            let actual: i64 = sqlx::query_scalar(&format!("PRAGMA {pragma}"))
-                .fetch_one(&mut *connection)
-                .await?;
+            let actual: i64 = sqlx::query_scalar(match pragma {
+                "foreign_keys" => "PRAGMA foreign_keys",
+                "synchronous" => "PRAGMA synchronous",
+                "busy_timeout" => "PRAGMA busy_timeout",
+                _ => unreachable!(),
+            })
+            .fetch_one(&mut *connection)
+            .await?;
             assert_eq!(actual, expected, "{pragma}");
         }
         rejected_connection(&mut connection).await?;
