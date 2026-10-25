@@ -1482,6 +1482,489 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover at most 100 nonsecret summaries, including retired records */
+        get: {
+            parameters: {
+                query?: {
+                    after?: string;
+                };
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path?: never;
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No-store response; no capability except explicit grant */
+                200: {
+                    headers: {
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AggregatePage"];
+                    };
+                };
+                /** @description Invalid query */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid cursor */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manage a stored aggregate subscription under the existing admin guard
+         * @description PUT creation requires disabled policy and If-None-Match: *; edit, rotation and retirement require quoted positive If-Match revision. Unsafe requests consume/rotate the existing nonce even on business failure. All responses no-store. No plaintext capability accepted.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No-store response; no capability except explicit grant */
+                200: {
+                    headers: {
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AggregateRecord"];
+                    };
+                };
+                /** @description Malformed request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description CAS conflict or retired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid policy, selection or condition */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping/unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Manage a stored aggregate subscription under the existing admin guard
+         * @description PUT creation requires disabled policy and If-None-Match: *; edit, rotation and retirement require quoted positive If-Match revision. Unsafe requests consume/rotate the existing nonce even on business failure. All responses no-store. No plaintext capability accepted.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match"?: string;
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AggregateConfigurationV1"];
+                };
+            };
+            responses: {
+                /** @description No-store response; no capability except explicit grant */
+                200: {
+                    headers: {
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AggregateRecord"];
+                    };
+                };
+                /** @description No-store response; no capability except explicit grant */
+                201: {
+                    headers: {
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AggregateGrant"];
+                    };
+                };
+                /** @description Malformed request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description CAS conflict or retired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid policy, selection or condition */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping/unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Manage a stored aggregate subscription under the existing admin guard
+         * @description PUT creation requires disabled policy and If-None-Match: *; edit, rotation and retirement require quoted positive If-Match revision. Unsafe requests consume/rotate the existing nonce even on business failure. All responses no-store. No plaintext capability accepted.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Permanently revoked */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Malformed request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description CAS conflict or retired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid policy, selection or condition */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping/unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/subscriptions/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manage a stored aggregate subscription under the existing admin guard
+         * @description PUT creation requires disabled policy and If-None-Match: *; edit, rotation and retirement require quoted positive If-Match revision. Unsafe requests consume/rotate the existing nonce even on business failure. All responses no-store. No plaintext capability accepted.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No-store response; no capability except explicit grant */
+                200: {
+                    headers: {
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AggregateGrant"];
+                    };
+                };
+                /** @description Malformed request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description CAS conflict or retired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid policy, selection or condition */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping/unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/v1/sources/{source_id}/events/{uid}": {
         parameters: {
             query?: never;
@@ -1860,6 +2343,246 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feeds/aggregates/{public_id}/{secret}.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a managed aggregate calendar
+         * @description Read one consistent managed aggregate. All members must remain authorized and fresh under reject policy; no partial source omission. Independent aggregate capability, never management credentials.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    public_id: string;
+                    secret: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Complete single-source ICS representation */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/calendar; charset=utf-8": string;
+                    };
+                };
+                /** @description Unchanged authorized representation; no response body */
+                304: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                400: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                404: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                405: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                408: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                413: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                422: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                500: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                503: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        /**
+         * Read a managed aggregate calendar
+         * @description Read one consistent managed aggregate. All members must remain authorized and fresh under reject policy; no partial source omission. Independent aggregate capability, never management credentials.
+         */
+        head: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    public_id: string;
+                    secret: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Complete single-source ICS representation */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unchanged authorized representation; no response body */
+                304: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                400: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                404: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                405: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                408: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                413: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                422: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                500: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                503: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         patch?: never;
         trace?: never;
     };
@@ -2325,6 +3048,47 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Managed aggregate subscription v1 */
+        AggregateConfigurationV1: {
+            enabled: boolean;
+            /** @description UTC Unix milliseconds; null means no token expiry */
+            expires_at: number | null;
+            name: string;
+            sources: {
+                calendar_ids: string[];
+                source_id: string;
+            }[];
+            /** @enum {unknown} */
+            stale_policy: "reject";
+            /** @constant */
+            version: 1;
+            visible_fields: ("summary" | "description" | "location" | "url" | "categories")[];
+        };
+        AggregateGrant: {
+            /** @description One-time relative capability URL; resolve against the public service origin. Never returned by GET/list or ordinary edit, never persist/log in UI. */
+            readonly capability_url: string;
+            subscription: components["schemas"]["AggregateRecord"];
+        };
+        AggregatePage: {
+            items: components["schemas"]["AggregateSummary"][];
+            next_after: string | null;
+        };
+        AggregateRecord: {
+            configuration: components["schemas"]["AggregateConfigurationV1"];
+            public_id: string;
+            revision: number;
+            revoked_at: number | null;
+            subscription_id: string;
+        };
+        AggregateSummary: {
+            enabled: boolean;
+            expires_at: number | null;
+            name: string;
+            public_id: string;
+            revision: number;
+            revoked_at: number | null;
+            subscription_id: string;
+        };
         BarkOutputConfigurationRecord: {
             configuration: components["schemas"]["BarkOutputConfigurationV1"];
             generation: number;

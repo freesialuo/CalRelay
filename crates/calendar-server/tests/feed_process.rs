@@ -18,7 +18,7 @@ impl Drop for Process {
 fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("db");
-    let token = tokio::runtime::Runtime::new().unwrap().block_on(async {
+    let (token, aggregate_url, aggregate_token) = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let db = calendar_storage::Storage::open(&database).await.unwrap();
         sqlx::query("INSERT INTO sources(id,kind) VALUES ('s','test')")
             .execute(db.pool())
@@ -28,8 +28,14 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
             .issue_feed_token("sub", "public", "s", None)
             .await
             .unwrap();
+        use calendar_application::{aggregate::AggregateConfiguration, configuration::ConfigurationCondition as Condition};
+        let mut config: AggregateConfiguration=serde_json::from_value(serde_json::json!({"version":1,"name":"Empty","enabled":false,"sources":[],"visible_fields":[],"stale_policy":"reject","expires_at":null})).unwrap();
+        let (r,secret)=db.put_aggregate("aggregate",Condition::Absent,config.clone(),"test",1).await.unwrap();
+        config.enabled=true;db.put_aggregate("aggregate",Condition::Revision(1),config,"test",2).await.unwrap();
+        let secret=secret.unwrap();let secret=std::str::from_utf8(secret.expose()).unwrap().to_owned();
+        let url=format!("/feeds/aggregates/{}/{}.ics",r.public_id,secret);
         db.close().await;
-        std::str::from_utf8(token.expose()).unwrap().to_owned()
+        (std::str::from_utf8(token.expose()).unwrap().to_owned(),url,secret)
     });
     let deployment = dir.path().join("deployment.json");
     std::fs::write(&deployment, r#"{"bind":"127.0.0.1:0"}"#).unwrap();
@@ -60,6 +66,19 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
     let address = ready.strip_prefix("CalRelay listening on ").unwrap();
     let url = format!("/feeds/public/{token}.ics");
     for (method, target, status) in [
+        ("GET", aggregate_url.clone(), 200),
+        ("HEAD", aggregate_url.clone(), 200),
+        ("POST", aggregate_url.clone(), 405),
+        (
+            "GET",
+            format!("/feeds/aggregates/unknown/{aggregate_token}.ics"),
+            404,
+        ),
+        (
+            "GET",
+            format!("/feeds/aggregates/unknown/%FF{aggregate_token}.ics"),
+            400,
+        ),
         ("GET", url.clone(), 200),
         ("HEAD", url.clone(), 200),
         ("POST", url.clone(), 405),
@@ -82,6 +101,7 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
             "{response}"
         );
         assert!(!response.contains(&token));
+        assert!(!response.contains(&aggregate_token));
         assert!(!response.contains(&target));
     }
     assert!(Command::new("kill")
@@ -100,7 +120,14 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
     }
     let diagnostic = reader.join().unwrap() + &std::fs::read_to_string(stdout).unwrap();
     assert!(diagnostic.contains("CalRelay listening on"));
-    for hidden in [&token, &url, "/feeds/", "%FF"] {
+    for hidden in [
+        &token,
+        &url,
+        &aggregate_token,
+        &aggregate_url,
+        "/feeds/",
+        "%FF",
+    ] {
         assert!(!diagnostic.contains(hidden));
     }
 }

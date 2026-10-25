@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "Combined calendar",
+  "enabled": false,
+  "sources": [{"source_id": "source-a", "calendar_ids": ["calendar-a"]}],
+  "visible_fields": ["summary", "location"],
+  "stale_policy": "reject",
+  "expires_at": null
+}
