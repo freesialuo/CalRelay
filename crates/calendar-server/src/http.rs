@@ -55,7 +55,25 @@ async fn boundary(State(config): State<Config>, request: Request, next: Next) ->
             .await;
         let status = response.status();
         if status.is_client_error() || status.is_server_error() {
-            return error(status, error_code(status), &id);
+            let (mut parts, _) = response.into_parts();
+            // Keep protocol headers (Allow, WWW-Authenticate, Retry-After, etc.)
+            // while invalidating metadata that described the replaced representation.
+            for header in [
+                "content-type",
+                "content-length",
+                "content-encoding",
+                "transfer-encoding",
+                "content-range",
+                "etag",
+                "last-modified",
+                "content-md5",
+                "digest",
+            ] {
+                parts.headers.remove(header);
+            }
+            let (envelope, body) = error(status, error_code(status), &id).into_parts();
+            parts.headers.extend(envelope.headers);
+            return Response::from_parts(parts, body);
         }
         let (parts, body) = response.into_parts();
         match to_bytes(body, config.max_response_bytes).await {
@@ -136,6 +154,52 @@ mod tests {
             request_timeout: Duration::from_millis(50),
         }
     }
+    #[tokio::test]
+    async fn error_envelopes_preserve_protocol_headers_and_replace_body_metadata() {
+        let app = Router::new()
+            .route(
+                "/auth",
+                get(|| async {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        [
+                            ("www-authenticate", "Bearer"),
+                            ("retry-after", "30"),
+                            ("content-type", "text/plain"),
+                            ("content-length", "3"),
+                            ("etag", "old"),
+                        ],
+                        "old",
+                    )
+                }),
+            )
+            .layer(middleware::from_fn_with_state(config(), boundary));
+        let response = app
+            .oneshot(Request::builder().uri("/auth").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("www-authenticate").unwrap(),
+            "Bearer"
+        );
+        assert_eq!(response.headers().get("retry-after").unwrap(), "30");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert!(!response.headers().contains_key("etag"));
+        assert_ne!(
+            response
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok()),
+            Some("3")
+        );
+        let body = to_bytes(response.into_body(), 512).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+            "unauthorized"
+        );
+    }
+
     #[tokio::test]
     async fn response_limit_and_timeout_are_atomic_error_envelopes() {
         let app = Router::new()

@@ -102,6 +102,15 @@ fn bad_config_and_migration_failure_do_not_listen() {
     std::fs::write(&database, b"this is not a database").unwrap();
     let mut corrupt = spawn(&database, &address.to_string());
     assert!(!wait_exit(&mut corrupt.0).success());
+    let mut diagnostic = String::new();
+    corrupt
+        .0
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut diagnostic)
+        .unwrap();
+    assert_eq!(diagnostic, "database initialization failed\n");
     assert!(TcpStream::connect(address).is_err());
     assert_eq!(std::fs::read(&database).unwrap(), b"this is not a database");
 }

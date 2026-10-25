@@ -59,6 +59,26 @@ async fn http_contract_limits_ids_errors_and_openapi() {
             .unwrap();
     assert!(migrations >= 5);
     let app = server.router();
+    let method_error = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/version")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        method_error
+            .headers()
+            .get("allow")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "GET,HEAD"
+    );
     let (status, first, version) = get(app.clone(), "/api/v1/version", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(version["api_version"], "v1");

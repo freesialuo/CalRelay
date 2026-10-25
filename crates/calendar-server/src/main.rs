@@ -1,7 +1,17 @@
 use calendar_server::{Config, Server};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]

@@ -24,7 +24,7 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
 - `GET /health/live` 返回 `{"status":"live"}`；`GET /health/ready` 在迁移完成后返回 `{"status":"ready"}`，停止时返回 503。
 - `GET /api/v1/version` 返回 `name`、包 `version`、`api_version: "v1"`；`GET /api/v1/openapi.json` 返回 OpenAPI 3.1 文档及统一错误 schema。
-- 每个请求由服务生成 `X-Request-Id`，不信任客户端提供的同名头；下游通过 `RequestId` extension 读取。失败响应形如 `{"error":{"code":"not_found","request_id":"…"}}`，正文 ID 与响应头一致，不包含底层异常细节。
+- 每个请求由服务生成 `X-Request-Id`，不信任客户端提供的同名头；下游通过 `RequestId` extension 读取。失败响应形如 `{"error":{"code":"not_found","request_id":"…"}}`，正文 ID 与响应头一致，不包含底层异常细节。替换错误正文时保留 `Allow`、`WWW-Authenticate`、`Retry-After` 等协议头，移除旧正文长度、编码和校验缓存元数据。
 - 全局边界在路由匹配之外运行，涵盖 404/405。读取请求正文时按实际字节计数，超限返回 413，不能靠缺失或伪造 Content-Length 绕过。响应先有界收集，超限整体替换为 500 `response_too_large`，不发送截断成功内容；错误 envelope 小于最小响应预算。当前边界面向有限 JSON 响应，未来流式路由需单独定义契约。
 - 请求正文读取、处理和响应收集共用总时限，超时返回 408 `request_timeout`。路由不得阻塞 Tokio 执行线程。当前没有任何管理或摄取写路由。
 - 健康端点按部署网络限制在内部，不在这里引入尚未交付的管理鉴权接口。
