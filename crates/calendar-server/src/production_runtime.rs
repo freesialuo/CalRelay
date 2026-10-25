@@ -108,6 +108,9 @@ impl PushOutput for ConfiguredBark {
             }
         };
         let config = record.configuration;
+        // The enclosing deliver_one deadline may drop this future. Keep the unknown
+        // channel result degraded until a later completed request proves acceptance.
+        self.degraded.store(true, Ordering::SeqCst);
         let outcome = match BarkOutput::new(
             self.credentials.clone(),
             &record.output_id,

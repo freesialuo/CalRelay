@@ -26,6 +26,6 @@
 
 受控去掉 revision pin 与周期准入门槛，分别触发旧配置错误通过及提前轮询的行为断言失败；恢复后通过。自动审核两项 P2 也先观察有效 Red：替换后错误 Capacity；读取耗尽预算后实际(1,Complete)/预期(0,Deadline)，修复后通过。夹具遗漏必需 DTSTAMP、退休保留旧核验时间的测试预期和语法错误不计作需求 Red。未运行长时 fuzz/形式证明/真实上游互操作。
 
-标准 binary 尚未注册扫描器；生产 composition 等 #71 健康基础、认证 owner 的 admin/secret bootstrap 以及配置 owner 后续规则/output/freshness port。此模块不以空配置循环宣称首版已可用。
+该模块只提供扫描器；标准 binary 的实际注册、安全 bootstrap 与预算见[生产运行时](production-runtime.md)，复用已合并 #71/#96/#97/#104。#74 的其他协议能力与整体 AC 仍保留。
 
 参考：[已有协调器与网络安全边界](source-coordinator.md)、[来源配置契约](source-configuration.md)、[Tokio watch](https://docs.rs/tokio/1.54.1/tokio/sync/watch/struct.Receiver.html) 的订阅/取消安全语义；通过 Exa 核对 [SQLx 0.9.0 QueryBuilder](https://docs.rs/sqlx/0.9.0/sqlx/struct.QueryBuilder.html) 的绑定参数、SQLite默认32766参数限制与动态语句 persistent(false)，实际16384边界由当前 bundled SQLite 集成测试验证。

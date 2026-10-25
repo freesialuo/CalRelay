@@ -370,3 +370,29 @@ fn legacy_bind_is_rejected_with_upgrade_diagnostic_before_creating_database() {
     assert!(!diagnostic.contains("secret-invalid"));
     assert!(!database.exists());
 }
+
+#[test]
+fn standard_runtime_refuses_missing_security_before_database_or_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    for field in ["admin", "credentials"] {
+        let database = dir.path().join(field);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mut document = common::deployment(dir.path(), &address.to_string());
+        document.as_object_mut().unwrap().remove(field);
+        let config = dir.path().join(format!("{field}.json"));
+        std::fs::write(&config, document.to_string()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+            .env_clear()
+            .env("CALRELAY_DATABASE", &database)
+            .arg("--deployment-config")
+            .arg(config)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!database.exists());
+        assert!(TcpStream::connect(address).is_err());
+        assert_eq!(String::from_utf8(output.stderr).unwrap(),"invalid or missing server configuration: production runtime requires admin and credentials configuration\n");
+    }
+}

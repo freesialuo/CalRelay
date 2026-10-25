@@ -13,7 +13,7 @@ test("configuration journey honestly marks disconnected writes", async ({
   await expect(page.getByText("静态 / 手动来源不自动轮询")).toBeVisible();
 });
 
-test("real local HTTP version, health, optional admin session and refresh", async ({
+test("real local HTTP version, health, guarded admin session and refresh", async ({
   page,
 }) => {
   const methods: string[] = [];
@@ -43,9 +43,7 @@ test("real local HTTP version, health, optional admin session and refresh", asyn
     has: page.getByRole("heading", { name: "管理会话", exact: true }),
   });
   await session.getByRole("button", { name: "检查", exact: true }).click();
-  await expect(session.getByRole("status")).toContainText(
-    "此接口未接通或未装配",
-  );
+  await expect(session.getByRole("status")).toContainText("管理请求被拒绝");
   await page.reload();
   await expect(card.getByRole("status")).toHaveText("尚未检查");
   expect(methods).toEqual(["GET", "GET", "GET"]);
