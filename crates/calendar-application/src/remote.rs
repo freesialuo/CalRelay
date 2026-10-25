@@ -6,6 +6,7 @@ pub struct RemoteValidators {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
 }
+#[derive(Clone)]
 pub enum RemoteAuthentication {
     None,
     Basic { credential_id: String },

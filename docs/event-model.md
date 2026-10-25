@@ -83,7 +83,7 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 | 表 | 关键字段与约束 |
 | --- | --- |
-| `sources` | id PK、kind、config_json、credential_id、revision、enabled、committed_checkpoint、last_verified_at |
+| `sources` | id PK、kind、config_json、credential_id、revision、enabled、committed_checkpoint、last_verified_at、snapshot_revision（完整快照证明） |
 | `sync_runs` | id PK、source_id FK、base_revision、status、started/finished_at、diagnostic_summary |
 | `sync_staging` | run_id FK、page_key、payload_ref、complete；提交后可清理 |
 | `calendars` | id PK、source_id FK、external_id、timezone_policy；UNIQUE(source_id, external_id) |
@@ -130,3 +130,5 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 - JSON Schema 负责结构；领域验证器负责跨字段、重复规则和时区；数据库约束负责关系与并发下的不变量。
 - 仅接受声明支持的能力档位；无法执行的警报/范围例外进入诊断，不宣称“完整支持 RFC”。
 - 对照样例覆盖：全天、UTC、floating、夏令时切换、月末、闰日、EXDATE、PERIOD RDATE、单次改期/取消、THISANDFUTURE、自定义 VTIMEZONE、Unicode 与长行折叠。
+
+迁移 `0006` 和完整快照/304 原子边界见 [来源协调](source-coordinator.md)。

@@ -10,3 +10,5 @@
 Issue #26：`calendar-application/src/security.rs`、`calendar-storage/src/security.rs`、迁移与安全测试为 AI 辅助原创实现；加密原语来自 RustCrypto `chacha20poly1305 0.10.1`，通过 Exa 核对的实际来源见 [凭据安全](credential-security.md#实现参考)。测试密钥均临时随机生成，不包含真实凭据。
 
 Issue #28：应用 RemoteFetcher 契约、HTTPS 传输和本地 TLS 测试为 AI 辅助原创实现；第三方 Reqwest/Tokio/Rustls/rcgen 使用 Cargo.lock 固定版本，实际采用来源见 [远程获取](remote-fetch.md#实现参考)，不包含真实外部数据或凭据。
+
+Issue #29：应用来源协调、受限 JSON/ICS 来源适配器、快照证明迁移与集成测试为 AI 辅助原创实现，SQLx 官方文档通过 Exa 核对，来源见 [来源协调](source-coordinator.md#实现参考)；仅使用合成事件与临时数据库。

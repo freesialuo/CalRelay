@@ -31,7 +31,7 @@
 
 #18 的 ICS 候选评估见 [解析库评估](ics-parser-evaluation.md)，选择 `ical 0.11.0` 作为低层解析候选；#25 在 `calendar-adapters` 中实现受限 ICS 文件归一化与快照批次构造（见 [ICS 归一化](ics-normalization.md)）。
 
-#28 以 #55/#26 为 Stack 父层实现受限 HTTPS 获取（见 [远程获取](remote-fetch.md)）；数据库协调仍属 #29。未合并父层不视为主线能力。
+#28 以 #55/#26 为 Stack 父层实现受限 HTTPS 获取（见 [远程获取](remote-fetch.md)）；随后 #29 以 #56 为 Stack 父层实现分页协调和原子提交（见 [来源协调](source-coordinator.md)）。未合并父层不视为主线能力。
 
 ## 决策基线
 

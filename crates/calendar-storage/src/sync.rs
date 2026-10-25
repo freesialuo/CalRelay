@@ -158,7 +158,8 @@ impl EventRepository for Storage {
         for uid in missing {
             changed_events += delete(&mut tx, &journal, &uid).await?;
         }
-        let result = sqlx::query("UPDATE sources SET revision=?,committed_checkpoint=?,last_verified_at=? WHERE id=? AND revision=? AND enabled=1")
+        let result = sqlx::query("UPDATE sources SET snapshot_revision=CASE WHEN ? THEN ? ELSE snapshot_revision END,revision=?,committed_checkpoint=?,last_verified_at=? WHERE id=? AND revision=? AND enabled=1")
+            .bind(matches!(batch.mode,SyncMode::FullSnapshot{..})).bind(revision)
             .bind(revision).bind(batch.proposed_checkpoint).bind(batch.verified_at).bind(&batch.source_id).bind(batch.base_revision)
             .execute(&mut *tx).await?;
         if result.rows_affected() != 1 {
