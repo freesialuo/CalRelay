@@ -1,4 +1,8 @@
 #![cfg(feature = "production-web")]
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod web_build;
+
 use calendar_server::{Config, Server};
 use std::time::Duration;
 

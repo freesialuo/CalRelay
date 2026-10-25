@@ -24,20 +24,7 @@ fn main() {
     assets.sort_by_key(|entry| entry.file_name());
     for entry in assets {
         let name = entry.file_name().into_string().expect("ASCII asset name");
-        let (stem, extension) = name.rsplit_once('.').expect("asset extension");
-        let (_, hash) = stem.rsplit_once('-').expect("Vite content hash");
-        assert!(
-            hash.len() >= 8
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
-            "unexpected asset name"
-        );
-        let mime = match extension {
-            "js" => "text/javascript; charset=utf-8",
-            "css" => "text/css; charset=utf-8",
-            _ => panic!("only production JS/CSS assets may be embedded"),
-        };
+        let mime = asset_mime(&name);
         entries.push((format!("assets/{name}"), mime));
     }
     assert!(entries.len() >= 3, "expected built HTML, JS and CSS");
@@ -67,4 +54,45 @@ fn main() {
         generated,
     )
     .unwrap();
+}
+
+fn asset_mime(name: &str) -> &'static str {
+    let (stem, extension) = name.rsplit_once('.').expect("asset extension");
+    let (_, hash) = stem.split_once('-').expect("Vite content hash");
+    assert!(
+        hash.len() >= 8
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+        "unexpected asset name"
+    );
+    let mime = match extension {
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        _ => panic!("only production JS/CSS assets may be embedded"),
+    };
+    mime
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asset_mime;
+
+    #[test]
+    fn vite_hash_alphabet_includes_internal_hyphens_and_underscores() {
+        for name in [
+            "index-abcdefgh.js",
+            "index-abcd-fgh.js",
+            "index-abcd_fgh.js",
+        ] {
+            assert_eq!(asset_mime(name), "text/javascript; charset=utf-8");
+        }
+        assert_eq!(asset_mime("index-abcd-fgh.css"), "text/css; charset=utf-8");
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected asset name")]
+    fn encoded_path_is_not_a_public_asset() {
+        asset_mime("index-abcd%2ffgh.js");
+    }
 }
