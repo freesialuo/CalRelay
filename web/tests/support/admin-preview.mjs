@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { startSystemFixtures } from "../system/fixtures.mjs";
 import { startHTTPSProxy } from "./https-proxy.mjs";
 
 const execute = promisify(execFile);
@@ -17,11 +18,9 @@ const binary = fileURLToPath(
   new URL("../../../target/debug/calendar-admin-harness", import.meta.url),
 );
 const origin = "https://127.0.0.1:4175";
-const child = spawn(
-  binary,
-  ["--database", database, "--browser-origin", origin],
-  { stdio: ["ignore", "pipe", "ignore"] },
-);
+const systemMode = process.argv[2] === "--system-runtime";
+let child;
+let fixture;
 let proxy;
 let stateCreated = false;
 let closing = false;
@@ -29,17 +28,67 @@ const close = async () => {
   if (closing) return;
   closing = true;
   await proxy?.close();
-  if (child.pid && child.exitCode === null && child.signalCode === null) {
+  if (child?.pid && child.exitCode === null && child.signalCode === null) {
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.kill("SIGTERM");
     const forced = setTimeout(() => child.kill("SIGKILL"), 4000);
     await exited;
     clearTimeout(forced);
   }
+  await fixture?.close();
   if (stateCreated) await execute("find", [statePath, "-delete"]);
   await execute("find", [directory, "-depth", "-delete"]);
 };
 try {
+  // Only this explicit offline test process creates synthetic credential files.
+  // Provision via the actual owner's CLI, never SQL seeds or a management bypass.
+  const keyPath = join(directory, "synthetic-master-key");
+  const secretPath = join(directory, "synthetic-bark-secret");
+  const deploymentPath = join(directory, "synthetic-deployment.json");
+  await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 });
+  await writeFile(secretPath, "synthetic_bark_browser_secret", {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await writeFile(
+    deploymentPath,
+    JSON.stringify({
+      bind: "127.0.0.1:0",
+      credentials: { current_key_version: 1, key_files: { 1: keyPath } },
+    }),
+    { flag: "wx", mode: 0o600 },
+  );
+  const fixtureFile = join(directory, "system-fixtures.json");
+  if (systemMode) {
+    fixture = await startSystemFixtures({
+      nowMs: Date.now() - 60000,
+      barkCredential: "synthetic_bark_browser_secret",
+    });
+    fixture.source("b", { shift: -60000 });
+    const { a, b, bark } = fixture.targets;
+    await writeFile(fixtureFile, JSON.stringify({ a, b, bark }), {
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
+  child = spawn(
+    binary,
+    [
+      "--database",
+      database,
+      "--browser-origin",
+      origin,
+      ...(systemMode
+        ? [
+            "--system-fixtures",
+            fixtureFile,
+            "--deployment-config",
+            deploymentPath,
+          ]
+        : []),
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
   const configuration = await new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error("Offline harness startup timed out")),
@@ -78,24 +127,6 @@ try {
       reject(new Error("Offline harness exited before readiness"));
     });
   });
-  // Only this explicit offline test process creates synthetic credential files.
-  // Provision via the actual owner's CLI, never SQL seeds or a management bypass.
-  const keyPath = join(directory, "synthetic-master-key");
-  const secretPath = join(directory, "synthetic-bark-secret");
-  const deploymentPath = join(directory, "synthetic-deployment.json");
-  await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 });
-  await writeFile(secretPath, "synthetic_bark_browser_secret", {
-    flag: "wx",
-    mode: 0o600,
-  });
-  await writeFile(
-    deploymentPath,
-    JSON.stringify({
-      bind: "127.0.0.1:0",
-      credentials: { current_key_version: 1, key_files: { 1: keyPath } },
-    }),
-    { flag: "wx", mode: 0o600 },
-  );
   const credentialBinary = fileURLToPath(
     new URL("../../../target/debug/calendar-server", import.meta.url),
   );
@@ -127,7 +158,11 @@ try {
   // Only public local addresses/paths are persisted. The synthetic JWT stays in proxy memory.
   await writeFile(
     statePath,
-    JSON.stringify({ upstream: configuration.upstream, database }),
+    JSON.stringify({
+      upstream: configuration.upstream,
+      database,
+      ...(fixture ? { fixture_status: fixture.targets.status } : {}),
+    }),
     { flag: "wx" },
   );
   stateCreated = true;

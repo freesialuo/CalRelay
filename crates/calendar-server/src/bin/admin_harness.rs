@@ -2,7 +2,9 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use calendar_adapters::admin_auth::{AdminConfig, AdminError, AdminTransport, CloudflareVerifier};
 use calendar_application::SecretBytes;
-use calendar_server::{Config, Server};
+use calendar_server::{Config, DeploymentConfig, Server};
+#[path = "admin_harness/runtime_ports.rs"]
+mod runtime_ports;
 use ring::{
     rand::SystemRandom,
     signature::{RsaKeyPair, RSA_PKCS1_SHA256},
@@ -47,7 +49,7 @@ impl AdminTransport for OfflineTransport {
                         && v.len() > 20
                         && v.len() < 128
                 });
-            Ok(serde_json::to_vec(&json!({"success":success,"hostname":self.hostname,"action":"admin-login","challenge_ts":chrono::DateTime::from_timestamp(now(),0).unwrap().to_rfc3339()})).unwrap())
+            Ok(serde_json::to_vec(&json!({"success":success,"hostname":self.hostname,"action":"admin-login","challenge_ts":chrono::DateTime::from_timestamp(now().saturating_sub(30),0).unwrap().to_rfc3339()})).unwrap())
         })
     }
 }
@@ -63,7 +65,7 @@ async fn main() -> std::process::ExitCode {
 }
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let [db_flag, path, origin_flag, origin] = args.as_slice() else {
+    let Some([db_flag, path, origin_flag, origin]) = args.get(..4) else {
         return Err("expected harness arguments".into());
     };
     if db_flag != "--database"
@@ -72,6 +74,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("invalid harness arguments".into());
     }
+    let runtime = match args.get(4..) {
+        Some([]) => None,
+        Some([flag, fixtures, deployment_flag, deployment])
+            if flag == "--system-fixtures" && deployment_flag == "--deployment-config" =>
+        {
+            Some((fixtures, deployment))
+        }
+        _ => return Err("invalid offline harness arguments".into()),
+    };
     let uri: axum::http::Uri = origin.parse()?;
     if uri.scheme_str() != Some("https") || !matches!(uri.host(), Some("127.0.0.1" | "localhost")) {
         return Err("harness origin must be HTTPS loopback".into());
@@ -124,15 +135,35 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .open(path)?;
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = Server::initialize(Config {
-        bind: "127.0.0.1:0".parse()?,
-        database: path.into(),
-        max_request_bytes: 1_048_576,
-        max_response_bytes: 1_048_576,
-        request_timeout: Duration::from_secs(10),
-    })
-    .await?
+    let server = if let Some((_, deployment)) = runtime {
+        let config = DeploymentConfig::from_deployment(&std::fs::read(deployment)?, |key| {
+            (key == "CALRELAY_DATABASE").then(|| path.clone())
+        })?;
+        if !config.server.bind.ip().is_loopback()
+            || config.server.bind.port() != 0
+            || config.admin.is_some()
+        {
+            return Err("invalid isolated deployment".into());
+        }
+        config
+            .initialize_with_supervision(calendar_server::production_runtime::supervision_budgets())
+            .await?
+    } else {
+        Server::initialize(Config {
+            bind: "127.0.0.1:0".parse()?,
+            database: path.into(),
+            max_request_bytes: 1_048_576,
+            max_response_bytes: 1_048_576,
+            request_timeout: Duration::from_secs(10),
+        })
+        .await?
+    }
     .with_admin_site_key(Arc::new(verifier), "synthetic-site-key".into())?;
+    let server = if let Some((fixtures, _)) = runtime {
+        runtime_ports::attach(server, std::path::Path::new(fixtures))?
+    } else {
+        server
+    };
     let listener = server.bind().await?;
     println!(
         "{}",
@@ -147,4 +178,41 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn synthetic_challenge_precedes_a_request_sampled_before_response_generation() {
+        // Siteverify's challenge timestamp describes challenge completion, not response time.
+        let request_started = now().saturating_sub(1);
+        let transport = OfflineTransport {
+            jwks: vec![],
+            hostname: "localhost".into(),
+        };
+        let bytes = transport
+            .request(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
+                Some(vec![
+                    ("secret".into(), "synthetic-harness-secret".into()),
+                    (
+                        "response".into(),
+                        "synthetic-challenge:timing-regression".into(),
+                    ),
+                ]),
+            )
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let completed =
+            chrono::DateTime::parse_from_rfc3339(value["challenge_ts"].as_str().unwrap())
+                .unwrap()
+                .timestamp();
+        assert!(
+            completed <= request_started,
+            "synthetic challenge incorrectly appears in the future"
+        );
+        assert!(request_started - completed < 300);
+    }
 }

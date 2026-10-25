@@ -97,6 +97,11 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
     response.setHeader("cache-control", "no-store");
     const path = request.url;
     try {
+      if (path === "/status" && request.method === "GET") {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ requests: journal, overflow }));
+        return;
+      }
       if (
         (path === "/ics/a" || path === "/ics/b") &&
         request.method === "GET"
@@ -194,6 +199,7 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
       a: `${base}/ics/a`,
       b: `${base}/ics/b`,
       bark: `${base}/bark`,
+      status: `${base}/status`,
     }),
     snapshot: () => ({
       requests: journal.map((item) => ({ ...item })),
