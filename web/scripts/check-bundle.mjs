@@ -10,6 +10,9 @@ const markers = [
   "offline-widget",
   "synthetic_bark_browser_secret",
   "synthetic_browser_bark",
+  "synthetic_system_fixture_key",
+  "ics-a.system.invalid",
+  "same-system-uid",
 ];
 await promisify(execFile)(
   process.execPath,
