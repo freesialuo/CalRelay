@@ -20,9 +20,9 @@
 
 ## 版本、重试与并发
 
-版本 tag 保持不可变：若已有同版本，仅当远端单平台 manifest 的 config digest 与本次测试 image ID 相同才视为幂等成功，否则拒绝覆盖。先推版本并拉取确切 digest 验证，再考虑 `latest`。prerelease 永不更新 `latest`；stable 只允许向更高版本推进，旧版本重跑不降级。既有 latest 必须有唯一可识别的 stable 版本关联，无法判断则停止。
+版本 tag 保持不可变：若已有同版本，仅当远端单平台 manifest 的 config digest 与本次测试 image ID 相同才视为幂等成功，否则拒绝覆盖。先推版本并拉取确切 digest 验证，再考虑 `latest`。prerelease 永不更新 `latest`；stable 只允许向更高版本推进，旧版本重跑不降级。既有 latest 必须有唯一可识别的 stable 版本关联，无法判断则停止。晋级前还会使用同一临时 token 获取仅 pull 的 registry bearer token，先 HEAD 核对已验证版本的确切 digest，再 HEAD 读取 registry 实际 latest；其 digest 必须与 GitHub Packages metadata 的 latest 关联一致。认证、限流、网络、重定向、无效 descriptor 或两者不一致均 fail closed，不写 latest。只有同一 bearer 已能读取已知版本且 latest 明确返回 404，同时 metadata 也无 latest，才允许创建首次 latest；不将错误当作 tag 不存在。
 
-所有本工作流发布 job 使用同一 concurrency group，且不取消运行中的发布。GitHub concurrency 不保证 FIFO，最多保留一个 pending，新的 pending 可能替换旧 pending；被取消的等待任务没有发布。外部发布者不受此锁保护，应由维护者避免并发改写本 package 的 tag。
+所有本工作流发布 job 使用同一 concurrency group，且不取消运行中的发布。GitHub concurrency 不保证 FIFO，最多保留一个 pending，新的 pending 可能替换旧 pending；被取消的等待任务没有发布。外部发布者不受此锁保护，应由维护者避免并发改写本 package 的 tag。registry HEAD 与最终 alias 写入不构成 CAS；本工作流的单发布锁保证自己的发布串行，无法保证外部写入者在检查后的竞争。
 
 最终别名写入之前的失败不更新 latest。网络中断或最终别名写入后的验证失败可能已经产生远端结果，须先检查 registry digest 与 run summary 再重试，不能承诺网络错误下跨版本/别名的原子事务。版本推送成功、后续失败时保留版本供核对，不删除 package/version。
 
@@ -33,3 +33,5 @@
 本地可运行 `python3 -m unittest discover -s tests -v`、`python3 scripts/check_repository.py` 和 actionlint；策略测试使用合成事件/API/制品，不访问真实密钥或推送 registry。真实 Docker 构建与 smoke 必须由 PR 的 `image-build-test` 验证。首次 live 发布、GITHUB_TOKEN 对 private GHCR metadata 的实际访问及 registry 晋级仍需经授权版本发布验证；不能以 mock 通过替代。若关联/权限不满足，失败后由维护者决定后续，不自动改设置或新增 token。
 
 参考：[GitHub 发布 Docker 镜像](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)、[GHCR 权限与默认可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)、[Release 触发](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release)、[Docker 单 manifest 晋级](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)。
+
+Registry 读取依据：[OCI manifest 存在与 digest 检查](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#checking-if-content-exists-in-the-registry)、[Registry bearer 认证协议](https://distribution.github.io/distribution/spec/auth/token/)。

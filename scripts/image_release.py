@@ -3,6 +3,7 @@
 No API mutations, credentials in build arguments, or execution of image code here.
 """
 from dataclasses import dataclass
+import base64
 import hashlib
 import json
 import os
@@ -289,7 +290,56 @@ def verify_remote(docker, digest, expected):
             'Published image contents/platform do not match the tested image.')
 
 
-def publish_bundle(api, docker, context, directory, expected, run_id, attempt, pause):
+
+class Registry:
+    """Read-only GHCR HEAD checks; never infer absence from an auth/network error."""
+    def __init__(self, token, actor):
+        require(bool(token) and bool(actor), 'Registry reads require the existing workflow identity.')
+        self.authorization = 'Basic ' + base64.b64encode((actor + ':' + token).encode()).decode()
+        self.opener = urllib.request.build_opener(NoRedirect())
+
+    def latest_digest(self, known_digest):
+        require(DIGEST.fullmatch(known_digest), 'Invalid known registry digest.')
+        request = urllib.request.Request(
+            'https://ghcr.io/token?service=ghcr.io&scope=repository:freesialuo/calrelay:pull',
+            headers={'Authorization': self.authorization})
+        try:
+            with self.opener.open(request, timeout=15) as response:
+                data = response.read(65537)
+            require(len(data) <= 65536, 'Registry token response exceeds budget.')
+            token = json.loads(data).get('token')
+            require(isinstance(token, str) and token and '\r' not in token and '\n' not in token,
+                    'Invalid registry read token.')
+            media = ('application/vnd.oci.image.manifest.v1+json',
+                     'application/vnd.oci.image.index.v1+json',
+                     'application/vnd.docker.distribution.manifest.v2+json',
+                     'application/vnd.docker.distribution.manifest.list.v2+json')
+
+            def head(reference, missing=False):
+                request = urllib.request.Request(
+                    'https://ghcr.io/v2/freesialuo/calrelay/manifests/' + reference,
+                    method='HEAD', headers={'Authorization': 'Bearer ' + token, 'Accept': ', '.join(media), 'Cache-Control': 'no-cache'})
+                try:
+                    with self.opener.open(request, timeout=15) as response:
+                        digest = response.headers.get('Docker-Content-Digest', '')
+                        require(response.status == 200 and DIGEST.fullmatch(digest)
+                                and response.headers.get_content_type() in media,
+                                'Invalid registry manifest descriptor.')
+                        return digest
+                except urllib.error.HTTPError as error:
+                    if error.code == 404 and missing:
+                        return None
+                    raise
+
+            # First prove this same bearer token can read the known published image.
+            # Only then is latest's 404 evidence of an absent tag, rather than hidden access.
+            require(head(known_digest) == known_digest, 'Registry known-image digest mismatch.')
+            return head('latest', missing=True)
+        except (OSError, ValueError, KeyError, TypeError):
+            raise PolicyError('Registry latest could not be verified; no alias changed or credential fallback.') from None
+
+
+def publish_bundle(api, docker, context, directory, expected, run_id, attempt, pause, latest_digest):
     plan = source_plan(api=api, **context)
     require(plan['publish'], 'This event cannot publish packages.')
     manifest = verify_bundle(directory, plan, expected, run_id, attempt)
@@ -323,6 +373,9 @@ def publish_bundle(api, docker, context, directory, expected, run_id, attempt, p
         require(latest['digest'] == digest, 'Existing latest/version association is inconsistent.')
     promoted = promote_latest(parse_version(version), versions)
     if promoted:
+        actual_latest = latest_digest(digest)
+        require(actual_latest == (latest['digest'] if latest else None),
+                'Registry latest and package metadata disagree; no alias changed.')
         metadata = Path(directory) / 'promotion.json'
         docker('buildx', 'imagetools', 'create', '--prefer-index=false', '--metadata-file', str(metadata),
                '--tag', IMAGE + ':latest', IMAGE + '@' + digest)
@@ -380,7 +433,8 @@ def cli():
     expected = {key: os.environ['EXPECTED_' + key.upper()]
                 for key in ('image_id', 'archive_sha256', 'manifest_sha256')}
     result = publish_bundle(GitHub(os.environ.get('GH_TOKEN')), docker, event_context(), args.bundle,
-                            expected, run_id, attempt, time.sleep)
+                            expected, run_id, attempt, time.sleep,
+                            Registry(os.environ.get('GH_TOKEN'), os.environ.get('GITHUB_ACTOR')).latest_digest)
     note = (f'## Container release {result["version"]}\n\n'
             f'- Image: `{IMAGE}@{result["digest"]}`\n'
             f'- Platform: `linux/amd64`\n- Source: `{result["sha"]}`\n'
