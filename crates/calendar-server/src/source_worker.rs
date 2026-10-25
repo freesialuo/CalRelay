@@ -286,11 +286,35 @@ impl SourceScanner {
                     .refresh_interval_ms
                     .filter(|n| (60_000..=604_800_000).contains(n))
                     .ok_or(SourceScanError::Storage)?;
-                let mono = clock.monotonic_now_ms();
+                let mut mono = clock.monotonic_now_ms();
+                if mono.saturating_sub(started) >= self.limits.budget_ms {
+                    break 'scan SourceRoundEnd::Deadline;
+                }
                 if !self.schedules.contains_key(&summary.source_id)
                     && self.schedules.len() >= self.limits.max_tracked
                 {
-                    return Err(SourceScanError::Capacity);
+                    let ids: Vec<_> = self.schedules.keys().cloned().collect();
+                    let Some(active) = services
+                        .run_task(async |db| db.active_pull_source_ids(&ids).await)
+                        .await
+                    else {
+                        break 'scan SourceRoundEnd::Stopped;
+                    };
+                    let active: std::collections::BTreeSet<_> = active
+                        .map_err(|_| SourceScanError::Storage)?
+                        .into_iter()
+                        .collect();
+                    self.schedules.retain(|id, _| active.contains(id));
+                    progress(SourceProgress::Scanned {
+                        external_degraded: self.schedules.values().any(|s| s.failures > 0),
+                    });
+                    mono = clock.monotonic_now_ms();
+                    if mono.saturating_sub(started) >= self.limits.budget_ms {
+                        break 'scan SourceRoundEnd::Deadline;
+                    }
+                    if self.schedules.len() >= self.limits.max_tracked {
+                        return Err(SourceScanError::Capacity);
+                    }
                 }
                 let entry = self
                     .schedules
@@ -312,11 +336,21 @@ impl SourceScanner {
                     };
                 }
                 if mono >= entry.due {
-                    let Some(result) = services
-                        .run_task(async |db| runner.run(db, &record, clock.utc_now_ms()).await)
+                    let Some(admission) = services
+                        .run_task(async |db| {
+                            if clock.monotonic_now_ms().saturating_sub(started)
+                                >= self.limits.budget_ms
+                            {
+                                return None;
+                            }
+                            Some(runner.run(db, &record, clock.utc_now_ms()).await)
+                        })
                         .await
                     else {
                         break 'scan SourceRoundEnd::Stopped;
+                    };
+                    let Some(result) = admission else {
+                        break 'scan SourceRoundEnd::Deadline;
                     };
                     attempted += 1;
                     let finished = clock.monotonic_now_ms();

@@ -5,7 +5,7 @@ use calendar_server::{source_worker::*, Config, Server, Services};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -831,6 +831,126 @@ async fn timed_out_http_sync_is_bounded_and_keeps_the_trusted_snapshot() -> Resu
     )));
     assert_eq!(http.requests().len(), 2);
     assert_eq!(services.storage.source_state("a").await?, before);
+    services.drain().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn replacing_later_inactive_sources_reclaims_capacity_without_erasing_active_backoff(
+) -> Result {
+    for failed_peer in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let services = service(&dir.path().join("db")).await?;
+        let http = Http::new().await?;
+        if failed_peer {
+            source(&services, "m", SourceMode::Pull, true).await?;
+            http.state.statuses.lock().unwrap().insert("m".into(), 503);
+        }
+        let z = source(&services, "z", SourceMode::Pull, true).await?;
+        let max_tracked = if failed_peer { 2 } else { 1 };
+        let limits = SourceScanLimits::new(
+            1,
+            8,
+            max_tracked,
+            Duration::from_secs(120),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            Duration::from_secs(240),
+        )?;
+        let clock = Time::new();
+        let mut scanner = SourceScanner::new(limits);
+        let runner = http.runner();
+        scanner.round(&services, &runner, &clock, |_| {}).await?;
+        let mut config = z.configuration;
+        config.enabled = false;
+        services
+            .storage
+            .put_source_configuration(
+                "z",
+                ConfigurationCondition::Revision(z.config_revision),
+                config,
+                "test",
+                1000,
+            )
+            .await?;
+        source(&services, "a", SourceMode::Pull, true).await?;
+        let mut progress = vec![];
+        assert_eq!(
+            scanner
+                .round(&services, &runner, &clock, |p| progress.push(p))
+                .await?
+                .attempted,
+            1
+        );
+        assert!(progress.iter().any(|p|matches!(p,SourceProgress::Synchronized{source_id,external_degraded,..} if source_id=="a"&&*external_degraded==failed_peer)));
+        let requests = http.requests();
+        assert_eq!(requests.iter().filter(|(id, _)| id == "a").count(), 1);
+        assert_eq!(requests.iter().filter(|(id, _)| id == "z").count(), 1);
+        assert_eq!(
+            requests.iter().filter(|(id, _)| id == "m").count(),
+            usize::from(failed_peer),
+            "active failed source must retain its backoff"
+        );
+        services.drain().await;
+    }
+    Ok(())
+}
+
+struct MetadataElapsed(AtomicUsize);
+impl Clock for MetadataElapsed {
+    fn utc_now_ms(&self) -> i64 {
+        1000
+    }
+    fn monotonic_now_ms(&self) -> u64 {
+        // Initial and pre-query admission samples fit; the first post-metadata
+        // sample reaches the deadline. SQLite reads remain real, with no sleeps.
+        if self.0.fetch_add(1, Ordering::SeqCst) < 3 {
+            0
+        } else {
+            120000
+        }
+    }
+}
+#[tokio::test]
+async fn metadata_consuming_the_round_budget_never_admits_http_and_preserves_continuation() -> Result
+{
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    let http = Http::new().await?;
+    source(&services, "a", SourceMode::Pull, true).await?;
+    let clock = MetadataElapsed(AtomicUsize::new(0));
+    let runner = http.runner();
+    let mut scanner = SourceScanner::new(limits(8));
+    let round = scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!((round.attempted, round.end), (0, SourceRoundEnd::Deadline));
+    assert!(http.requests().is_empty());
+    assert_eq!(
+        scanner
+            .round(&services, &runner, &clock, |_| {})
+            .await?
+            .attempted,
+        1,
+        "the deferred source must remain discoverable next round"
+    );
+    assert_eq!(http.requests().len(), 1);
+    services.drain().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn schedule_revalidation_query_accepts_its_bound_and_rejects_excess() -> Result {
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    source(&services, "a", SourceMode::Pull, true).await?;
+    let mut ids: Vec<_> = (0..16_382).map(|i| format!("absent_{i}")).collect();
+    ids.push("a".into());
+    ids.push("' OR 1=1--".into());
+    assert_eq!(services.storage.active_pull_source_ids(&ids).await?, ["a"]);
+    ids.push("extra".into());
+    assert!(matches!(
+        services.storage.active_pull_source_ids(&ids).await,
+        Err(IngestionError::Budget)
+    ));
     services.drain().await;
     Ok(())
 }

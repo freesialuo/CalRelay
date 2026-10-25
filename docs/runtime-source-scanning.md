@@ -4,11 +4,11 @@
 
 ## 调度与边界
 
-每页沿用配置发现最多100摘要；每轮最多1–16页、1–64次同步、1ms–120s单调准入预算。游标保存在实例中：尝试数耗尽时只推进到已处理的来源，下轮继续，不跳过当前页剩余来源。完整遍历后从头再扫；并发配置变更不提供跨页快照，下轮收敛。缓存容量显式限制1–16384个活跃 pull 来源，超限返回类型化 Capacity，不能悄悄淘汰失败来源然后忙重试。单实例顺序执行，无无界任务派生或并发；多扫描器竞争仍由原 CAS 防止迟到提交，不声称分布式协调。
+每页沿用配置发现最多100摘要；每轮最多1–16页、1–64次同步、1ms–120s单调准入预算。游标保存在实例中：尝试数耗尽时只推进到已处理的来源，下轮继续，不跳过当前页剩余来源。完整遍历后从头再扫；并发配置变更不提供跨页快照，下轮收敛。缓存容量显式限制1–16384个活跃 pull 来源；满额时先用单个 SQLite 读取快照复核缓存 id，清理已禁用/退休/非 pull/缺失项，保留活跃失败来源的退避。确实超限才返回类型化 Capacity，不能悄悄淘汰失败来源然后忙重试。复核查询使用最多16384个绑定参数且不持久缓存动态语句。单实例顺序执行，无无界任务派生或并发；多扫描器竞争仍由原 CAS 防止迟到提交，不声称分布式协调。
 
 只对 enabled、非退休、pull/ICS/snapshot 配置调用同步；static、push-only、disabled 和 retired 不 fetch。单URL多 calendar 的协议语义尚未冻结，本叶子明确返回 Unsupported 并退避，不任选 calendar、不将局部结果当全源快照。selected 仍是输出选择，不作为是否保存源数据的开关。
 
-进程内期限使用注入 Clock 的单调时间；成功后从操作完成起等待配置周期，失败独立指数退避并封顶。调度等待为1ms–60s且可被停止通知打断；退避基数至少等于扫描等待、上限最多1小时。数量/耗时预算只限制新准入，不中断已准入同步。实际网络/解析/提交继续受既有 RemoteFetchLimits、IcsLimits、SyncLimits 和 SQLite busy 预算限制；HTTP仍在事务外。根装配必须让真实单次同步与等待预算适配 supervisor stall_timeout，不能用等待 timer 伪造进度。
+进程内期限使用注入 Clock 的单调时间；成功后从操作完成起等待配置周期，失败独立指数退避并封顶。调度等待为1ms–60s且可被停止通知打断；退避基数至少等于扫描等待、上限最多1小时。数量/耗时预算只限制新准入，不中断已准入同步；元数据读取后、容量复核后以及取得 task permit 后均复核截止时间，超限不启动同步并保留当前来源续点。实际网络/解析/提交继续受既有 RemoteFetchLimits、IcsLimits、SyncLimits 和 SQLite busy 预算限制；HTTP仍在事务外。根装配必须让真实单次同步与等待预算适配 supervisor stall_timeout，不能用等待 timer 伪造进度。
 
 重启从持久 last_verified_at 重建剩余周期：过去核验时间用 max(0, interval-age)，未来UTC核验时间保守等待一个完整周期；没有可信核验则在有界轮次内首次同步。进程内 UTC 前后跳不改变期限。失败次数/退避不持久化；重启重新从可信核验基线开始，仍受分页、单次同步、顺序并发和轮次等待约束，不假称持久失败调度或 exactly-once GET。
 
@@ -22,10 +22,10 @@
 
 ## 验证与未交付
 
-10项集成测试使用真实 SQLite、真实配置 CRUD、测试专用 RemoteFetcher 到本地模拟 HTTP、注入 UTC/单调时钟和信号 barrier。覆盖周期/304/无条件读取、失败保留/独立退避、重启和未来核验时间、101来源分页、attempt/cache/单调预算、旧 record 网络前拒绝、在途修改/退休、停止排空、HTTP超时与非秘密 credential kind。实际 HttpFetcher 的 TLS/SSRF/认证矩阵在 workspace 原有测试回归；没有生产网络或 loopback 放行开关。
+13项集成测试使用真实 SQLite、真实配置 CRUD、测试专用 RemoteFetcher 到本地模拟 HTTP、注入 UTC/单调时钟和信号 barrier。覆盖周期/304/无条件读取、失败保留/独立退避、重启和未来核验时间、101来源分页、attempt/cache/单调预算、旧 record 网络前拒绝、在途修改/退休、停止排空、HTTP超时与非秘密 credential kind；另覆盖排序靠后的失效缓存回收且保留活跃失败退避、读取阶段耗尽预算后不准入/下轮续扫，以及16384参数查询边界。实际 HttpFetcher 的 TLS/SSRF/认证矩阵在 workspace 原有测试回归；没有生产网络或 loopback 放行开关。
 
-受控去掉 revision pin 与周期准入门槛，分别触发旧配置错误通过及提前轮询的行为断言失败；恢复后通过。夹具遗漏必需 DTSTAMP、退休保留旧核验时间的测试预期和语法错误不计作需求 Red。未运行长时 fuzz/形式证明/真实上游互操作。
+受控去掉 revision pin 与周期准入门槛，分别触发旧配置错误通过及提前轮询的行为断言失败；恢复后通过。自动审核两项 P2 也先观察有效 Red：替换后错误 Capacity；读取耗尽预算后实际(1,Complete)/预期(0,Deadline)，修复后通过。夹具遗漏必需 DTSTAMP、退休保留旧核验时间的测试预期和语法错误不计作需求 Red。未运行长时 fuzz/形式证明/真实上游互操作。
 
 标准 binary 尚未注册扫描器；生产 composition 等 #71 健康基础、认证 owner 的 admin/secret bootstrap 以及配置 owner 后续规则/output/freshness port。此模块不以空配置循环宣称首版已可用。
 
-参考：[已有协调器与网络安全边界](source-coordinator.md)、[来源配置契约](source-configuration.md)、[Tokio watch](https://docs.rs/tokio/1.54.1/tokio/sync/watch/struct.Receiver.html) 的订阅/取消安全语义。
+参考：[已有协调器与网络安全边界](source-coordinator.md)、[来源配置契约](source-configuration.md)、[Tokio watch](https://docs.rs/tokio/1.54.1/tokio/sync/watch/struct.Receiver.html) 的订阅/取消安全语义；通过 Exa 核对 [SQLx 0.9.0 QueryBuilder](https://docs.rs/sqlx/0.9.0/sqlx/struct.QueryBuilder.html) 的绑定参数、SQLite默认32766参数限制与动态语句 persistent(false)，实际16384边界由当前 bundled SQLite 集成测试验证。
