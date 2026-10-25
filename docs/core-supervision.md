@@ -54,7 +54,7 @@
 
 `target/debug/calendar-server healthcheck [live|ready] --deployment-config FILE [--timeout-ms N]` 默认 live。探针不要求数据库环境配置、不打开/迁移存储、不启动服务或 worker。本机数值地址、无代理/重定向、请求总超时，仅 HTTP 200 响应头为成功；不读取或输出响应正文。非 200、协议错误、连接失败或超时非零退出，不依赖 curl。复用锁定 reqwest 0.12.24 与 SQLx 0.9.0，无依赖全量升级。
 
-已普通合并 #82 的部署 JSON/来源 API。`Config::deployment_bind_from_args` 仅从 #82 原有实现提取文件读取与 bind 解析，服务器 `Config::from_args` 和健康命令复用同一函数、同一 strict JSON schema 与 CALRELAY_BIND 拒绝诊断，不另写解析器，不修改配置模型或迁移。健康命令不需要虚构数据库路径。通配监听地址仅在探针客户端映射到同地址族 loopback，零端口/非本机地址拒绝。动态零端口只用于测试服务，测试为探针写入已观察实际端口的临时部署文件。
+已普通合并 #82 部署 JSON/来源 API、#97 提醒配置与 #96 admin bootstrap。`Config::deployment_bind_from_args` 与标准入口 `DeploymentConfig::from_args` 复用同一有界文档读取和 strict JSON 解析（显式 bind、可选 admin），保持 CALRELAY_BIND 拒绝诊断。健康命令只取 bind，不加载 admin 密钥、不验证数据库配置或初始化服务；标准启动完整保留 admin 校验及密钥装配。不另写解析器，不修改配置模型或迁移。通配监听地址仅在探针客户端映射到同地址族 loopback，零端口/非本机地址拒绝。动态零端口只用于测试服务，测试为探针写入已观察实际端口的临时部署文件。
 
 健康专属 `--timeout-ms` 默认 2000，范围 1–120000；非法/重复参数拒绝。监听/健康目标不再读取 CALRELAY_BIND，旧值即使只是残留也给迁移诊断且不回显内容；健康超时不再使用环境变量。没有新增部署配置字段、持久模型、schema 或迁移，其他配置/规则/Bark 契约仍由配置 owner 负责。
 
