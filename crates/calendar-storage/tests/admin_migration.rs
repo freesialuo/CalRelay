@@ -65,7 +65,11 @@ async fn v9_upgrade_and_historical_and_current_backups_keep_checksums_and_data()
             Some(checksum)
         );
     }
-    assert_eq!(history.last().unwrap().0, 12);
+    static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+    assert_eq!(
+        history.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
+        MIGRATIONS.iter().map(|m| m.version).collect::<Vec<_>>()
+    );
     let grant = db
         .create_admin_session("alice", "policy", "challenge", 100, 200)
         .await?;

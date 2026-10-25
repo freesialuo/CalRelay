@@ -1,6 +1,8 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
 pub mod admin;
 pub mod admin_bootstrap;
+mod aggregate_configuration;
+mod aggregate_feed;
 mod config;
 pub mod credentials_bootstrap;
 mod feed;
@@ -8,6 +10,7 @@ mod http;
 mod ingest;
 mod reminder_configuration;
 mod source_configuration;
+pub mod source_worker;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
