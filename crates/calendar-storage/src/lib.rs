@@ -3,6 +3,7 @@
 pub mod admin_sessions;
 pub mod backup;
 pub mod configuration;
+pub mod feed;
 pub mod ingest;
 pub mod reminder_configuration;
 pub mod security;

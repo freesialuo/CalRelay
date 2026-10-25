@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://calrelay.invalid/schemas/feed-scope-v1.schema.json",
+  "title": "CalRelay single-source feed scope (legacy or v1)",
+  "oneOf": [
+    {"type": "object", "maxProperties": 0},
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "calendar_ids", "visible_fields"],
+      "properties": {
+        "version": {"const": 1},
+        "calendar_ids": {
+          "type": "array", "maxItems": 256, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256},
+          "description": "Internal IDs owned by the bound source; empty means no events. Runtime also enforces 256 UTF-8 bytes per ID."
+        },
+        "visible_fields": {
+          "type": "array", "maxItems": 5, "uniqueItems": true,
+          "items": {"enum": ["summary", "description", "location", "url", "categories"]},
+          "description": "Explicit content field allowlist; empty means Busy title and protocol metadata only."
+        }
+      }
+    }
+  ]
+}

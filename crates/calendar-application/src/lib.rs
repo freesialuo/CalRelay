@@ -11,6 +11,9 @@ pub use ingestion::*;
 mod remote;
 pub use remote::*;
 
+mod feed;
+pub use feed::*;
+
 mod security;
 pub use security::*;
 

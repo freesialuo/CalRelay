@@ -36,7 +36,7 @@ async fn get(
         .to_str()
         .unwrap()
         .to_owned();
-    let bytes = to_bytes(response.into_body(), 70_000).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 65_536).await.unwrap();
     let value = if bytes.is_empty() {
         serde_json::Value::Null
     } else {
@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 12);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 13);
     for path in [
         "/health/live",
         "/health/ready",

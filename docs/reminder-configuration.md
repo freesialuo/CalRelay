@@ -23,7 +23,7 @@ request_timeout_ms 为1–120000（现有adapter范围），实际投递仍受�
 
 ## 持久化与失效
 
-唯一新增0012_reminder_configuration.sql。main已有0011；#70保留0008；核对#71/#88/#91无新增迁移。本批不占其他任务文件/部署装配所有权。现有 reminder_rules、outputs、rule_outputs 继续是真相；managed=0 legacy保留原JSON/generation/启停状态，不猜测导入。测试seed现在显式列出 rule_outputs(rule_id,output_id)，新增enabled默认1不会破坏旧库历史；未合并runtime测试也需使用显式列名。
+唯一新增0012_reminder_configuration.sql。基底main已有0011；随后正常合入main233818a的#70/0008与#91，v11有/无0008两种历史均升级校验，核对#71/#88无新增迁移。本批不占其他任务文件/部署装配所有权。现有 reminder_rules、outputs、rule_outputs 继续是真相；managed=0 legacy保留原JSON/generation/启停状态，不猜测导入。测试seed现在显式列出 rule_outputs(rule_id,output_id)，新增enabled默认1不会破坏旧库历史；未合并runtime测试也需使用显式列名。
 
 规则/输出写在BEGIN IMMEDIATE内验证引用与CAS，更新generation、审计和派生查询关系。rule_calendars是既有policy日历集合的事务索引，使runtime无需全表JSON扫描。rule_outputs不删历史绑定；planner和delivery复核enabled。修改规则/绑定或输出使旧pending/retry_wait/leased superseded，停用/退休使其cancelled；保留lease/attempt，以便已经发送的结果返回时如实记录accepted与竞争disposition。accepted任务/逻辑去重不重放，重新规划只建立未accepted的新generation。
 
@@ -44,4 +44,4 @@ freshness：发现不以last_verified_at过滤，明确返回SourceMode与显式
 
 实际参考：[SQLite事务](https://sqlite.org/lang_transaction.html)、[AFTER trigger](https://sqlite.org/lang_createtrigger.html)、[历史外键](https://sqlite.org/foreignkeys.html)。
 
-本批云端验证：Rust workspace/all-features/locked 264 tests、Python 22 tests、fmt、Clippy（all-targets/all-features、-D warnings）、repository/diff检查通过；frontend生成类型逐字比较、lint、tsc、build、bundle canary及系统Chromium21项浏览器测试通过。有效Red包括重复JSON字段曾返回200而非422；受控移除durable send-intent guard后未prepare的输出查询错误成功，恢复后回归通过。另以合成mock secrets覆盖9种修改/停用/轮换与在途accepted竞争、失败回滚和v11迁移/恢复。没有执行真实Bark发送、生产账号/部署或完整管理UI旅程，不把测试消费者当作生产worker已装配。
+本批云端验证：Rust workspace/all-features/locked 285 tests、Python 41 tests、fmt、Clippy（all-targets/all-features、-D warnings）、repository/diff检查通过；frontend生成类型逐字比较、lint、tsc、build、bundle canary及系统Chromium21项浏览器测试通过。有效Red包括重复JSON字段曾返回200而非422；受控移除durable send-intent guard后未prepare的输出查询错误成功，恢复后回归通过。另以合成mock secrets覆盖9种修改/停用/轮换与在途accepted竞争、失败回滚和v11迁移/恢复。没有执行真实Bark发送、生产账号/部署或完整管理UI旅程，不把测试消费者当作生产worker已装配。

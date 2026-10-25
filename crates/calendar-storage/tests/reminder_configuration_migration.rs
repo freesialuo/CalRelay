@@ -1,12 +1,12 @@
 use calendar_storage::{backup, Storage};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
-async fn v11(path: &std::path::Path) -> Result {
+async fn v11(path: &std::path::Path, include_feed: bool) -> Result {
     let migrations = tempfile::tempdir()?;
     for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))? {
         let entry = entry?;
         let version: i64 = entry.file_name().to_string_lossy()[..4].parse()?;
-        if version <= 11 {
+        if version <= 11 && (include_feed || version != 8) {
             std::fs::copy(entry.path(), migrations.path().join(entry.file_name()))?;
         }
     }
@@ -24,12 +24,30 @@ async fn v11(path: &std::path::Path) -> Result {
     conn.close().await?;
     Ok(())
 }
-#[tokio::test]
-async fn v11_upgrade_and_backup_keep_unknown_legacy_configuration_and_accepted_history() -> Result {
+async fn check_v11_upgrade(include_feed: bool) -> Result {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("db");
-    v11(&path).await?;
+    v11(&path, include_feed).await?;
+    let mut old =
+        SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path)).await?;
+    let old_history: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut old)
+            .await?;
+    old.close().await?;
     let db = Storage::open(&path).await?;
+    let history: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(db.pool())
+            .await?;
+    for (version, checksum) in old_history {
+        assert_eq!(
+            history.iter().find(|(v, _)| *v == version).map(|(_, c)| c),
+            Some(&checksum)
+        );
+    }
+    assert!(history.iter().any(|(v, _)| *v == 8));
+    assert!(history.iter().any(|(v, _)| *v == 12));
     let row: (String, bool) =
         sqlx::query_as("SELECT config_json,managed FROM outputs WHERE id='legacy-output'")
             .fetch_one(db.pool())
@@ -59,10 +77,17 @@ async fn v11_upgrade_and_backup_keep_unknown_legacy_configuration_and_accepted_h
     Ok(())
 }
 #[tokio::test]
+async fn v11_upgrade_and_backup_keep_unknown_legacy_configuration_and_accepted_history() -> Result {
+    for include_feed in [false, true] {
+        check_v11_upgrade(include_feed).await?;
+    }
+    Ok(())
+}
+#[tokio::test]
 async fn failed_v12_keeps_original_schema_history_and_records() -> Result {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("db");
-    v11(&path).await?;
+    v11(&path, true).await?;
     let mut conn =
         SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path)).await?;
     sqlx::query("CREATE TABLE reminder_configuration_audit(conflict INTEGER)")
