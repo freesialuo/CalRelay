@@ -32,9 +32,11 @@ pub fn router_with_admin(
     Router::new()
         .route("/api/admin/v1/bootstrap", get(move || { let value=bootstrap.clone(); async move { ([ ("cache-control","no-store") ],Json(value)) } }))
         .merge(crate::ingest::router())
-        .route("/health/live", get(|| async { Json(json!({"status":"live"})) }))
+        .route("/health/live", get(|State(s): State<Arc<Services>>| async move {
+            if s.health.snapshot().live { (StatusCode::OK, Json(json!({"status":"live"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
+        }))
         .route("/health/ready", get(|State(s): State<Arc<Services>>| async move {
-            if s.ready() { (StatusCode::OK, Json(json!({"status":"ready"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
+            if s.health.snapshot().ready { (StatusCode::OK, Json(json!({"status":"ready"}))).into_response() } else { StatusCode::SERVICE_UNAVAILABLE.into_response() }
         }))
         .route("/api/v1/version", get(|| async { Json(json!({"name":"CalRelay", "version":env!("CARGO_PKG_VERSION"), "api_version":"v1"})) }))
         .route("/api/v1/openapi.json", get(|| async { Json(openapi()) }))
