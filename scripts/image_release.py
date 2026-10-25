@@ -299,7 +299,14 @@ class Registry:
         self.opener = urllib.request.build_opener(NoRedirect())
 
     def latest_digest(self, known_digest):
-        require(DIGEST.fullmatch(known_digest), 'Invalid known registry digest.')
+        return self.tag_digest('latest', known_digest)
+
+    def version_digest(self, version):
+        return self.tag_digest(parse_version(version).tag)
+
+    def tag_digest(self, tag, known_digest=None):
+        require(tag == 'latest' or parse_version(tag).tag == tag, 'Invalid registry tag.')
+        require(known_digest is None or DIGEST.fullmatch(known_digest), 'Invalid known registry digest.')
         request = urllib.request.Request(
             'https://ghcr.io/token?service=ghcr.io&scope=repository:freesialuo/calrelay:pull',
             headers={'Authorization': self.authorization})
@@ -333,13 +340,14 @@ class Registry:
 
             # First prove this same bearer token can read the known published image.
             # Only then is latest's 404 evidence of an absent tag, rather than hidden access.
-            require(head(known_digest) == known_digest, 'Registry known-image digest mismatch.')
-            return head('latest', missing=True)
+            if known_digest is not None:
+                require(head(known_digest) == known_digest, 'Registry known-image digest mismatch.')
+            return head(tag, missing=True)
         except (OSError, ValueError, KeyError, TypeError):
-            raise PolicyError('Registry latest could not be verified; no alias changed or credential fallback.') from None
+            raise PolicyError('Registry tag could not be verified; no credential fallback.') from None
 
 
-def publish_bundle(api, docker, context, directory, expected, run_id, attempt, pause, latest_digest):
+def publish_bundle(api, docker, context, directory, expected, run_id, attempt, pause, latest_digest, version_digest):
     plan = source_plan(api=api, **context)
     require(plan['publish'], 'This event cannot publish packages.')
     manifest = verify_bundle(directory, plan, expected, run_id, attempt)
@@ -349,19 +357,28 @@ def publish_bundle(api, docker, context, directory, expected, run_id, attempt, p
     require(len(images) == 1 and inspect_image(images[0], plan) == manifest['image_id'], 'Loaded image mismatch.')
     versions = package_state(api)
     version = plan['version']
-    if version not in versions:
+    digest = version_digest(version)
+    require(digest is None or DIGEST.fullmatch(digest), 'Invalid registry version digest.')
+    stored = versions.get(version)
+    require(stored is None or stored['digest'] == digest,
+            'Registry version and package metadata disagree; version was not overwritten.')
+    if digest is None:
         docker('tag', candidate, IMAGE + ':' + version)
         docker('push', IMAGE + ':' + version)
-        # Metadata may lag the registry. Failure here leaves latest untouched.
-        for retry in range(6):
-            versions = package_state(api)
-            if version in versions:
-                break
-            if retry < 5:
-                pause(2)
-        require(version in versions, 'Version push could not be confirmed; latest was not changed.')
-    digest = versions[version]['digest']
+        digest = version_digest(version)
+        require(digest is not None and DIGEST.fullmatch(digest),
+                'Version push could not be confirmed in the registry; inspect state before retrying.')
+    # Existing registry versions are checked before any push, even if metadata omits them.
     verify_remote(docker, digest, manifest['image_id'])
+    # Metadata may lag a previous successful push. Wait boundedly without repushing.
+    for retry in range(6):
+        versions = package_state(api)
+        if version in versions:
+            break
+        if retry < 5:
+            pause(2)
+    require(versions.get(version, {}).get('digest') == digest,
+            'Version metadata could not be confirmed; latest was not changed.')
     # Re-read source, tag, latest CI and package state immediately before final promotion.
     current = source_plan(api=api, **context)
     require(all(current[k] == plan[k] for k in ('sha', 'version', 'workflow_sha', 'publish')),
@@ -432,9 +449,10 @@ def cli():
         return
     expected = {key: os.environ['EXPECTED_' + key.upper()]
                 for key in ('image_id', 'archive_sha256', 'manifest_sha256')}
+    registry = Registry(os.environ.get('GH_TOKEN'), os.environ.get('GITHUB_ACTOR'))
     result = publish_bundle(GitHub(os.environ.get('GH_TOKEN')), docker, event_context(), args.bundle,
                             expected, run_id, attempt, time.sleep,
-                            Registry(os.environ.get('GH_TOKEN'), os.environ.get('GITHUB_ACTOR')).latest_digest)
+                            registry.latest_digest, registry.version_digest)
     note = (f'## Container release {result["version"]}\n\n'
             f'- Image: `{IMAGE}@{result["digest"]}`\n'
             f'- Platform: `linux/amd64`\n- Source: `{result["sha"]}`\n'

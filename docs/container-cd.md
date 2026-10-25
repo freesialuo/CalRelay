@@ -20,7 +20,7 @@
 
 ## 版本、重试与并发
 
-版本 tag 保持不可变：若已有同版本，仅当远端单平台 manifest 的 config digest 与本次测试 image ID 相同才视为幂等成功，否则拒绝覆盖。先推版本并拉取确切 digest 验证，再考虑 `latest`。prerelease 永不更新 `latest`；stable 只允许向更高版本推进，旧版本重跑不降级。既有 latest 必须有唯一可识别的 stable 版本关联，无法判断则停止。晋级前还会使用同一临时 token 获取仅 pull 的 registry bearer token，先 HEAD 核对已验证版本的确切 digest，再 HEAD 读取 registry 实际 latest；其 digest 必须与 GitHub Packages metadata 的 latest 关联一致。认证、限流、网络、重定向、无效 descriptor 或两者不一致均 fail closed，不写 latest。只有同一 bearer 已能读取已知版本且 latest 明确返回 404，同时 metadata 也无 latest，才允许创建首次 latest；不将错误当作 tag 不存在。
+版本 tag 保持不可变：任何版本 push 前均复用同一个 registry reader 做鉴权 HEAD，不以 Packages metadata 缺项证明不存在。registry 已有版本时，只有其远端单平台 manifest 的 config digest 与本次测试 image ID 完全相同才可复用，否则拒绝覆盖；同源码重建不等于同镜像。只有 registry 鉴权查询明确 404 且 metadata 也无该版本才创建，未知/拒绝/不一致一律停止。部分成功后的重跑不重新 push 已存在版本，而是有界等待 metadata 跟上，仍缺失则保持版本原样并停止。先推版本并拉取确切 digest 验证，再考虑 `latest`。prerelease 永不更新 `latest`；stable 只允许向更高版本推进，旧版本重跑不降级。既有 latest 必须有唯一可识别的 stable 版本关联，无法判断则停止。晋级前还会使用同一临时 token 获取仅 pull 的 registry bearer token，先 HEAD 核对已验证版本的确切 digest，再 HEAD 读取 registry 实际 latest；其 digest 必须与 GitHub Packages metadata 的 latest 关联一致。认证、限流、网络、重定向、无效 descriptor 或两者不一致均 fail closed，不写 latest。只有同一 bearer 已能读取已知版本且 latest 明确返回 404，同时 metadata 也无 latest，才允许创建首次 latest；不将错误当作 tag 不存在。
 
 所有本工作流发布 job 使用同一 concurrency group，且不取消运行中的发布。GitHub concurrency 不保证 FIFO，最多保留一个 pending，新的 pending 可能替换旧 pending；被取消的等待任务没有发布。外部发布者不受此锁保护，应由维护者避免并发改写本 package 的 tag。registry HEAD 与最终 alias 写入不构成 CAS；本工作流的单发布锁保证自己的发布串行，无法保证外部写入者在检查后的竞争。
 

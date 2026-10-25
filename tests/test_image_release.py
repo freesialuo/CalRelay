@@ -222,7 +222,7 @@ class ImageArtifactTests(unittest.TestCase):
             with self.subTest(package=package), self.assertRaises(PolicyError):
                 package_state(self.api)
 
-    def publication(self, *, existing=True, latest=True, failure=None, after_pull=None, live_latest='metadata', metadata_latest=True):
+    def publication(self, *, existing=True, latest=True, failure=None, after_pull=None, live_latest='metadata', metadata_latest=True, live_version='metadata'):
         import json
         from scripts.image_release import PACKAGE, publish_bundle
         registry_digest = 'sha256:' + 'd' * 64
@@ -239,8 +239,11 @@ class ImageArtifactTests(unittest.TestCase):
         self.api.responses[PACKAGE] = {'visibility': 'private', 'repository': {'full_name': REPOSITORY}}
         self.api.responses[PACKAGE + '/versions?per_page=100&page=1'] = versions
         calls = []
+        actual_version = (registry_digest if existing else None) if live_version == 'metadata' else live_version
+        foreign_digest = 'sha256:' + 'f' * 64
 
         def docker(*args):
+            nonlocal actual_version
             calls.append(args)
             if failure and args[0] == failure:
                 raise PolicyError('injected Docker failure')
@@ -248,10 +251,11 @@ class ImageArtifactTests(unittest.TestCase):
                 return json.dumps([self.record])
             if args[:3] == ('buildx', 'imagetools', 'inspect'):
                 return json.dumps({'mediaType': 'application/vnd.oci.image.manifest.v1+json',
-                                   'config': {'digest': DIGEST}})
+                                   'config': {'digest': ('sha256:' + 'c' * 64) if args[-1] == IMAGE + '@' + foreign_digest else DIGEST}})
             if args[0] == 'pull' and after_pull:
                 after_pull(self.api)
             if args[0] == 'push':
+                actual_version = registry_digest
                 versions.append({'name': registry_digest, 'metadata': {'container': {'tags': ['v1.2.3']}}})
             if args[:3] == ('buildx', 'imagetools', 'create'):
                 (self.directory / 'promotion.json').write_text(json.dumps({
@@ -266,8 +270,14 @@ class ImageArtifactTests(unittest.TestCase):
                 raise live_latest
             return (registry_digest if latest else old_digest) if live_latest == 'metadata' else live_latest
 
+        def version_digest(version):
+            self.assertEqual(version, 'v1.2.3')
+            if isinstance(actual_version, Exception):
+                raise actual_version
+            return actual_version
+
         result = publish_bundle(self.api, docker, self.context, self.directory,
-                                self.expected, 123, 1, lambda _: None, latest_digest)
+                                self.expected, 123, 1, lambda _: None, latest_digest, version_digest)
         return result, calls
 
     def test_idempotent_existing_version_never_repushes_or_downgrades_latest(self):
@@ -290,7 +300,7 @@ class ImageArtifactTests(unittest.TestCase):
         calls = []
         with self.assertRaises(PolicyError):
             publish_bundle(self.api, lambda *args: calls.append(args), context,
-                           self.directory, self.expected, 123, 1, lambda _: None, lambda _: None)
+                           self.directory, self.expected, 123, 1, lambda _: None, lambda _: None, lambda _: None)
         self.assertEqual(calls, [])
 
     def test_new_failed_ci_or_moved_tag_blocks_alias_after_image_transfer(self):
@@ -306,6 +316,38 @@ class ImageArtifactTests(unittest.TestCase):
             with self.subTest(change=change.__name__), self.assertRaises(PolicyError):
                 self.publication(latest=False, after_pull=change)
             self.api = API()
+
+    def test_metadata_lag_does_not_overwrite_existing_different_candidate(self):
+        # A previous publication succeeded, but Packages still omits its tag.
+        with self.assertRaises(PolicyError):
+            self.publication(existing=False, latest=False, live_version='sha256:' + 'f' * 64)
+        self.assertFalse(any(c[0] in ('push', 'tag') for c in self.docker_calls))
+
+    def test_partial_success_retry_reuses_existing_image_without_repushing(self):
+        from scripts.image_release import PACKAGE
+
+        def metadata_catches_up(api):
+            api.responses[PACKAGE + '/versions?per_page=100&page=1'].append({
+                'name': 'sha256:' + 'd' * 64,
+                'metadata': {'container': {'tags': ['v1.2.3']}}})
+
+        result, calls = self.publication(existing=False, latest=False,
+                                         live_version='sha256:' + 'd' * 64,
+                                         after_pull=metadata_catches_up)
+        self.assertTrue(result['latest_promoted'])
+        self.assertFalse(any(c[0] in ('push', 'tag') for c in calls))
+
+    def test_unknown_or_missing_registry_version_never_causes_blind_push(self):
+        for existing, state in ((False, PolicyError('registry denied')),
+                                (False, PolicyError('registry timeout')), (True, None)):
+            with self.subTest(existing=existing, state=state), self.assertRaises(PolicyError):
+                self.publication(existing=existing, live_version=state)
+            self.assertFalse(any(c[0] in ('push', 'tag') for c in self.docker_calls))
+
+    def test_metadata_lag_after_partial_success_can_fail_without_repushing(self):
+        with self.assertRaises(PolicyError):
+            self.publication(existing=False, live_version='sha256:' + 'd' * 64)
+        self.assertFalse(any(c[0] in ('push', 'tag') for c in self.docker_calls))
 
     def test_stale_metadata_cannot_roll_actual_latest_back(self):
         # API still reports v1.2.2; the registry is already on v1.2.4.
@@ -371,7 +413,7 @@ class ImageWorkflowTests(unittest.TestCase):
         self.assertFalse(any('check_docker_image.py' in s.get('run', '') for s in publish['steps']))
 
 
-class RegistryLatestTests(unittest.TestCase):
+class RegistryTagTests(unittest.TestCase):
     def registry(self, final, *, known=None, token_status=200):
         import io
         import json
@@ -423,6 +465,18 @@ class RegistryLatestTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(PolicyError):
                 registry.latest_digest(candidate)
             self.assertFalse(any(url.endswith('/latest') for url, _ in calls))
+
+    def test_version_lookup_reuses_authenticated_head_and_only_404_is_absent(self):
+        registry, calls, candidate = self.registry(None)
+        self.assertEqual(registry.version_digest('v1.2.3'), candidate)
+        self.assertEqual([method for _, method in calls], ['GET', 'HEAD'])
+        self.assertTrue(calls[-1][0].endswith('/v1.2.3'))
+        registry, _, _ = self.registry(None, known=404)
+        self.assertIsNone(registry.version_digest('v1.2.3'))
+        for code in (401, 403, 429, 500, 302):
+            registry, _, _ = self.registry(None, known=code)
+            with self.subTest(code=code), self.assertRaises(PolicyError):
+                registry.version_digest('v1.2.3')
 
     def test_auth_network_redirect_and_malformed_digest_are_unknown(self):
         for result in (401, 403, 429, 500, 302, OSError('timeout'), 'not-a-digest'):
