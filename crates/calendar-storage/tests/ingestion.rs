@@ -185,21 +185,46 @@ impl RemoteFetcher for FakeRemote {
         &self,
         req: RemoteFetchRequest,
     ) -> std::result::Result<RemoteFetchOutcome, RemoteFetchError> {
-        self.calls
+        self.calls.lock().unwrap().push((
+            req.url.clone(),
+            req.has_committed_snapshot,
+            req.validators.etag,
+        ));
+        self.replies
             .lock()
             .unwrap()
-            .push((req.url, req.has_committed_snapshot, req.validators.etag));
-        self.replies.lock().unwrap().pop_front().unwrap()
+            .pop_front()
+            .unwrap()
+            .map(|outcome| match outcome {
+                RemoteFetchOutcome::Modified(mut doc) => {
+                    if doc.final_url.is_empty() {
+                        doc.final_url = req.url;
+                    }
+                    RemoteFetchOutcome::Modified(doc)
+                }
+                other => other,
+            })
     }
 }
 fn remote_reply(body: Vec<u8>) -> std::result::Result<RemoteFetchOutcome, RemoteFetchError> {
     Ok(RemoteFetchOutcome::Modified(RemoteDocument {
+        final_url: String::new(),
         body,
         validators: RemoteValidators {
             etag: Some("\"page\"".into()),
             last_modified: None,
         },
     }))
+}
+fn remote_reply_at(
+    body: Vec<u8>,
+    url: &str,
+) -> std::result::Result<RemoteFetchOutcome, RemoteFetchError> {
+    let mut outcome = remote_reply(body)?;
+    if let RemoteFetchOutcome::Modified(doc) = &mut outcome {
+        doc.final_url = url.into();
+    }
+    Ok(outcome)
 }
 #[tokio::test]
 async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Result {
@@ -242,7 +267,10 @@ async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Res
     let remote = Arc::new(FakeRemote {
         replies: std::sync::Mutex::new(VecDeque::from([
             remote_reply(page("a", json!("/v2/pages/2"))),
-            remote_reply(page("b", json!("3"))),
+            remote_reply_at(
+                page("b", json!("3")),
+                "https://calendar.example/redirected/pages/2",
+            ),
             remote_reply(page("c", json!(null))),
         ])),
         calls: Default::default(),
@@ -288,7 +316,7 @@ async fn ac4_real_ics_and_declarative_json_mapping_reach_atomic_storage() -> Res
         assert!(!calls[0].1);
         assert!(calls[0].2.is_none());
         assert_eq!(calls[1].0, "https://calendar.example/v2/pages/2");
-        assert_eq!(calls[2].0, "https://calendar.example/v2/pages/3");
+        assert_eq!(calls[2].0, "https://calendar.example/redirected/pages/3");
         assert!(!calls[1].1);
         assert!(calls[1].2.is_none());
     }

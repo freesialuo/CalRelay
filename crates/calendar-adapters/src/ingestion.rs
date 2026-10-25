@@ -47,14 +47,7 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
             Some(cursor) => base.join(cursor).map_err(|_| E::Adapter)?,
             None => base.clone(),
         };
-        if url.origin() != base.origin()
-            || url.scheme() != "https"
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
-            return Err(E::Adapter);
-        }
+        validate_page_url(&base, &url)?;
         if matches!(self.format, SourceFormat::Ics(_)) && cursor.is_some() {
             return Err(E::InvalidSnapshot);
         }
@@ -117,6 +110,8 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
             RemoteFetchOutcome::NotModified(_) => return Ok(SourcePageOutcome::NotModified),
             RemoteFetchOutcome::Modified(doc) => doc,
         };
+        let page_url = reqwest::Url::parse(&doc.final_url).map_err(|_| E::Adapter)?;
+        validate_page_url(&base, &page_url)?;
         let bytes = doc.body.len();
         // Defense for alternate fetcher implementations; the production transport also bounds bytes.
         if bytes > 8 * 1024 * 1024 {
@@ -199,16 +194,8 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
                 let next = match value.pointer(&mapping.next) {
                     Some(serde_json::Value::Null) => None,
                     Some(serde_json::Value::String(s)) if !s.is_empty() && s.len() <= 8192 => {
-                        let next_url = url.join(s).map_err(|_| E::Adapter)?;
-                        if next_url.origin() != base.origin()
-                            || next_url.scheme() != "https"
-                            || !next_url.username().is_empty()
-                            || next_url.password().is_some()
-                            || next_url.fragment().is_some()
-                            || next_url.as_str().len() > 8192
-                        {
-                            return Err(E::Adapter);
-                        }
+                        let next_url = page_url.join(s).map_err(|_| E::Adapter)?;
+                        validate_page_url(&base, &next_url)?;
                         Some(next_url.to_string())
                     }
                     _ => return Err(E::InvalidSnapshot),
@@ -250,4 +237,17 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
 }
 fn pointer(raw: &str) -> bool {
     raw.len() <= 256 && (raw.is_empty() || raw.starts_with('/'))
+}
+
+fn validate_page_url(base: &reqwest::Url, url: &reqwest::Url) -> Result<(), E> {
+    if url.origin() != base.origin()
+        || url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.as_str().len() > 8192
+    {
+        return Err(E::Adapter);
+    }
+    Ok(())
 }

@@ -259,6 +259,7 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 body.extend_from_slice(&chunk);
             }
             return Ok(RemoteFetchOutcome::Modified(RemoteDocument {
+                final_url: url.to_string(),
                 body,
                 validators,
             }));
@@ -740,10 +741,19 @@ mod network_tests {
         ])
         .await;
         let (client, dns) = fetcher(&server, local(), 64);
-        assert!(matches!(
-            client.fetch(request(server.url.clone())).await,
-            Ok(RemoteFetchOutcome::Modified(_))
-        ));
+        let RemoteFetchOutcome::Modified(doc) =
+            client.fetch(request(server.url.clone())).await.unwrap()
+        else {
+            panic!("expected modified")
+        };
+        assert_eq!(
+            doc.final_url,
+            reqwest::Url::parse(&server.url)
+                .unwrap()
+                .join("/next")
+                .unwrap()
+                .to_string()
+        );
         assert_eq!(dns.calls.load(Ordering::SeqCst), 2);
         // A second resolver lookup within the first connection would rebind to private IP.
         let server = service(vec![(response(200, "", "ok"), false)]).await;

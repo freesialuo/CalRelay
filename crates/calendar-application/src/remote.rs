@@ -21,6 +21,8 @@ pub struct RemoteFetchRequest {
     pub now_ms: i64,
 }
 pub struct RemoteDocument {
+    /// Effective HTTPS URL after validated redirects; use as the base of page-relative links.
+    pub final_url: String,
     pub body: Vec<u8>,
     pub validators: RemoteValidators,
 }

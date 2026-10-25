@@ -38,7 +38,7 @@ JSON 配置：items 为页内数组的 JSON Pointer；fields 是 EventV1 顶层�
 }
 ```
 
-映射固定注入 schema_version=1.0，仅允许明确列出的 EventV1 字段，不支持脚本、模板、类型转换、任意表达式或隐式默认事件身份；映射字段不存在或类型/领域非法则整次失败。指针长度最多 256，字段数受白名单约束，单页最多 10000 事件。next 先相对于返回它的当前页 URL 解析为绝对游标，再校验初始 HTTPS 同源，不能把凭据发到他源或注入 URL userinfo/fragment。
+映射固定注入 schema_version=1.0，仅允许明确列出的 EventV1 字段，不支持脚本、模板、类型转换、任意表达式或隐式默认事件身份；映射字段不存在或类型/领域非法则整次失败。指针长度最多 256，字段数受白名单约束，单页最多 10000 事件。next 先相对于返回它的最终响应 URL（含同源重定向）解析为绝对游标，再校验初始 HTTPS 同源，不能把凭据发到他源或注入 URL userinfo/fragment。
 
 ## 新鲜度与投递
 
@@ -56,6 +56,8 @@ SourceState::push_ready 提供 enabled/last_verified_at 的保守诊断；实际
 Red：SourceRepository 占位实现下，两个协调验收测试分别以 Unavailable 与预期 304 分类不符失败；实现后通过，扩充至 7 项协调集成测试。受控把缺失分页结束标记改成 None，端到端测试捕获 `Ok(Committed(...changed_events:2))` 而预期 InvalidSnapshot 的误删除；恢复生产实现。未运行长时 fuzz/模型检查或真实外部来源。
 
 PR #57 review 回归：三页链 `/api/events` → `/v2/pages/2` → `3` 在旧实现中实际请求 `/api/3`，与预期 `/v2/pages/3` 的 URL 断言失败；修复为当前页相对解析后通过。另验证跨源、HTTP 降级、userinfo 和 fragment 下一页均在提交前拒绝且保留来源状态。
+
+第二轮 review 补充重定向路径变化回归：请求 `/v2/pages/2` 最终响应位于 `/redirected/pages/2`，其 `next: "3"` 应访问 `/redirected/pages/3`。旧实现请求 `/v2/pages/3` 的断言失败后，RemoteDocument 增加 final_url，真实 TLS 重定向测试验证该字段，适配器校验最终 URL 并以它解析下一页。
 
 ## 实现参考
 
