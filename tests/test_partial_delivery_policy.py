@@ -151,7 +151,7 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
     def test_multiline_code_spans_cannot_supply_partial_fields(self):
         for ticks in ('`', '``', '```'):
             other = '``' if ticks == '`' else '`'
-            for middle in ('', 'literal ' + other + ' tick\n', '<!-- comment -->\n', '\x00\n'):
+            for middle in ('', 'literal ' + other + ' tick\n', 'within <!-- comment -->\n', '\x00\n'):
                 with self.subTest(ticks=ticks, middle=middle):
                     pr = deepcopy(self.pr)
                     span = 'prefix ' + ticks + 'opening\n' + middle + self.pr['body'] + 'closing ' + ticks
@@ -173,6 +173,20 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
                     pr = deepcopy(self.pr)
                     pr['body'] = quote + separator + self.pr['body']
                     self.assertEqual(validate_metadata(pr), ([], 36))
+
+    def test_comment_fences_cannot_suppress_real_declarations(self):
+        for char in ('`', '~'):
+            for partial in (False, True):
+                with self.subTest(char=char, partial=partial):
+                    pr = deepcopy(self.pr)
+                    fields = self.pr['body'] if partial else 'Closes #36'
+                    pr['body'] = '<!--\n' + char * 3 + 'text\nexample only\n-->\n\n' + fields
+                    self.assertEqual(validate_metadata(pr), ([], 36))
+                    # Inside a real code block, comment markers are literal text.
+                    pr['body'] = char * 3 + 'text\n<!--\n' + char * 3 + '\n' + fields
+                    self.assertEqual(validate_metadata(pr), ([], 36))
+        self.pr['body'] = '<!-- unclosed\n' + self.pr['body']
+        self.assertTrue(validate_metadata(self.pr)[0])
 
     def test_full_delivery_still_requires_visible_branch_closing(self):
         for body in ('Refs #36\nCloses #86', '<!-- Closes #36 -->',

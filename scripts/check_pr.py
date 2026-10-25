@@ -63,13 +63,20 @@ def mask_inlines(text):
 def visible_body(body):
     """Recognize prose metadata without rendering Markdown or creating new text."""
     body = body.replace('\0', '\ufffd').replace('\r\n', '\n').replace('\r', '\n')
-    lines, fence, quoted = [], None, False
+    lines, fence, quoted, comment = [], None, False, False
     for line in body.split('\n'):
         marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
         if fence:
             if (marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence)
                     and not marker[2].strip(' \t')):
                 fence = None
+            lines.append('\0')
+        elif comment:
+            comment = '-->' not in line
+            lines.append('\0')
+        elif re.match(r'^ {0,3}<!--', line):
+            quoted = False
+            comment = '-->' not in line
             lines.append('\0')
         elif not line.strip(' \t'):
             quoted = False
