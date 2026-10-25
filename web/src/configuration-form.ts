@@ -154,7 +154,8 @@ export function configurationForm<K extends Kind>(
       for (const id of selectedCalendars) {
         const c = check(picked, `日历 ${id}`, true);
         c.onchange = () => {
-          if (!c.checked) selectedCalendars.delete(id);
+          if (c.checked) selectedCalendars.add(id);
+          else selectedCalendars.delete(id);
           syncCalendarOptions();
         };
       }
@@ -175,7 +176,8 @@ export function configurationForm<K extends Kind>(
         for (const id of calendars) {
           const c = check(group, `日历 ${id}`, true);
           c.onchange = () => {
-            if (!c.checked) calendars.delete(id);
+            if (c.checked) calendars.add(id);
+            else calendars.delete(id);
             syncCalendarOptions();
           };
         }
@@ -361,7 +363,8 @@ export function configurationForm<K extends Kind>(
       for (const id of outputIds) {
         const c = check(selected, `输出 ${id}`, true);
         c.onchange = () => {
-          if (!c.checked) outputIds.delete(id);
+          if (c.checked) outputIds.add(id);
+          else outputIds.delete(id);
           const option = outputInputs.get(id);
           if (option) option.checked = outputIds.has(id);
         };

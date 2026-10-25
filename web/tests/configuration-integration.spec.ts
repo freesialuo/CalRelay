@@ -591,10 +591,21 @@ test("real CLI handle, output and rule lifecycle use generation CAS across pages
     page.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeDisabled();
   await reauthenticate(page);
+  for (const title of [`日历 ${s.calendar}`, `输出 ${outputId}`]) {
+    const chosen = page.getByLabel(title, { exact: true });
+    await chosen.uncheck();
+    await chosen.check();
+    await expect(chosen).toBeChecked();
+  }
   await page.getByLabel("启用配置").uncheck();
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect(status(page)).toContainText("配置版本 3");
   expect(reminderState("rules", ruleId).enabled).toBe(0);
+  const savedRule = await (
+    await page.request.get(`/api/admin/v1/rules/${ruleId}`)
+  ).json();
+  expect(savedRule.configuration.policy.calendar_ids).toEqual([s.calendar]);
+  expect(savedRule.configuration.output_ids).toEqual([outputId]);
   await page.setViewportSize({ width: 375, height: 812 });
   expect(
     await page.evaluate(
@@ -713,4 +724,31 @@ test("untrusted capability receipt cannot inject an external URL or claim save c
   await expect(
     page.getByRole("button", { name: "保存禁用订阅", exact: true }),
   ).toBeDisabled();
+});
+
+test("rechecked picked subscription calendar remains selected in the real saved configuration", async ({
+  page,
+}) => {
+  await login(page);
+  const s = await source(page);
+  const id = await subscriptionDraft(page);
+  await page.getByRole("button", { name: "读取来源选项", exact: true }).click();
+  await page.getByLabel("选择来源", { exact: true }).selectOption(s.id);
+  await page
+    .getByRole("button", { name: "读取此来源日历", exact: true })
+    .click();
+  await page
+    .getByLabel(`选择日历 primary · ${s.calendar}`, { exact: true })
+    .check();
+  await saveSubscription(page);
+  await dismissSecret(page);
+  const chosen = page.getByLabel(`日历 ${s.calendar}`, { exact: true });
+  await chosen.uncheck();
+  await chosen.check();
+  await expect(chosen).toBeChecked();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(status(page)).toContainText("配置版本 2");
+  expect(persisted(id).configuration.sources).toEqual([
+    { source_id: s.id, calendar_ids: [s.calendar] },
+  ]);
 });
