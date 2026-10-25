@@ -28,7 +28,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = config.initialize().await?;
+    let server = calendar_server::production_runtime::initialize(config).await?;
     let listener = server.bind().await?;
     eprintln!("CalRelay listening on {}", listener.local_addr()?);
     server

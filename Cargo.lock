@@ -309,6 +309,7 @@ dependencies = [
  "base64 0.22.1",
  "calendar-adapters",
  "calendar-application",
+ "calendar-domain",
  "calendar-storage",
  "chrono",
  "jsonschema",

@@ -1,6 +1,6 @@
 # Docker 交付基础（#105 / #38）
 
-本叶子提供真实 Rust 标准 binary + 构建 TS 静态页面的单镜像基础。它不代表 #75/#78 的生产业务循环、首次凭据初始化或完整 UI 旅程已经验收。恢复监督器、持续 unhealthy 后的外部终止、Engine stop/kill/manual-stop 竞争、arm64 实际运行、扫描/SBOM 和备份升级演练仍由 #38 跟踪。
+本叶子提供真实 Rust 标准 binary + 构建 TS 静态页面的单镜像基础，现已同步正式 source/planner/delivery 三工作器装配。它不代表 #75/#78 的真实账号、完整 UI 业务旅程或外部投递闭环已经验收。恢复监督器、持续 unhealthy 后的外部终止、Engine stop/kill/manual-stop 竞争、arm64 实际运行、扫描/SBOM 和备份升级演练仍由 #38 跟踪。
 
 ## 构建与配置
 
@@ -42,7 +42,7 @@ CD 构建接口：context 为仓库根 `.`，file 为根 `Dockerfile`，最终 t
 python3 scripts/check_docker_image.py calrelay:local
 ```
 
-脚本只创建带随机本任务前缀的容器与 named volumes，使用完整实际 admin/credentials 配置、合成身份/32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟/禁用鉴权，验证缺失管理身份真实拒绝，不 seed 业务源、不发送 Bark、不连接生产账号。当前 runtime 未组合时应观察 ready=503；后续真实组合可为 200，测试不会伪造 readiness。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
+脚本只创建带随机本任务前缀的容器与 named volumes，使用完整实际 admin/credentials 配置、合成身份/32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟/禁用鉴权，验证缺失管理身份真实拒绝，不 seed 业务源、不发送 Bark、不连接生产账号。新建且非恢复暂停的数据卷必须在有限启动期限内达到 ready=200，重开后亦然；503 不能冒充成功。该值由正式三工作器的实际操作/HTTP/DB健康决定，不注入模拟进度。恢复暂停造成 ready=false 属于另一个显式恢复场景，live仍应正常，不能为通过此 fresh-start smoke 自动 resume/cutoff。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
 
 镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地常规多阶段 Dockerfile 网络构建尚未完成，arm64 亦未验证，index 存在 arm64 不等于已验收。
 

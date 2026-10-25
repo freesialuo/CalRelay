@@ -9,6 +9,7 @@ pub mod delivery_worker;
 mod feed;
 mod http;
 mod ingest;
+pub mod production_runtime;
 mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
@@ -147,7 +148,10 @@ impl Server {
                 credential_keys: OnceLock::new(),
                 health: Arc::new(supervision::Health::new(supervision)),
                 ingest_policy,
-                delivery_policy: DeliveryPolicy::default(),
+                delivery_policy: DeliveryPolicy {
+                    tzdata_version: calendar_domain::TZDB_VERSION.into(),
+                    ..DeliveryPolicy::default()
+                },
                 ics_limits: IcsLimits::default(),
                 stopping: AtomicBool::new(false),
                 tasks: RwLock::new(()),

@@ -12,7 +12,28 @@ export async function startService() {
     new URL("../../target/debug/calendar-server", import.meta.url),
   );
   const deployment = join(directory, "deployment.json");
-  await writeFile(deployment, JSON.stringify({ bind: "127.0.0.1:0" }));
+  const key = join(directory, "synthetic-master-key");
+  const secret = join(directory, "synthetic-turnstile-secret");
+  await writeFile(key, Buffer.alloc(32, 71));
+  await writeFile(secret, "synthetic-turnstile");
+  await writeFile(
+    deployment,
+    JSON.stringify({
+      bind: "127.0.0.1:0",
+      credentials: { current_key_version: 1, key_files: { 1: key } },
+      admin: {
+        team: "synthetic-team",
+        audience: "synthetic-aud",
+        origin: "https://admin.example.test",
+        hostname: "admin.example.test",
+        action: "admin-login",
+        site_key: "synthetic-site",
+        administrators: { "synthetic-sub": "admin@example.test" },
+        session_seconds: 120,
+        turnstile_secret_file: secret,
+      },
+    }),
+  );
   const child = spawn(binary, ["--deployment-config", deployment], {
     env: {
       CALRELAY_DATABASE: join(directory, "test.sqlite"),
