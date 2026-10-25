@@ -12,7 +12,7 @@ use std::{
 };
 const ERROR: ConfigError = ConfigError("invalid controlled test runtime input");
 
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseMode {
     #[default]
@@ -144,9 +144,14 @@ fn validate_root(root: &Path) -> Result<(), ConfigError> {
             return Err(ERROR);
         }
     }
+    #[cfg(unix)]
+    {
+        Ok(())
+    }
     #[cfg(not(unix))]
-    return Err(ERROR);
-    Ok(())
+    {
+        Err(ERROR)
+    }
 }
 fn controlled_path(root: &Path, path: &Path) -> Result<(), ConfigError> {
     validate_root(root)?;
@@ -171,7 +176,7 @@ fn controlled_path(root: &Path, path: &Path) -> Result<(), ConfigError> {
     }
     Ok(())
 }
-#[derive(Clone, Copy, Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ClockFrame {
     pub utc_now_ms: i64,
