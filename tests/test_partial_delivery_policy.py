@@ -114,6 +114,52 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
         self.pr['body'] += '\n<!-- Closes #36 -->'
         self.assertTrue(validate_metadata(self.pr)[0])
 
+    def test_ignored_markdown_cannot_manufacture_a_closing_reference(self):
+        for gap in ('`example`', '<!-- example -->', '\n```\nexample\n```\n',
+                    '\n~~~\nexample\n~~~\n', '\n> example\n', '\n    example\n'):
+            for partial in (False, True):
+                with self.subTest(gap=gap, partial=partial):
+                    pr = deepcopy(self.pr)
+                    if partial:
+                        pr['body'] = pr['body'].replace('Closes #86', 'Closes ' + gap + ' #86')
+                    else:
+                        pr['body'] = 'Closes ' + gap + ' #36'
+                    self.assertTrue(validate_metadata(pr)[0])
+        for reason in ('<!-- hidden -->', '`hidden`'):
+            pr = deepcopy(self.pr)
+            pr['body'] = pr['body'].replace('production runtime integration', reason)
+            self.assertTrue(validate_metadata(pr)[0])
+
+    def test_fence_close_requires_matching_length_and_only_horizontal_space(self):
+        fields = self.pr['body']
+        for char in ('`', '~'):
+            opener = char * 4 + 'text'
+            bad = (char * 4 + 'not-a-close', char * 5 + ' trailing', char * 3,
+                   ('~' if char == '`' else '`') * 4, '    ' + char * 4,
+                   char * 4 + '\u00a0', char * 4 + '\v')
+            for closer in bad:
+                with self.subTest(char=char, closer=closer):
+                    pr = deepcopy(self.pr)
+                    pr['body'] = opener + '\nignored\n' + closer + '\n' + fields
+                    self.assertTrue(validate_metadata(pr)[0])
+            for closer in (char * 4, char * 5, '   ' + char * 4 + ' \t'):
+                with self.subTest(char=char, closer=closer):
+                    pr = deepcopy(self.pr)
+                    pr['body'] = opener + '\nignored\n' + closer + '\n' + fields
+                    self.assertEqual(validate_metadata(pr), ([], 36))
+
+    def test_multiline_code_spans_cannot_supply_partial_fields(self):
+        for ticks in ('`', '``', '```'):
+            other = '``' if ticks == '`' else '`'
+            for middle in ('', 'literal ' + other + ' tick\n', '<!-- comment -->\n', '\x00\n'):
+                with self.subTest(ticks=ticks, middle=middle):
+                    pr = deepcopy(self.pr)
+                    span = 'prefix ' + ticks + 'opening\n' + middle + self.pr['body'] + 'closing ' + ticks
+                    pr['body'] = span
+                    self.assertTrue(validate_metadata(pr)[0])
+                    pr['body'] = span + '\n' + self.pr['body']
+                    self.assertEqual(validate_metadata(pr), ([], 36))
+
     def test_full_delivery_still_requires_visible_branch_closing(self):
         for body in ('Refs #36\nCloses #86', '<!-- Closes #36 -->',
                      '```\nCloses #36\n```', '> Closes #36'):

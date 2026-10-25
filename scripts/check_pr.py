@@ -24,23 +24,61 @@ REMAINING = re.compile(
 )
 
 
+def masked(text):
+    # Preserve line boundaries, and never join two formerly separated tokens.
+    return '\0' + '\n' * text.count('\n') + '\0'
+
+
+def mask_inlines(text):
+    """Mask comments and equal-length backtick spans, including multiline spans."""
+    result, i = [], 0
+    while i < len(text):
+        if text.startswith('<!--', i):
+            end = text.find('-->', i + 4)
+            end = len(text) if end < 0 else end + 3
+            result.append(masked(text[i:end]))
+            i = end
+        elif text[i] == '\\':
+            result.append(text[i:i + 2])
+            i += 2
+        elif text[i] == '`':
+            end = i + 1
+            while end < len(text) and text[end] == '`':
+                end += 1
+            boundary = re.search(r'\0|\n[ \t]*\n', text[end:])
+            limit = len(text) if boundary is None else end + boundary.start()
+            closing = re.compile(r'(?<!`)`{' + str(end - i) + r'}(?!`)').search(text, end, limit)
+            if closing:
+                result.append(masked(text[i:closing.end()]))
+                i = closing.end()
+            else:
+                result.append(text[i:end])  # Unmatched backticks are literal text.
+                i = end
+        else:
+            result.append(text[i])
+            i += 1
+    return ''.join(result)
+
+
 def visible_body(body):
-    """Policy fields must be readable prose, not comments, code, or quotations."""
-    body = re.sub(r'<!--.*?(?:-->|\Z)', '', body, flags=re.DOTALL)
+    """Recognize prose metadata without rendering Markdown or creating new text."""
+    body = body.replace('\0', '\ufffd').replace('\r\n', '\n').replace('\r', '\n')
     lines, fence = [], None
-    for line in body.splitlines():
-        marker = re.match(r'^ {0,3}(`{3,}|~{3,})', line)
+    for line in body.split('\n'):
+        marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
         if fence:
-            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+            if (marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence)
+                    and not marker[2].strip(' \t')):
                 fence = None
-            continue
-        if marker:
+            lines.append('\0')
+        elif marker and not (marker[1][0] == '`' and '`' in marker[2]):
             fence = marker[1]
-            continue
-        if line.startswith(('    ', '\t')) or line.lstrip().startswith('>'):
-            continue
-        lines.append(re.sub(r'`+[^`]*`+', '', line).strip())
-    return '\n'.join(lines)
+            lines.append('\0')
+        elif line.startswith(('    ', '\t')) or line.lstrip().startswith('>'):
+            lines.append('\0')
+        else:
+            lines.append(line)
+    return '\n'.join(line.strip() for line in mask_inlines('\n'.join(lines)).split('\n'))
 
 
 def delivery_fields(pr):
@@ -94,7 +132,8 @@ def validate_metadata(pr):
         if len(closing) != 1 or issue in closing:
             errors.append('Partial delivery must close exactly one different leaf Issue.')
         remaining_lines = re.findall(r'^Remaining AC:[^\n]*$', body, re.IGNORECASE | re.MULTILINE)
-        if len(remaining_lines) != 1 or len(remaining) != 1 or int(remaining[0][0]) != issue:
+        if (len(remaining_lines) != 1 or len(remaining) != 1 or int(remaining[0][0]) != issue
+                or not remaining[0][2].replace('\0', '').strip()):
             errors.append('Partial delivery must list Remaining AC for the branch Issue with a reason.')
     elif issue is not None and issue not in closing:
         errors.append('Body must include a closing keyword for the branch Issue.')
