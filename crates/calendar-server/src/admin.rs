@@ -20,9 +20,9 @@ use std::{
 const COOKIE: &str = "__Host-calrelay_admin";
 #[derive(Clone)]
 pub struct AdminState {
-    services: Arc<Services>,
+    pub(crate) services: Arc<Services>,
     verifier: Arc<CloudflareVerifier>,
-    clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub(crate) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 impl AdminState {
     pub fn new(services: Arc<Services>, verifier: Arc<CloudflareVerifier>) -> Self {
@@ -234,11 +234,16 @@ pub fn router(state: AdminState) -> Router {
     let protected = protect(state.clone(), Router::new().route("/api/admin/v1/session",get(|| async { StatusCode::NO_CONTENT }).delete(|| async {
         (StatusCode::NO_CONTENT,[("set-cookie","__Host-calrelay_admin=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")])
     })));
+    let sources = protect(
+        state.clone(),
+        crate::source_configuration::routes().with_state(state.clone()),
+    );
     Router::new()
         .route("/api/admin/v1/session", post(login))
         .with_state(state)
         .merge(protected)
-        .layer(DefaultBodyLimit::max(4096))
+        .merge(sources)
+        .layer(DefaultBodyLimit::max(65_536))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
                 let mut response = next.run(request).await;

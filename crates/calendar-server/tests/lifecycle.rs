@@ -11,7 +11,7 @@ fn config(path: &std::path::Path) -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         database: path.into(),
         max_request_bytes: 64,
-        max_response_bytes: 16_384,
+        max_response_bytes: 32_768,
         request_timeout: Duration::from_secs(1),
     }
 }
@@ -36,7 +36,7 @@ async fn get(
         .to_str()
         .unwrap()
         .to_owned();
-    let bytes = to_bytes(response.into_body(), 20_000).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 40_000).await.unwrap();
     let value = if bytes.is_empty() {
         serde_json::Value::Null
     } else {
@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 6);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 7);
     for path in [
         "/health/live",
         "/health/ready",
@@ -221,7 +221,7 @@ async fn shutdown_blocks_new_claims_and_drains_committing_transaction() {
 
 #[test]
 fn invalid_configuration_is_rejected_without_secrets_in_diagnostics() {
-    assert!(Config::from_lookup(|_| None).is_err());
+    assert!(Config::from_deployment(b"{}", |_| None).is_err());
     for (key, value) in [
         ("CALRELAY_BIND", "secret-invalid"),
         ("CALRELAY_DATABASE", ""),
@@ -229,11 +229,9 @@ fn invalid_configuration_is_rejected_without_secrets_in_diagnostics() {
         ("CALRELAY_MAX_RESPONSE_BYTES", "511"),
         ("CALRELAY_REQUEST_TIMEOUT_MS", "0"),
     ] {
-        let result = Config::from_lookup(|name| {
+        let result = Config::from_deployment(br#"{"bind":"127.0.0.1:0"}"#, |name| {
             Some(if name == key {
                 value.to_owned()
-            } else if name == "CALRELAY_BIND" {
-                "127.0.0.1:0".into()
             } else if name == "CALRELAY_DATABASE" {
                 "service.db".into()
             } else {
