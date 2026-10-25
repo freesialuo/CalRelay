@@ -28,6 +28,10 @@ pub fn router_with_admin(
     admin: Option<crate::admin::AdminState>,
 ) -> Router {
     let bootstrap = crate::admin::bootstrap(admin.as_ref());
+    #[cfg(feature = "production-web")]
+    let assets = crate::web::router();
+    #[cfg(not(feature = "production-web"))]
+    let assets = Router::new();
     let management = admin.map(crate::admin::router).unwrap_or_default();
     Router::new()
         .route("/api/admin/v1/bootstrap", get(move || { let value=bootstrap.clone(); async move { ([ ("cache-control","no-store") ],Json(value)) } }))
@@ -45,6 +49,7 @@ pub fn router_with_admin(
         .merge(crate::feed::router(services.clone(), config.max_response_bytes))
         .merge(crate::aggregate_feed::router(services, config.max_response_bytes))
         .merge(management)
+        .merge(assets)
         .layer(middleware::from_fn_with_state(config, boundary))
 }
 

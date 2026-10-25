@@ -4,6 +4,7 @@ pub mod admin_bootstrap;
 mod aggregate_configuration;
 mod aggregate_feed;
 mod config;
+pub mod credentials_bootstrap;
 pub mod delivery_worker;
 mod feed;
 mod http;
@@ -12,6 +13,8 @@ mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
 pub mod supervision;
+#[cfg(feature = "production-web")]
+mod web;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
@@ -21,7 +24,7 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 use tokio::{
@@ -45,6 +48,7 @@ pub enum StartError {
 /// entire bounded application operation, including its final short transaction.
 pub struct Services {
     pub storage: Storage,
+    credential_keys: OnceLock<Arc<calendar_storage::security::KeyRing>>,
     pub health: Arc<supervision::Health>,
     pub ingest_policy: calendar_application::IngestPolicy,
     pub delivery_policy: DeliveryPolicy,
@@ -55,6 +59,17 @@ pub struct Services {
     force_cancel: watch::Sender<bool>,
 }
 impl Services {
+    pub fn credential_provider(
+        self: &Arc<Self>,
+    ) -> Result<credentials_bootstrap::RuntimeCredentialProvider, calendar_application::SecurityError>
+    {
+        self.credential_keys
+            .get()
+            .ok_or(calendar_application::SecurityError::MissingKey)?;
+        Ok(credentials_bootstrap::RuntimeCredentialProvider {
+            services: self.clone(),
+        })
+    }
     /// Business task admission; HTTP readiness is evaluated by `health.snapshot()`.
     pub fn ready(&self) -> bool {
         !self.stopping.load(Ordering::SeqCst)
@@ -129,6 +144,7 @@ impl Server {
             workers: Vec::new(),
             services: Arc::new(Services {
                 storage,
+                credential_keys: OnceLock::new(),
                 health: Arc::new(supervision::Health::new(supervision)),
                 ingest_policy,
                 delivery_policy: DeliveryPolicy::default(),
@@ -139,6 +155,16 @@ impl Server {
                 force_cancel,
             }),
         })
+    }
+    pub fn with_credential_keys(
+        self,
+        keys: calendar_storage::security::KeyRing,
+    ) -> Result<Self, ConfigError> {
+        self.services
+            .credential_keys
+            .set(Arc::new(keys))
+            .map_err(|_| ConfigError("credential keys already configured"))?;
+        Ok(self)
     }
     pub async fn bind(&self) -> Result<TcpListener, StartError> {
         Ok(TcpListener::bind(self.config.bind).await?)
