@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import {
@@ -13,7 +13,12 @@ import {
 } from "./support/journey";
 import { logicalEndpoints } from "./system/fixtures.mjs";
 
-function state(): { database: string; fixture_status: string } {
+function state(): {
+  database: string;
+  fixture_status: string;
+  clock_file?: string;
+  initial_utc?: number;
+} {
   return JSON.parse(
     readFileSync(
       fileURLToPath(new URL("../.test-admin-state.json", import.meta.url)),
@@ -100,6 +105,21 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       { timeout: 10000, intervals: [100, 250, 500] },
     )
     .toEqual({ events: 2, watermarks: 2 });
+  const clock = state();
+  function frame(utc: number) {
+    if (!clock.clock_file) throw new Error("Missing controlled clock");
+    const next = `${clock.clock_file}.next`;
+    writeFileSync(
+      next,
+      JSON.stringify({ utc_now_ms: utc, monotonic_offset_ms: 61000 }),
+      { flag: "wx", mode: 0o600 },
+    );
+    renameSync(next, clock.clock_file);
+  }
+  if (clock.clock_file && clock.initial_utc !== undefined) {
+    expect(observed().accepted).toBe(0); // Frozen before the two event starts.
+    frame(clock.initial_utc + 61000);
+  }
   await expect
     .poll(observed, { timeout: 75000, intervals: [100, 250, 500] })
     .toMatchObject({
@@ -123,6 +143,32 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       })
     ).status(),
   ).toBe(304);
+  if (clock.clock_file && clock.initial_utc !== undefined) {
+    // Cached conditional responses still enforce future verified_at after a UTC rewind.
+    frame(clock.initial_utc - 1000);
+    await expect
+      .poll(
+        async () =>
+          (
+            await request.get(capability, {
+              headers: { "if-none-match": feed.headers().etag },
+            })
+          ).status(),
+        { timeout: 3000 },
+      )
+      .toBe(503);
+    expect(observed().accepted).toBe(2);
+    // Management authentication keeps real UTC despite business time movement.
+    expect((await page.request.get("/api/admin/v1/sources")).status()).toBe(
+      200,
+    );
+    frame(clock.initial_utc + 61000);
+    await expect
+      .poll(async () => (await request.get(capability)).status(), {
+        timeout: 3000,
+      })
+      .toBe(200);
+  }
   const network = await (await request.get(state().fixture_status)).json();
   expect(
     network.requests.filter(

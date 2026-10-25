@@ -57,7 +57,7 @@ npm run test:fixtures
 
 依据：[RFC5545](https://www.rfc-editor.org/rfc/rfc5545) 的内容行、UID/SEQUENCE/STATUS；[RFC9110](https://www.rfc-editor.org/rfc/rfc9110.html) 的条件读取/304语义。
 
-## #116：已运行的首条成功链（主线#112组合）
+## #116：已运行的首条成功链（主线#112/#117组合）
 
 #112已合入 main `0067635`，实际 `Server::with_test_runtime_ports(runner,output)` 仅在 test-harness feature 提供；不再把该入口缺失作为当前阻塞。上文矩阵第1/2步的最小harness成功链已本地运行：浏览器经真实HTTPS/HTTP CSP、合成签名验证guard/CSRF/Origin/nonce，使用正式CLI加密handle配置两路pull ICS、输出、规则及汇总订阅；真实IcsSourceRunner/共享scanner/planner/delivery循环在SQLite提交2个event、2个watermark、2次accepted和2个accepted logical，聚合返回两个不同导出UID且条件GET304。其余矩阵步骤没有由这一结果自动通过，生产镜像全链仍UNVERIFIED。
 
@@ -67,14 +67,17 @@ npm run test:fixtures
 cd web
 npm run build
 npm run test:system
+npm run test:system:clock
 ```
 
-npm test也包含该唯一串联场景，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
+npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
 
-仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`，不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式也只能创建新DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用正式DeploymentConfig/KeyRing与CLI；新增fixture/deployment控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
+仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`（可选尾部 `--business-clock FILE`），不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式也只能创建新DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用#117正式HarnessRoot::initialize(Fresh)、KeyRing与CLI，系统目录为私有canonical calrelay-system-*，不增加Reopen/Restored参数；fixture与Clock控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
 
 共享Rust所有权：#116只维护 `src/bin/admin_harness.rs` 的显式system模式/原认证复用及新 `src/bin/admin_harness/runtime_ports.rs` 网络替身；#115维护shared runtime Clock与fresh/reopen/restored typed接口。#116不改production_runtime.rs、不复制loops、不接reopen/restore控制。夹具新增只读/status返回脱敏journal，不提供远程控制操作。
 
 有效检查：受控从harness移除实际三worker装配后，浏览器配置仍真实保存，但系统检查在events/watermarks=0（预期2）处失败；恢复后成功。原合成Siteverify用响应生成时间作为challenge_ts，跨秒可能晚于login采样时间而被真实Verifier拒绝；新增确定性测试先Red，再将合成挑战完成时刻设为响应前30秒后Green，真实future timestamp验证不变。多选源测试改用实际combobox可访问角色的定位修正不计产品Red。
 
-后续#115 Clock推进必须考虑aggregate_feed独立feed::now()和鉴权时钟；未来freshness时间导致503是正确拒绝，不能关闭校验。受控重开/restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest均待对应正式入口/镜像后继续验收。#78/#35/#77/#76保持开放。
+#117已合入main 7e0f5b2。显式测试进程环境 `CALRELAY_TEST_CONTROLLED_CLOCK=1` 选择同一浏览器场景的受控版本：启动时UTC冻结在真实当前时刻，同一Clock注入三worker与feed；先断言事件开始前无accepted，再用同目录临时文件+rename原子推进61秒，观察双源真实处理/accepted与聚合200/304。随后只回拨UTC、保持monotonic offset，条件读取因未来verified_at返回503，既有管理会话仍200；恢复UTC后feed重新200。无freshness豁免，真实鉴权与监督时钟不变。测试不声称覆盖任意时钟跳变或重启去重。
+
+受控重开/restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。

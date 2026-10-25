@@ -189,7 +189,11 @@ impl PushOutput for Output {
         }
     }
 }
-pub fn attach(server: Server, path: &Path) -> Result<Server, Box<dyn std::error::Error>> {
+pub fn attach(
+    server: Server,
+    path: &Path,
+    clock: Option<Arc<calendar_server::test_runtime::FileBusinessClock>>,
+) -> Result<Server, Box<dyn std::error::Error>> {
     if !path.is_absolute() {
         return Err("invalid offline fixture file".into());
     }
@@ -214,7 +218,10 @@ pub fn attach(server: Server, path: &Path) -> Result<Server, Box<dyn std::error:
         ics_limits: server.services.ics_limits,
         sync_limits: SyncLimits::default(),
     };
-    Ok(server.with_test_runtime_ports(runner, output)?)
+    Ok(match clock {
+        Some(clock) => server.with_test_runtime_ports_and_clock(runner, output, clock)?,
+        None => server.with_test_runtime_ports(runner, output)?,
+    })
 }
 
 #[cfg(test)]

@@ -2,7 +2,10 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use calendar_adapters::admin_auth::{AdminConfig, AdminError, AdminTransport, CloudflareVerifier};
 use calendar_application::SecretBytes;
-use calendar_server::{Config, DeploymentConfig, Server};
+use calendar_server::{
+    test_runtime::{DatabaseMode, FileBusinessClock, HarnessRoot},
+    Config, Server,
+};
 #[path = "admin_harness/runtime_ports.rs"]
 mod runtime_ports;
 use ring::{
@@ -79,7 +82,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some([flag, fixtures, deployment_flag, deployment])
             if flag == "--system-fixtures" && deployment_flag == "--deployment-config" =>
         {
-            Some((fixtures, deployment))
+            Some((fixtures, deployment, None))
+        }
+        Some([flag, fixtures, deployment_flag, deployment, clock_flag, clock])
+            if flag == "--system-fixtures"
+                && deployment_flag == "--deployment-config"
+                && clock_flag == "--business-clock" =>
+        {
+            Some((fixtures, deployment, Some(clock)))
         }
         _ => return Err("invalid offline harness arguments".into()),
     };
@@ -128,32 +138,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             hostname,
         }),
     )?;
-    // Exclusive create refuses any existing file, including symlinks and real databases.
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = if let Some((_, deployment)) = runtime {
-        let deployment = std::path::Path::new(deployment);
-        if !deployment.is_absolute() {
-            return Err("invalid isolated deployment file".into());
-        }
-        let document = calendar_storage::security::read_secret_file(deployment, 65536)?;
-        let config = DeploymentConfig::from_deployment(document.expose(), |key| {
-            (key == "CALRELAY_DATABASE").then(|| path.clone())
-        })?;
-        if !config.server.bind.ip().is_loopback()
-            || config.server.bind.port() != 0
-            || config.admin.is_some()
-        {
-            return Err("invalid isolated deployment".into());
-        }
-        config
-            .initialize_with_supervision(calendar_server::production_runtime::supervision_budgets())
+    let root = if runtime.is_some() {
+        Some(HarnessRoot::new(
+            std::path::Path::new(path)
+                .parent()
+                .ok_or("missing harness root")?
+                .to_path_buf(),
+        )?)
+    } else {
+        None
+    };
+    let server = if let Some((_, deployment, _)) = runtime {
+        root.as_ref()
+            .unwrap()
+            .initialize(
+                std::path::Path::new(path),
+                std::path::Path::new(deployment),
+                DatabaseMode::Fresh,
+            )
             .await?
     } else {
+        // The original admin-only harness also refuses existing files and symlinks.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
         Server::initialize(Config {
             bind: "127.0.0.1:0".parse()?,
             database: path.into(),
@@ -164,8 +175,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?
     }
     .with_admin_site_key(Arc::new(verifier), "synthetic-site-key".into())?;
-    let server = if let Some((fixtures, _)) = runtime {
-        runtime_ports::attach(server, std::path::Path::new(fixtures))?
+    let server = if let Some((fixtures, _, clock)) = runtime {
+        let clock = clock
+            .map(|path| {
+                FileBusinessClock::load(root.as_ref().unwrap(), std::path::Path::new(path))
+                    .map(Arc::new)
+            })
+            .transpose()?;
+        runtime_ports::attach(server, std::path::Path::new(fixtures), clock)?
     } else {
         server
     };

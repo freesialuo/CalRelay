@@ -9,7 +9,12 @@ import { startSystemFixtures } from "../system/fixtures.mjs";
 import { startHTTPSProxy } from "./https-proxy.mjs";
 
 const execute = promisify(execFile);
-const directory = await mkdtemp(join(tmpdir(), "calrelay-admin-browser-"));
+const systemMode = process.argv[2] === "--system-runtime";
+const controlledClock =
+  systemMode && process.env.CALRELAY_TEST_CONTROLLED_CLOCK === "1";
+const directory = await mkdtemp(
+  join(tmpdir(), systemMode ? "calrelay-system-" : "calrelay-admin-browser-"),
+);
 const database = join(directory, "test.sqlite");
 const statePath = fileURLToPath(
   new URL("../../.test-admin-state.json", import.meta.url),
@@ -18,7 +23,6 @@ const binary = fileURLToPath(
   new URL("../../../target/debug/calendar-admin-harness", import.meta.url),
 );
 const origin = "https://127.0.0.1:4175";
-const systemMode = process.argv[2] === "--system-runtime";
 let child;
 let fixture;
 let proxy;
@@ -62,9 +66,17 @@ try {
     { flag: "wx", mode: 0o600 },
   );
   const fixtureFile = join(directory, "system-fixtures.json");
+  const clockFile = join(directory, "business-clock.json");
+  const initialUtc = Date.now();
+  if (controlledClock)
+    await writeFile(
+      clockFile,
+      JSON.stringify({ utc_now_ms: initialUtc, monotonic_offset_ms: 0 }),
+      { flag: "wx", mode: 0o600 },
+    );
   if (systemMode) {
     fixture = await startSystemFixtures({
-      nowMs: Date.now() - 60000,
+      nowMs: initialUtc - 60000,
       barkCredential: "synthetic_bark_browser_secret",
     });
     fixture.source("b", { shift: -60000 });
@@ -87,6 +99,7 @@ try {
             fixtureFile,
             "--deployment-config",
             deploymentPath,
+            ...(controlledClock ? ["--business-clock", clockFile] : []),
           ]
         : []),
     ],
@@ -165,6 +178,9 @@ try {
       upstream: configuration.upstream,
       database,
       ...(fixture ? { fixture_status: fixture.targets.status } : {}),
+      ...(controlledClock
+        ? { clock_file: clockFile, initial_utc: initialUtc }
+        : {}),
     }),
     { flag: "wx" },
   );
