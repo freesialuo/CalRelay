@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod common;
 use serde_json::{json, Value};
 use std::process::{Command, Output};
 fn invoke(
@@ -299,6 +300,10 @@ fn sigterm_does_not_reload_removed_key_or_resume_recovery() {
             .unwrap();
         storage.close().await;
     });
+    let mut serving: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    serving["admin"] = common::deployment(dir.path(), "127.0.0.1:0")["admin"].clone();
+    std::fs::write(&config, serving.to_string()).unwrap();
     let mut child = ChildGuard(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()

@@ -20,6 +20,7 @@ required-features = ["test-harness"]
 ring = { version = "=0.17.14", optional = true }
 base64 = { version = "=0.22.1", optional = true }
 
+calendar-domain = { path = "../calendar-domain" }
 calendar-application = { path = "../calendar-application" }
 calendar-adapters = { path = "../calendar-adapters" }
 calendar-storage = { path = "../calendar-storage" }

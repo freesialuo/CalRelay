@@ -2,7 +2,7 @@
 
 本批对应健康基础叶子 [#86](https://github.com/freesialuo/CalRelay/issues/86)，是 #36 的部分交付。
 
-本分支实现监督状态机、实际 HTTP/DB 探测、typed worker 注册与故障/关闭监督、healthcheck CLI。**生产来源扫描、规划请求构造和投递输出尚未装配，#36 仍未完整验收，不可提前关闭。** 测试中的合成 worker 不代表生产运行时。标准日历源可以经不同接入器进入系统，ICS 只是其中一种接入方式。
+本分支实现监督状态机、实际 HTTP/DB 探测、typed worker 注册与故障/关闭监督、healthcheck CLI。生产三工作器现由[独立 composition root](production-runtime.md) 装配；#36 的完整系统验收仍须按实际组合与部署结果核对，不提前关闭。 测试中的合成 worker 不代表生产运行时。标准日历源可以经不同接入器进入系统，ICS 只是其中一种接入方式。
 
 ## 需求变更来源
 
