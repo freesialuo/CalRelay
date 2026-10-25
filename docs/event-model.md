@@ -79,11 +79,11 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 
 ## 7. SQLite 逻辑表
 
-以下为完整目标模型。`calendar-storage` 已通过迁移实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes`（见 [存储基础](storage-foundation.md)、[来源同步](source-sync.md)）以及 `outputs`、`reminder_rules`、`rule_outputs`、`planning_watermarks`、`occurrences`、`logical_deliveries`、`delivery_jobs`（见 [提醒规划](reminder-planning-test-design.md)），以及 `delivery_attempts`（见 [投递恢复](delivery-recovery.md)）。其他表与凭据关联仍待后续迁移，不代表已实现。
+以下为完整目标模型。`calendar-storage` 已通过迁移实现 `sources`、`calendars`、`events`、`event_revisions`、`source_changes`（见 [存储基础](storage-foundation.md)、[来源同步](source-sync.md)）以及 `outputs`、`reminder_rules`、`rule_outputs`、`planning_watermarks`、`occurrences`、`logical_deliveries`、`delivery_jobs`（见 [提醒规划](reminder-planning-test-design.md)），以及 `delivery_attempts`（见 [投递恢复](delivery-recovery.md)）。凭据、API/订阅 token 及来源/输出凭据引用由迁移 `0005` 实现（见 [凭据安全](credential-security.md)）；其余表仍待后续迁移，不代表已实现。
 
 | 表 | 关键字段与约束 |
 | --- | --- |
-| `sources` | id PK、kind、config_json、credential_id、revision、enabled、committed_checkpoint、last_verified_at |
+| `sources` | id PK、kind、config_json、credential_id、revision、enabled、committed_checkpoint、last_verified_at、snapshot_revision（完整快照证明） |
 | `sync_runs` | id PK、source_id FK、base_revision、status、started/finished_at、diagnostic_summary |
 | `sync_staging` | run_id FK、page_key、payload_ref、complete；提交后可清理 |
 | `calendars` | id PK、source_id FK、external_id、timezone_policy；UNIQUE(source_id, external_id) |
@@ -98,9 +98,9 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 | `logical_deliveries` | id PK、event_id FK、original_key、rule_id FK、output_id FK、notification_kind、accepted_at；以上语义身份 UNIQUE |
 | `delivery_jobs` | id PK、logical_delivery_id FK、generation、event/rule/output_revision、due_at、deadline_at、state、next_attempt_at、lease_*、planning_context（解释时区/tzdata）；UNIQUE(logical_delivery_id, generation) |
 | `delivery_attempts` | id PK、job_id FK、attempt_no、lease_owner/token、request_id、started/sent/finished_at、outcome、disposition、retry_after_ms；UNIQUE(job_id, attempt_no) |
-| `feed_subscriptions` | id PK、public_id UNIQUE、token_digest UNIQUE、scope_json、revision、expires/revoked_at |
-| `credentials` | id PK、kind、ciphertext、nonce、key_version、rotated_at；主密钥不在库中 |
-| `api_tokens` | id PK、token_digest UNIQUE、source_id FK、scopes、expires/revoked_at |
+| `feed_subscriptions` | id PK、public_id UNIQUE、source_id FK、token_digest UNIQUE、scope_json、revision、expires/revoked_at |
+| `credentials` | id PK、kind、ciphertext、nonce、key_version、revision、rotated_at；主密钥不在库中 |
+| `api_tokens` | id PK、token_digest UNIQUE、source_id FK、can_upsert/can_delete、expires/revoked_at |
 | `admin_sessions` | token_digest PK、identity_sub、csrf_digest、expires_at、revoked_at |
 | `idempotency_records` | principal、route、key、request_hash、response_ref、expires_at；UNIQUE(principal, route, key) |
 | `audit_log` | id PK、actor、action、entity_ref、revision、request_id、created_at；无密钥和事件正文 |
@@ -130,3 +130,5 @@ RDATE 的 PERIOD 包含开始和结束或持续时间，必须保留独立时长
 - JSON Schema 负责结构；领域验证器负责跨字段、重复规则和时区；数据库约束负责关系与并发下的不变量。
 - 仅接受声明支持的能力档位；无法执行的警报/范围例外进入诊断，不宣称“完整支持 RFC”。
 - 对照样例覆盖：全天、UTC、floating、夏令时切换、月末、闰日、EXDATE、PERIOD RDATE、单次改期/取消、THISANDFUTURE、自定义 VTIMEZONE、Unicode 与长行折叠。
+
+迁移 `0006` 和完整快照/304 原子边界见 [来源协调](source-coordinator.md)。
