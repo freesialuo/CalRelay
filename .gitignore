@@ -18,3 +18,4 @@ coverage/
 secrets/
 web/test-results/
 web/playwright-report/
+/deployment.json
