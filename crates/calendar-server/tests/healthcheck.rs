@@ -136,3 +136,53 @@ fn healthcheck_reuses_the_deployment_contract_and_rejects_legacy_bind_without_se
     assert!(!output.status.success());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-invalid"));
 }
+
+#[test]
+fn admin_deployment_probe_does_not_load_secrets_or_require_database() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = dir.path().join("deployment.json");
+    let missing_secret = dir.path().join("must-not-be-read");
+    std::fs::write(
+        &deployment,
+        serde_json::json!({
+            "bind":address,
+            "admin":{"team":"synthetic-team","audience":"admin-aud",
+            "origin":"https://admin.example.test","hostname":"admin.example.test",
+            "action":"admin-login","site_key":"synthetic-site-key",
+            "administrators":{"alice-sub":"alice@example.test"},"session_seconds":120,
+            "turnstile_secret_file":missing_secret}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0; 1024];
+        let read = stream.read(&mut request).unwrap();
+        if read > 0 {
+            assert!(request[..read].starts_with(b"GET /health/live HTTP/1.1"));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        }
+    });
+    let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .args(["healthcheck", "--deployment-config"])
+        .arg(deployment)
+        .output()
+        .unwrap();
+    let _ = std::net::TcpStream::connect(address);
+    server.join().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!missing_secret.exists());
+}

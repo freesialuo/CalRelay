@@ -22,7 +22,7 @@ pub(crate) fn routes() -> Router<AdminState> {
             get(read).put(write).delete(retire),
         )
 }
-fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let value = values.next()?.to_str().ok()?;
     if values.next().is_some() {
@@ -31,7 +31,7 @@ fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         Some(value)
     }
 }
-fn condition(headers: &HeaderMap) -> Option<Condition> {
+pub(crate) fn condition(headers: &HeaderMap) -> Option<Condition> {
     match (
         single(headers, "if-match"),
         single(headers, "if-none-match"),
@@ -45,7 +45,7 @@ fn condition(headers: &HeaderMap) -> Option<Condition> {
         _ => None,
     }
 }
-fn error(error: Error) -> StatusCode {
+pub(crate) fn error(error: Error) -> StatusCode {
     match error {
         Error::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
         Error::NotFound => StatusCode::NOT_FOUND,

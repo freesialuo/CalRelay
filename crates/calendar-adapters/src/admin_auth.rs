@@ -23,7 +23,7 @@ pub struct AdminConfig {
     pub session_seconds: i64,
 }
 impl AdminConfig {
-    fn validate(&self) -> Result<(), AdminError> {
+    pub fn validate(&self) -> Result<(), AdminError> {
         let url = reqwest::Url::parse(&self.origin).map_err(|_| AdminError)?;
         if self.team.is_empty()
             || self.team.len() > 63
@@ -195,6 +195,12 @@ impl CloudflareVerifier {
             transport,
             policy,
         })
+    }
+    pub fn hostname(&self) -> &str {
+        &self.config.hostname
+    }
+    pub fn action(&self) -> &str {
+        &self.config.action
     }
     pub fn origin(&self) -> &str {
         &self.config.origin

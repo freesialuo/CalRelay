@@ -1,5 +1,5 @@
 mod healthcheck;
-use calendar_server::{Config, Server};
+use calendar_server::DeploymentConfig;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -17,11 +17,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if arguments.first().map(String::as_str) == Some("healthcheck") {
         return healthcheck::run(&arguments[1..]).await;
     }
-    let config = Config::from_args(arguments)?;
+    let config = DeploymentConfig::from_args(arguments)?;
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = Server::initialize(config).await?;
+    let server = config.initialize().await?;
     let listener = server.bind().await?;
     eprintln!("CalRelay listening on {}", listener.local_addr()?);
     server

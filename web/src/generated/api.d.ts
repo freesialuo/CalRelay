@@ -1,5 +1,961 @@
 // Generated from the local Rust service OpenAPI. Run npm run generate.
 export interface paths {
+    "/api/admin/v1/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public challenge metadata; never grants authority */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disabled or public Turnstile metadata only */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            enabled: false;
+                        } | {
+                            /** @constant */
+                            enabled: true;
+                            turnstile: {
+                                action: string;
+                                hostname: string;
+                                site_key: string;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover at most 100 managed summaries including retired records */
+        get: {
+            parameters: {
+                query?: {
+                    after?: string;
+                };
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path?: never;
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No-store page, binary id cursor; not a concurrent snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReminderConfigurationPage"];
+                    };
+                };
+                /** @description Invalid query */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid cursor */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/outputs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Managed outputs: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BarkOutputConfigurationRecord"];
+                    };
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Managed outputs: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match"?: string;
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BarkOutputConfigurationV1"];
+                };
+            };
+            responses: {
+                /** @description Configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BarkOutputConfigurationRecord"];
+                    };
+                };
+                /** @description Configuration receipt */
+                201: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BarkOutputConfigurationRecord"];
+                    };
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Managed outputs: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Retired, history retained */
+                204: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover at most 100 managed summaries including retired records */
+        get: {
+            parameters: {
+                query?: {
+                    after?: string;
+                };
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path?: never;
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description No-store page, binary id cursor; not a concurrent snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReminderConfigurationPage"];
+                    };
+                };
+                /** @description Invalid query */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid cursor */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Managed rules: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleConfigurationRecord"];
+                    };
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Managed rules: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match"?: string;
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RuleConfigurationV1"];
+                };
+            };
+            responses: {
+                /** @description Configuration receipt */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleConfigurationRecord"];
+                    };
+                };
+                /** @description Configuration receipt */
+                201: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        ETag?: string;
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleConfigurationRecord"];
+                    };
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Managed rules: conditional configuration; no secret values
+         * @description Optional trusted admin assembly. Creation requires disabled configuration and If-None-Match: *. Updates/retirement require If-Match: quoted current generation. DELETE has an empty body. A consumed management nonce rotates even on downstream failure. Credential references must already exist with kind bark; no plaintext credential writes. All responses no-store.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                    "If-Match": string;
+                };
+                path: {
+                    id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Retired, history retained */
+                204: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                400: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Management denied */
+                403: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown or unmanaged configuration */
+                404: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stale condition, existing, legacy or retired id */
+                409: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body budget exceeded */
+                413: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                415: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid configuration/reference/condition */
+                422: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bounded failure */
+                500: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        "Cache-Control"?: "no-store";
+                        "X-Admin-Write-Nonce"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/session": {
         parameters: {
             query?: never;
@@ -1417,11 +2373,74 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BarkOutputConfigurationRecord: {
+            configuration: components["schemas"]["BarkOutputConfigurationV1"];
+            generation: number;
+            output_id: string;
+            retired_at: number | null;
+        };
+        /**
+         * bark-output configuration v1
+         * @description Strict management shape; application and transactional reference validation also required.
+         */
+        BarkOutputConfigurationV1: {
+            credential_id: string;
+            enabled: boolean;
+            /** @constant */
+            kind: "bark";
+            name: string;
+            /**
+             * Format: uri
+             * @description HTTPS origin or /push only; no credentials/query/fragment. Transport still enforces SSRF.
+             */
+            origin: string;
+            request_timeout_ms: number;
+            /** @constant */
+            version: "v1";
+        };
         Error: {
             error: {
                 code: string;
                 request_id: string;
             };
+        };
+        ReminderConfigurationPage: {
+            items: components["schemas"]["ReminderConfigurationSummary"][];
+            next_after: string | null;
+        };
+        ReminderConfigurationSummary: {
+            enabled: boolean;
+            generation: number;
+            id: string;
+            name: string;
+            retired_at: number | null;
+        };
+        RuleConfigurationRecord: {
+            configuration: components["schemas"]["RuleConfigurationV1"];
+            generation: number;
+            retired_at: number | null;
+            rule_id: string;
+        };
+        /**
+         * rule configuration v1
+         * @description Strict management shape; application and transactional reference validation also required.
+         */
+        RuleConfigurationV1: {
+            enabled: boolean;
+            name: string;
+            output_ids: string[];
+            policy: {
+                all_day_time: string;
+                calendar_ids: string[];
+                lead_ms: number;
+            };
+            /** @constant */
+            version: "v1";
+        };
+        RulePolicy: {
+            all_day_time: string;
+            calendar_ids: string[];
+            lead_ms: number;
         };
         SourceConfigurationPage: {
             items: components["schemas"]["SourceConfigurationSummary"][];

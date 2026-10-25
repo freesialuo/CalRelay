@@ -312,6 +312,7 @@ dependencies = [
  "calendar-storage",
  "chrono",
  "jsonschema",
+ "libc",
  "reqwest",
  "ring",
  "serde",

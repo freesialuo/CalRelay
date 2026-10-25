@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calendar_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          }
+        },
+        "lead_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800000
+        },
+        "all_day_time": {
+          "type": "string",
+          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$"
+        }
+      },
+      "required": [
+        "calendar_ids",
+        "lead_ms",
+        "all_day_time"
+      ]
+    },
+    "output_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+      }
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "enabled",
+    "policy",
+    "output_ids"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:calrelay:schema:rule-configuration:v1",
+  "title": "rule configuration v1",
+  "description": "Strict management shape; application and transactional reference validation also required."
+}
