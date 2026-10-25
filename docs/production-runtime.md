@@ -37,3 +37,5 @@ CALRELAY_DATABASE=/data/calrelay.sqlite3 calendar-server --deployment-config /ru
 来源可传入 `IcsSourceRunner<仅测试的 RemoteFetcher>`；输出传入仅测试的 PushOutput，并按 envelope.job_id/output_id 通过已有 output_for_delivery 查询当前配置/credential handle，再访问 loopback 模拟 Bark。mock 只替代外部 transport，不复制 planner/领取循环或构造生产 fake 数据。现有生产适配器的 TLS/SSRF 验证保留独立矩阵；该 harness 证据不冒充标准 image 的外部连接验收。
 
 测试 `harness_ports_run_the_actual_three_loops_with_mock_http_and_secure_provider` 证明三循环实际持续运行：loopback ICS 自动同步、配置驱动规划、Bark503后自动重试/accepted，以及正常停止。标准入口始终调用 `with_production_runtime`，不接受生产 mock 字段、环境变量或测试路由；仅 `production-web` 构建不包含该注入入口。
+
+受控业务 Clock、与 feed freshness 的一致性以及 fresh/reopen/restored typed 生命周期接口见[测试运行时 ports](test-runtime-ports.md)；这些不改变标准 binary 或默认 harness 的数据库安全边界。

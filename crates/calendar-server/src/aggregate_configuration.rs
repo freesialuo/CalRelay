@@ -65,6 +65,15 @@ fn receipt(record: AggregateRecord, secret: Option<SecretBytes>, created: bool) 
     response
 }
 fn time(s: &AdminState) -> Result<i64, StatusCode> {
+    // Business subscription expiry follows the explicit harness clock; identity/session
+    // verification still uses AdminState.clock and production retains its original path.
+    #[cfg(feature = "test-harness")]
+    if let Some(clock) = s.services.test_business_clock.get() {
+        let now = clock.utc_now_ms();
+        return (now >= 0)
+            .then_some(now)
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE);
+    }
     (s.clock)()
         .checked_mul(1000)
         .filter(|v| *v >= 0)
@@ -206,4 +215,56 @@ pub(crate) fn describe(document: &mut serde_json::Value) {
     }
     document["paths"]["/api/admin/v1/subscriptions/{id}"] = serde_json::Value::Object(detail);
     document["paths"]["/api/admin/v1/subscriptions"] = json!({"get":{"summary":"Discover at most 100 nonsecret summaries, including retired records","parameters":[parameter("Cf-Access-Jwt-Assertion","header",true),parameter("__Host-calrelay_admin","cookie",true),parameter("after","query",false)],"responses":{"200":result("AggregatePage"),"400":{"description":"Invalid query"},"403":{"description":"Denied"},"422":{"description":"Invalid cursor"},"500":{"description":"Persistence failed"},"503":{"description":"Stopping"}}}});
+}
+
+#[cfg(all(test, feature = "test-harness"))]
+mod clock_tests {
+    use super::*;
+    use calendar_adapters::admin_auth::{AdminConfig, CloudflareVerifier};
+    struct Business;
+    impl calendar_application::Clock for Business {
+        fn utc_now_ms(&self) -> i64 {
+            123456
+        }
+        fn monotonic_now_ms(&self) -> u64 {
+            0
+        }
+    }
+    #[tokio::test]
+    async fn business_expiry_clock_does_not_replace_identity_session_clock() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = crate::Server::initialize(crate::Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database: dir.path().join("db"),
+            max_request_bytes: 1024,
+            max_response_bytes: 16384,
+            request_timeout: std::time::Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+        let verifier = CloudflareVerifier::new(
+            AdminConfig {
+                team: "synthetic-team".into(),
+                audience: "synthetic-aud".into(),
+                origin: "https://localhost:4443".into(),
+                hostname: "localhost".into(),
+                action: "admin-login".into(),
+                administrators: [("test".into(), "test@example.test".into())].into(),
+                session_seconds: 120,
+            },
+            SecretBytes::new(b"synthetic-secret".to_vec()),
+        )
+        .unwrap();
+        let state =
+            AdminState::with_clock(server.services.clone(), Arc::new(verifier), Arc::new(|| 42));
+        assert_eq!(time(&state).unwrap(), 42000);
+        assert!(server
+            .services
+            .test_business_clock
+            .set(Arc::new(Business))
+            .is_ok());
+        assert_eq!(time(&state).unwrap(), 123456);
+        assert_eq!((state.clock)(), 42);
+        server.services.drain().await;
+    }
 }

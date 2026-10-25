@@ -1,6 +1,6 @@
 //! Independent capability route; uses the shared restricted encoder/budget, never admin auth.
 use crate::{
-    feed::{now, render_body, FeedRenderError},
+    feed::{render_body, FeedRenderError},
     Services,
 };
 use axum::{
@@ -74,7 +74,10 @@ async fn feed(
     };
     let secret = SecretBytes::new(secret.as_bytes().to_vec());
     let db = &s.services.storage;
-    let mut authorization = match db.authorize_aggregate(&id, secret.expose(), now()).await {
+    let mut authorization = match db
+        .authorize_aggregate(&id, secret.expose(), s.services.business_now_ms())
+        .await
+    {
         Ok(v) => v,
         Err(e) => return denied(e).into_response(),
     };
@@ -82,7 +85,10 @@ async fn feed(
     let document = if let Some(v) = cached {
         v
     } else {
-        let snapshot = match db.aggregate_snapshot(&id, secret.expose(), now()).await {
+        let snapshot = match db
+            .aggregate_snapshot(&id, secret.expose(), s.services.business_now_ms())
+            .await
+        {
             Ok(v) => v,
             Err(e) => return denied(e).into_response(),
         };
@@ -137,7 +143,7 @@ async fn finish(
     match s
         .services
         .storage
-        .authorize_aggregate(id, secret.expose(), now())
+        .authorize_aggregate(id, secret.expose(), s.services.business_now_ms())
         .await
     {
         Ok(a) if &a.key == fence => {}
@@ -185,6 +191,7 @@ pub(crate) fn describe(document: &mut serde_json::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::feed::now;
     use crate::{Config, Server};
     use calendar_application::configuration::{
         ConfigurationCondition as Condition, SourceConfigurationV1,

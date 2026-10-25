@@ -111,7 +111,14 @@ async fn feed(
     let secret = SecretBytes::new(secret.as_bytes().to_vec());
     let db = &state.services.storage;
     // This durable check precedes every cache lookup and If-None-Match comparison.
-    let mut key = match db.authorize_feed(&public_id, secret.expose(), now()).await {
+    let mut key = match db
+        .authorize_feed(
+            &public_id,
+            secret.expose(),
+            state.services.business_now_ms(),
+        )
+        .await
+    {
         Ok(k) => k.key,
         Err(e) => return denied(e).into_response(),
     };
@@ -119,7 +126,14 @@ async fn feed(
     let document = if let Some(doc) = cached {
         doc
     } else {
-        let snapshot = match db.feed_snapshot(&public_id, secret.expose(), now()).await {
+        let snapshot = match db
+            .feed_snapshot(
+                &public_id,
+                secret.expose(),
+                state.services.business_now_ms(),
+            )
+            .await
+        {
             Ok(s) => s,
             Err(e) => return denied(e).into_response(),
         };
@@ -152,7 +166,10 @@ async fn finish_feed(
     let db = &state.services.storage;
     // Recheck after rendering/awaits: concurrent revocation or revision changes cannot
     // serve a representation authorized under an earlier configuration.
-    match db.authorize_feed(public_id, secret.expose(), now()).await {
+    match db
+        .authorize_feed(public_id, secret.expose(), state.services.business_now_ms())
+        .await
+    {
         Ok(current) if &current.key == key => {}
         Ok(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Err(e) => return denied(e).into_response(),
