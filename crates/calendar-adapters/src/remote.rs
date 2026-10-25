@@ -368,7 +368,7 @@ fn classify_status(status: u16, retry_after_ms: Option<i64>, snapshot: bool) -> 
         _ => Err(E::Status { status }),
     }
 }
-fn public_address(ip: IpAddr) -> bool {
+pub(crate) fn public_address(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let n = u32::from(ip);
