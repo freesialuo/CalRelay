@@ -64,7 +64,7 @@ class ImageReleasePolicyTests(unittest.TestCase):
         self.assertEqual(parse_version('v0.1.0').core, (0, 1, 0))
         self.assertTrue(parse_version('v1.2.3-rc.1').prerelease)
         for value in ('1.2.3', 'v01.2.3', 'v1.2', 'v1.2.3+metadata', 'v1.2.3-01',
-                      'v1.2.3-rc..1', 'v1.2.3\n', 'v1.2.3; echo secret', 'v1.2.3/other'):
+                      'v1.2.3-rc..1', 'v1.2.3\n', 'v1.2.3; echo secret', 'v1.2.3/other', 'v1.2.3٣'):
             with self.subTest(value=value), self.assertRaises(PolicyError):
                 parse_version(value)
 
@@ -222,7 +222,7 @@ class ImageArtifactTests(unittest.TestCase):
             with self.subTest(package=package), self.assertRaises(PolicyError):
                 package_state(self.api)
 
-    def publication(self, *, existing=True, latest=True, failure=None):
+    def publication(self, *, existing=True, latest=True, failure=None, after_pull=None):
         import json
         from scripts.image_release import PACKAGE, publish_bundle
         registry_digest = 'sha256:' + 'd' * 64
@@ -246,6 +246,8 @@ class ImageArtifactTests(unittest.TestCase):
             if args[:3] == ('buildx', 'imagetools', 'inspect'):
                 return json.dumps({'mediaType': 'application/vnd.oci.image.manifest.v1+json',
                                    'config': {'digest': DIGEST}})
+            if args[0] == 'pull' and after_pull:
+                after_pull(self.api)
             if args[0] == 'push':
                 versions.append({'name': registry_digest, 'metadata': {'container': {'tags': ['v1.2.3']}}})
             if args[:3] == ('buildx', 'imagetools', 'create'):
@@ -279,6 +281,20 @@ class ImageArtifactTests(unittest.TestCase):
             publish_bundle(self.api, lambda *args: calls.append(args), context,
                            self.directory, self.expected, 123, 1, lambda _: None)
         self.assertEqual(calls, [])
+
+    def test_new_failed_ci_or_moved_tag_blocks_alias_after_image_transfer(self):
+        def fail_ci(api):
+            path = PREFIX + '/actions/runs/7'
+            api.responses[path]['conclusion'] = 'failure'
+
+        def move_tag(api):
+            path = PREFIX + '/git/ref/tags/v1.2.3'
+            api.responses[path]['object']['sha'] = 'f' * 40
+
+        for change in (fail_ci, move_tag):
+            with self.subTest(change=change.__name__), self.assertRaises(PolicyError):
+                self.publication(latest=False, after_pull=change)
+            self.api = API()
 
     def test_failed_push_does_not_reach_stable_alias(self):
         with self.assertRaises(PolicyError):
