@@ -18,7 +18,7 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 | `CALRELAY_MAX_RESPONSE_BYTES` | 1048576 | 512–67108864 |
 | `CALRELAY_REQUEST_TIMEOUT_MS` | 30000 | 1–120000 |
 
-原生依赖沿用存储的 bundled SQLite 及 adapters 的 Rustls/ring；不引入 OpenSSL 或运行时 SQLite 动态库要求。新增 Axum 固定为 0.8.6，锁文件保留已有依赖版本，仅增加 HTTP 服务端与信号处理需要的依赖/feature。
+原生依赖沿用存储的 bundled SQLite 及 adapters 的 Rustls/ring；不引入 OpenSSL 或运行时 SQLite 动态库要求。Axum 固定为 0.8.6；server 的 SQLx 测试依赖随 main 对齐为 0.9.0，保留主线升级及安全 SQL API 调整。锁文件在 main 基础上仅增加 HTTP 服务端与信号处理需要的依赖/feature，SQLite 引擎仍为 libsqlite3-sys 0.30.1。
 
 ## HTTP 契约
 
