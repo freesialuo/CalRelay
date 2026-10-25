@@ -95,8 +95,8 @@ def require_main_ancestor(api, sha):
 
 def qualify_source(api, tag):
     repo = api.get(PREFIX)
-    require(repo.get('private') is True and repo.get('default_branch') == 'main',
-            'Expected the existing private repository and main branch; settings were not changed.')
+    require(repo.get('full_name') == REPOSITORY and repo.get('default_branch') == 'main',
+            'Expected the approved repository and main branch; source visibility does not configure package privacy.')
     record = api.get(PREFIX + '/git/ref/tags/' + tag)
     require(record.get('ref') == 'refs/tags/' + tag, 'Tag identity mismatch.')
     obj, seen = record.get('object') or {}, set()

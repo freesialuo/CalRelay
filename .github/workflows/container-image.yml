@@ -5,7 +5,7 @@ on:
     branches: ['release-request/v*', 'release-inspect/v0.1.0-alpha.1']
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
   release:
     types: [published]
   workflow_dispatch:
@@ -42,22 +42,31 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: control
+          fetch-depth: 2
           persist-credentials: false
+      - name: Decide whether this PR changes image inputs
+        id: route
+        working-directory: control
+        run: python3 -m scripts.ci_plan image
       - name: Validate event, version, exact source and latest main CI
+        if: steps.route.outputs.run_image == 'true'
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 control/scripts/image_release.py plan
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.route.outputs.run_image == 'true'
         with:
           ref: ${{ steps.plan.outputs.sha }}
           path: source
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.route.outputs.run_image == 'true'
         with:
           version: v0.31.0
           driver: docker
       - name: Build the production image without publishing
+        if: steps.route.outputs.run_image == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: source
@@ -74,12 +83,13 @@ jobs:
             org.opencontainers.image.revision=${{ steps.plan.outputs.sha }}
             org.opencontainers.image.version=${{ steps.plan.outputs.version }}
       - name: Exercise real image HTTP, health, storage and stop boundaries
+        if: steps.route.outputs.run_image == 'true'
         working-directory: source
         env:
           SOURCE_SHA: ${{ steps.plan.outputs.sha }}
         run: python3 scripts/check_docker_image.py "calrelay-candidate:$SOURCE_SHA"
       - name: Save and bind the tested image to this run and attempt
-        if: steps.plan.outputs.publish == 'true'
+        if: steps.route.outputs.run_image == 'true' && steps.plan.outputs.publish == 'true'
         id: seal
         env:
           SOURCE_SHA: ${{ steps.plan.outputs.sha }}
@@ -89,7 +99,7 @@ jobs:
           docker save --output "$RUNNER_TEMP/container-bundle/image.tar" "calrelay-candidate:$SOURCE_SHA"
           python3 control/scripts/image_release.py seal --bundle "$RUNNER_TEMP/container-bundle"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.plan.outputs.publish == 'true'
+        if: steps.route.outputs.run_image == 'true' && steps.plan.outputs.publish == 'true'
         id: upload
         with:
           name: tested-image-${{ github.run_id }}-${{ github.run_attempt }}
