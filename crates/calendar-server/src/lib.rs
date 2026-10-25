@@ -2,6 +2,7 @@
 pub mod admin;
 pub mod admin_bootstrap;
 mod config;
+mod feed;
 mod http;
 mod ingest;
 mod source_configuration;

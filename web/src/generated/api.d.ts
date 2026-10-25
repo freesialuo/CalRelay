@@ -1003,6 +1003,246 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/feeds/{public_id}/{secret}.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a scoped single-source calendar
+         * @description Revocable feed capability; no management session or human challenge. The full URL is secret and must not be logged.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    public_id: string;
+                    secret: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Complete single-source ICS representation */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/calendar; charset=utf-8": string;
+                    };
+                };
+                /** @description Unchanged authorized representation; no response body */
+                304: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                400: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                404: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                405: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                408: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                413: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                422: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                500: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                503: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        /**
+         * Inspect an authorized calendar representation
+         * @description Revocable feed capability; no management session or human challenge. The full URL is secret and must not be logged.
+         */
+        head: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "If-None-Match"?: string;
+                };
+                path: {
+                    public_id: string;
+                    secret: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Complete single-source ICS representation */
+                200: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unchanged authorized representation; no response body */
+                304: {
+                    headers: {
+                        "Cache-Control"?: "private, no-cache";
+                        ETag?: string;
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                400: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                404: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                405: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                408: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                413: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                422: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                500: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Fixed error envelope; no calendar content or ETag */
+                503: {
+                    headers: {
+                        "X-Request-Id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
