@@ -13,7 +13,7 @@ serde_json = "1"
 
 [dev-dependencies]
 ical = { version = "=0.11.0", default-features = false, features = ["ical"] }
-icalendar = { version = "=0.17.6", default-features = false, features = ["parser"] }
+icalendar = { version = "=0.17.15", default-features = false, features = ["parser"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
