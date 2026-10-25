@@ -3,8 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
@@ -40,7 +39,6 @@ export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
       "-addext",
       "subjectAltName=IP:127.0.0.1,DNS:localhost",
     ]);
-    const dist = fileURLToPath(new URL("../../dist/", import.meta.url));
     server = createServer(
       { key: await readFile(key), cert: await readFile(certificate) },
       async (request, response) => {
@@ -50,7 +48,8 @@ export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
           if (
             url.pathname.startsWith("/api/") ||
             url.pathname.startsWith("/health/") ||
-            url.pathname.startsWith("/feeds/aggregates/")
+            url.pathname.startsWith("/feeds/aggregates/") ||
+            url.pathname.startsWith("/admin/")
           ) {
             const headers = new Headers();
             for (const [name, value] of Object.entries(request.headers)) {
@@ -116,34 +115,8 @@ export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
             response.end(Buffer.from(body));
             return;
           }
-          if (request.method !== "GET") {
-            response.writeHead(405);
-            response.end();
-            return;
-          }
-          const relative = decodeURIComponent(url.pathname).replace(
-            /^\/admin\//,
-            "",
-          );
-          const path = resolve(dist, relative === "" ? "index.html" : relative);
-          if (
-            !url.pathname.startsWith("/admin/") ||
-            !path.startsWith(`${resolve(dist)}${sep}`)
-          ) {
-            response.writeHead(404);
-            response.end();
-            return;
-          }
-          const content = await readFile(path);
-          const kind = path.endsWith(".html")
-            ? "text/html; charset=utf-8"
-            : path.endsWith(".js")
-              ? "text/javascript"
-              : path.endsWith(".css")
-                ? "text/css"
-                : "application/octet-stream";
-          response.setHeader("content-type", kind);
-          response.end(content);
+          response.writeHead(404);
+          response.end();
         } catch {
           if (!response.headersSent) response.writeHead(502);
           response.end("Local test request failed");

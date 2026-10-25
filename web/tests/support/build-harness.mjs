@@ -8,7 +8,7 @@ const child = spawn(
     "-p",
     "calendar-server",
     "--features",
-    "test-harness",
+    "test-harness,production-web",
     "--bin",
     "calendar-admin-harness",
     "--bin",

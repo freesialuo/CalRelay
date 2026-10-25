@@ -25,7 +25,7 @@
 
 ## 验证
 
-沿用 `web` 中 lint、typecheck、build、check:generated、check:bundle 与 npm test。无需新依赖或 workflow 门禁改动。test:integration 显式编译标准 CLI 和 feature-isolated admin harness，仅在全新临时 SQLite 中使用安全 CLI 从合成 secret/key 文件初始化测试凭据；不直接插入凭据行、不弱化 guard，不修改真实凭据或系统信任。HTTPS 测试代理仅 loopback，官方 widget 脚本仅测试拦截，其余非本地网络拒绝；没有真实通知。
+沿用 `web` 中 lint、typecheck、build、check:generated、check:bundle 与 npm test。无需新依赖或 workflow 门禁改动。test:integration 显式编译标准 CLI 和 feature-isolated admin harness，仅在全新临时 SQLite 中使用安全 CLI 从合成 secret/key 文件初始化测试凭据；不直接插入凭据行、不弱化 guard，不修改真实凭据或系统信任。HTTPS 测试代理仅 loopback，页面/资产由production-web feature的真实Rust静态路由提供并保留HTTP CSP/安全头，不另读dist冒充嵌入托管；官方 widget 脚本仅测试拦截，其余非本地网络拒绝；没有真实通知。
 
 新增真实浏览器/HTTP/SQLite覆盖：输出/规则配置、生成版本/绑定与刷新，安全CLI引用、独立会话 generation CAS、订阅来源/日历选择、一次性显示/复制/复制失败、普通编辑保留token、轮换后旧token拒绝、新token可读、停用/退休、到期/空选择、CSRF/Origin拒绝且DB不变、取消已提交响应不重复写、显式回读/采用、恶意名称不执行与移动截图。保留来源完整回归。有效Red包括缺失订阅入口、取消已选日历后可选框仍勾选；自动审核另检出取消后重新勾选未恢复已选集合，新增规则日历/输出与订阅日历真实保存回读回归，先观察绑定丢失/保存拒绝，再修复双向状态更新；测试代理缺少feed转发、CDP读取回执的夹具竞争修正不算产品Red。
 

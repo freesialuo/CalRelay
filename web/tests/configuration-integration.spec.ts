@@ -25,7 +25,11 @@ async function widget(
 }
 async function login(page: Page, mode: "valid" | "duplicate" = "valid") {
   await widget(page, mode);
-  await page.goto("/admin/");
+  const pageResponse = await page.goto("/admin/");
+  expect(pageResponse?.headers()["content-security-policy"]).toContain(
+    "form-action 'none'",
+  );
+  expect(pageResponse?.headers()["referrer-policy"]).toBe("no-referrer");
   const panel = page.getByRole("region", { name: "管理登录", exact: true });
   await panel
     .getByRole("button", { name: "验证管理身份", exact: true })
