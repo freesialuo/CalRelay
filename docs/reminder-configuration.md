@@ -43,3 +43,5 @@ freshness：发现不以last_verified_at过滤，明确返回SourceMode与显式
 验证使用真实HTTP+SQLite、mock secrets/发送、CAS/故障/在途接受、v11升级与备份恢复、OpenAPI/schema/生成类型、现有前端门禁。来源/订阅/生产安全装配的原验收仍由各自叶子负责；本PR不关闭#73/#35。
 
 实际参考：[SQLite事务](https://sqlite.org/lang_transaction.html)、[AFTER trigger](https://sqlite.org/lang_createtrigger.html)、[历史外键](https://sqlite.org/foreignkeys.html)。
+
+本批云端验证：Rust workspace/all-features/locked 264 tests、Python 22 tests、fmt、Clippy（all-targets/all-features、-D warnings）、repository/diff检查通过；frontend生成类型逐字比较、lint、tsc、build、bundle canary及系统Chromium21项浏览器测试通过。有效Red包括重复JSON字段曾返回200而非422；受控移除durable send-intent guard后未prepare的输出查询错误成功，恢复后回归通过。另以合成mock secrets覆盖9种修改/停用/轮换与在途accepted竞争、失败回滚和v11迁移/恢复。没有执行真实Bark发送、生产账号/部署或完整管理UI旅程，不把测试消费者当作生产worker已装配。
