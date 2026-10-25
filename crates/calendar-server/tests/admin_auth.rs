@@ -424,10 +424,12 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
     let app = admin::router(state);
     let jwt = sign(claims());
     let path = "/api/admin/v1/sources/source-a";
-    let config: Value = serde_json::from_str(include_str!(
+    let mut config: Value = serde_json::from_str(include_str!(
         "../../../examples/source-configuration-v1.json"
     ))
     .unwrap();
+    config["calendars"] = (0..50).map(|n|json!({"id":format!("calendar-{n}"),"external_id":format!("main-{n}"),"selected":true,"timezone":"UTC"})).collect();
+    assert!(config.to_string().len() > 4096);
     let login = app
         .clone()
         .oneshot(request(
@@ -615,4 +617,32 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
     assert_eq!(retired.config_revision, 3);
     assert!(retired.retired_at.is_some());
     reopened.close().await;
+}
+
+#[tokio::test]
+async fn source_configuration_budget_does_not_expand_session_login_body_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::initialize(server_config(&dir.path().join("db")))
+        .await
+        .unwrap();
+    let state = AdminState::with_clock(
+        server.services.clone(),
+        verifier(Arc::new(Fake::default())),
+        Arc::new(|| NOW),
+    );
+    let response = admin::router(state)
+        .oneshot(request(
+            "POST",
+            SESSION,
+            &sign(claims()),
+            None,
+            None,
+            None,
+            Some(ORIGIN),
+            json!({"turnstile_token":"x".repeat(4096)}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    server.services.drain().await;
 }

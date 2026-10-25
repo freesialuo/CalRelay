@@ -236,14 +236,16 @@ pub fn router(state: AdminState) -> Router {
     })));
     let sources = protect(
         state.clone(),
-        crate::source_configuration::routes().with_state(state.clone()),
+        crate::source_configuration::routes()
+            .with_state(state.clone())
+            .layer(DefaultBodyLimit::max(65_536)),
     );
     Router::new()
         .route("/api/admin/v1/session", post(login))
         .with_state(state)
         .merge(protected)
         .merge(sources)
-        .layer(DefaultBodyLimit::max(65_536))
+        .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
                 let mut response = next.run(request).await;

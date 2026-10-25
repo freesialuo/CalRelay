@@ -13,7 +13,7 @@ Rust 权威为 `calendar-application::configuration::{SourceConfigurationV1, Sou
 | PUT 同路径 | 严格配置正文；创建 `If-None-Match: *` 返回 201，必须 enabled=false；更新 `If-Match: "N"` 返回 200；ETag 是 config_revision，不是事件或 source revision |
 | DELETE 同路径 | 空正文，`If-Match: "N"`；204 逻辑退休，永久禁止同 id 重建/启用；重复删除/旧 revision 409 |
 
-沿用 #34 Access JWT、Secure HttpOnly SameSite session、精确 Origin、CSRF 和一次 write nonce。失败鉴权不写业务数据；已经授权的 unsafe 请求即使业务失败也消费 nonce，客户端读取 `X-Admin-Write-Nonce` 后重试。GET/写响应均 no-store。无条件写、弱/重复/同时携带的条件头、未知字段/版本、非法能力为 422（JSON 提取层的语法错误为 400）；stale CAS/身份重映射为 409。沿用全局有界错误码与 request_id；持久错误不回显配置/凭据。管理来源正文额外限制 64 KiB，全局部署预算可更小。
+沿用 #34 Access JWT、Secure HttpOnly SameSite session、精确 Origin、CSRF 和一次 write nonce。失败鉴权不写业务数据；已经授权的 unsafe 请求即使业务失败也消费 nonce，客户端读取 `X-Admin-Write-Nonce` 后重试。GET/写响应均 no-store。无条件写、弱/重复/同时携带的条件头、未知字段/版本、非法能力为 422（JSON 提取层的语法错误为 400）；stale CAS/身份重映射为 409。沿用全局有界错误码与 request_id；持久错误不回显配置/凭据。管理来源正文额外限制 64 KiB，全局部署预算可更小；原会话登录仍限制 4 KiB。
 
 id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空白无控制字符；1–256 个日历映射。calendar id 全库唯一、external_id 源内唯一；跨源同 EventV1.external_uid 仍由原 `(source_id, external_uid)` 隔离。已有 calendar id/external_id 不可重映射或移除，取消选择用 selected=false，保留事件/历史引用。timezone 只允许有效 IANA TZID 或 null。新日历可追加。发现接口使用 `SourceConfigurationSummary` / `SourceConfigurationPage`，不导出完整配置或凭据引用。
 
@@ -57,4 +57,4 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 参考实际使用：[SQLite BEGIN IMMEDIATE 与单写者事务](https://www.sqlite.org/lang_transaction.html)、[RFC 8785 JCS](https://www.rfc-editor.org/rfc/rfc8785)、[Axum stateful middleware](https://docs.rs/axum/0.8.6/axum/middleware/fn.from_fn_with_state.html)。后两者分别为后续摘要规范与既有管理 guard 装配边界，不引入新的协议库。
 
-本批实测证据（云端合成数据）：`cargo test --workspace --all-features --locked` 254 tests、`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`、`cargo fmt --all --check`、Python unittest 20 tests、repository checker 与 diff check 通过。有效 Red：旧 binary 无部署文件升级诊断；受控移除配置写的 source revision 推进后，`cas_rename_restart_retirement_and_atomic_failure` 因旧 fetch 错误获准而失败，恢复实现后配置/规划专项通过。没有运行 envelope HTTP 执行、浏览器/UI、生产 worker、长 fuzz 或形式证明，不能从这些测试声称对应功能已完成。
+本批实测证据（云端合成数据）：`cargo test --workspace --all-features --locked` 255 tests、`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`、`cargo fmt --all --check`、Python unittest 20 tests、repository checker 与 diff check 通过。有效 Red：旧 binary 无部署文件升级诊断；受控移除配置写的 source revision 推进后，`cas_rename_restart_retirement_and_atomic_failure` 因旧 fetch 错误获准而失败，恢复实现后配置/规划专项通过。没有运行 envelope HTTP 执行、浏览器/UI、生产 worker、长 fuzz 或形式证明，不能从这些测试声称对应功能已完成。
