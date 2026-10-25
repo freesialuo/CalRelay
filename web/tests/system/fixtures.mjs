@@ -86,7 +86,8 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
   };
   const held = new Map();
   const controllers = new Set();
-  const server = createServer(async (request, response) => {
+  const server = createServer({ connectionsCheckingInterval: 100 });
+  server.on("request", async (request, response) => {
     const controller = new AbortController();
     controllers.add(controller);
     const disconnected = () => {
@@ -94,6 +95,22 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
     };
     request.once("aborted", disconnected);
     response.once("close", disconnected);
+    // A total body deadline, independent of socket activity and Node's periodic sweep.
+    const deadline = setTimeout(() => {
+      controller.abort();
+      request.destroy();
+      response.destroy();
+    }, 3000);
+    const clearDeadline = () => clearTimeout(deadline);
+    request.once("end", clearDeadline);
+    request.once("aborted", clearDeadline);
+    response.once("close", clearDeadline);
+    if (
+      request.complete ||
+      (request.headers["content-length"] === undefined &&
+        request.headers["transfer-encoding"] === undefined)
+    )
+      clearDeadline();
     response.setHeader("cache-control", "no-store");
     const path = request.url;
     try {
@@ -101,6 +118,7 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
         (path === "/ics/a" || path === "/ics/b") &&
         request.method === "GET"
       ) {
+        request.resume();
         const source = path.at(-1);
         const state = { ...states[source] };
         const tag = `"system-${source}-r${state.revision}"`;
@@ -177,7 +195,8 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
       controllers.delete(controller);
     }
   });
-  // Keep partial clients/response holds bounded even if a test forgets cleanup.
+  // Header/total-request limits are checked every 100ms, rather than Node's 30s default.
+  // The explicit body deadline above and socket inactivity bound remain independent.
   server.maxConnections = 32;
   server.maxRequestsPerSocket = 64;
   server.requestTimeout = 3000;
@@ -207,11 +226,12 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
         Object.keys(change).some(
           (k) => !["status", "shift", "cancelled"].includes(k),
         ) ||
-        (change.status !== undefined && ![200, 503].includes(change.status)) ||
-        (change.shift !== undefined &&
+        (Object.hasOwn(change, "status") &&
+          ![200, 503].includes(change.status)) ||
+        (Object.hasOwn(change, "shift") &&
           (!Number.isSafeInteger(change.shift) ||
             Math.abs(change.shift) > 604800000)) ||
-        (change.cancelled !== undefined &&
+        (Object.hasOwn(change, "cancelled") &&
           typeof change.cancelled !== "boolean")
       )
         throw new Error("Invalid fixture source change");

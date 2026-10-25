@@ -51,8 +51,8 @@ npm run test:fixtures
 
 `tests/system/fixtures.mjs` 只有显式调用 `startSystemFixtures` 才监听127.0.0.1随机端口。输入须为安全整数UTC毫秒与 `synthetic_` 前缀的合成Bark值，无默认secret。返回 `targets`、有界元数据 `snapshot`、程序内控制 `source`/`bark`/`holdNext` 与幂等 `close`；没有远程控制端点，也不访问外部地址。
 
-两份ICS共享 `same-system-uid`，A/B标题不同，默认在基准时间+120秒/+180秒；改期最多±7天，取消增加SEQUENCE，ETag按源revision改变。`holdNext`在响应快照捕获后等待，允许后续请求读取新版本；外部状态操作不写CalRelay数据库。HTTP正文64KiB、journal最近256条并累计overflow、最多32连接/每socket64请求，部分请求3秒、响应停滞5秒有界，close取消在途等待/连接。Bark检查device_key/title/body但仅保留kind/status/字节数/匹配布尔；不记录正文、key、请求路径或头，错误不回显输入。此最小模拟器只实现验收所需协议子集，不是完整ICS/HTTP/Bark兼容性证明。
+两份ICS共享 `same-system-uid`，A/B标题不同，默认在基准时间+120秒/+180秒；改期最多±7天，取消增加SEQUENCE，ETag按源revision改变。`holdNext`在响应快照捕获后等待，允许后续请求读取新版本；外部状态操作不写CalRelay数据库。HTTP正文64KiB、journal最近256条并累计overflow、最多32连接/每socket64请求，报头/完整请求3秒（100ms巡检）、独立body3秒总deadline、响应停滞5秒有界；持续来字节不延长请求期限，实际触发允许事件循环调度容差，close取消在途等待/连接。Bark检查device_key/title/body但仅保留kind/status/字节数/匹配布尔；不记录正文、key、请求路径或头，错误不回显输入。此最小模拟器只实现验收所需协议子集，不是完整ICS/HTTP/Bark兼容性证明。
 
-7项Node内置测试通过；受控将条件读取304改为200时，validator测试以200≠304失败，恢复后通过。它们在既有npm test中先执行；Playwright忽略system目录，避免把Node测试误当浏览器测试。生产bundle检查继续执行，夹具不被应用导入。
+10项Node内置测试通过，新增持续trickle的partial body/header分别约3秒关闭与显式undefined拒绝后ICS/ETag/正文保持不变的回归（先Red后Green）；受控将条件读取304改为200时，validator测试以200≠304失败，恢复后通过。它们在既有npm test中先执行；Playwright忽略system目录，避免把Node测试误当浏览器测试。生产bundle检查继续执行，夹具不被应用导入。
 
 依据：[RFC5545](https://www.rfc-editor.org/rfc/rfc5545) 的内容行、UID/SEQUENCE/STATUS；[RFC9110](https://www.rfc-editor.org/rfc/rfc9110.html) 的条件读取/304语义。
