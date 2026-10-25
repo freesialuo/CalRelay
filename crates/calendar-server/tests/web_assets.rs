@@ -31,7 +31,10 @@ async fn built_assets_share_real_http_without_swallowing_api_or_paths() {
     assert_eq!(home.headers()["x-content-type-options"], "nosniff");
     assert_eq!(home.headers()["referrer-policy"], "no-referrer");
     assert_eq!(home.headers()["x-frame-options"], "DENY");
-    let csp = home.headers()["content-security-policy"].to_str().unwrap();
+    let csp = home.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let directives: std::collections::BTreeMap<_, _> = csp
         .split("; ")
         .map(|directive| directive.split_once(' ').unwrap())
@@ -48,6 +51,21 @@ async fn built_assets_share_real_http_without_swallowing_api_or_paths() {
     assert!(!csp.contains("unsafe-") && !csp.contains('*'));
     let html = home.text().await.unwrap();
     assert!(html.contains("CalRelay"));
+    let meta_csp = html
+        .split("http-equiv=\"Content-Security-Policy\" content=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let meta_directives: std::collections::BTreeMap<_, _> = meta_csp
+        .split("; ")
+        .map(|directive| directive.split_once(' ').unwrap())
+        .collect();
+    for directive in ["script-src", "frame-src", "connect-src", "style-src"] {
+        assert_eq!(meta_directives[directive], directives[directive]);
+    }
+    assert!(!meta_csp.contains("unsafe-") && !meta_csp.contains('*'));
     assert!(!html.contains("/src/main.ts"));
     let mut count = 0;
     for asset in html.split('"').filter(|s| s.starts_with("/admin/assets/")) {
