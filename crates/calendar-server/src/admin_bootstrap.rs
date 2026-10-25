@@ -3,7 +3,7 @@ use crate::ConfigError;
 use calendar_adapters::admin_auth::{AdminConfig, CloudflareVerifier};
 use calendar_application::{CredentialProvider, SecretBytes, SecurityError};
 use serde::Deserialize;
-use std::{collections::BTreeMap, fs::OpenOptions, io::Read, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,28 +79,7 @@ impl CredentialProvider for TurnstileFileSecretProvider {
         if id != "turnstile" || kind != "cloudflare_turnstile" {
             return Err(SecurityError::Denied);
         }
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options
-            .open(&self.path)
-            .map_err(|_| SecurityError::KeyFile)?;
-        if !file
-            .metadata()
-            .map_err(|_| SecurityError::KeyFile)?
-            .is_file()
-        {
-            return Err(SecurityError::KeyFile);
-        }
-        let mut bytes = Vec::new();
-        file.take(4097)
-            .read_to_end(&mut bytes)
-            .map_err(|_| SecurityError::KeyFile)?;
-        let secret = SecretBytes::new(bytes);
+        let secret = calendar_storage::security::read_secret_file(&self.path, 4096)?;
         if secret.expose().is_empty()
             || secret.expose().len() > 4096
             || !secret.expose().iter().all(u8::is_ascii_graphic)

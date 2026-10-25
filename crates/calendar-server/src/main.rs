@@ -13,11 +13,18 @@ async fn main() -> std::process::ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments.first().map(String::as_str) == Some("healthcheck") {
-        return healthcheck::run(&arguments[1..]).await;
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("healthcheck") {
+        return healthcheck::run(&args[1..]).await;
     }
-    let config = DeploymentConfig::from_args(arguments)?;
+    if args.first().is_some_and(|s| s == "credential") {
+        let receipt =
+            calendar_server::credentials_bootstrap::run_credential_cli(args.into_iter().skip(1))
+                .await?;
+        println!("{}", serde_json::to_string(&receipt)?);
+        return Ok(());
+    }
+    let config = DeploymentConfig::from_args(args)?;
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
