@@ -94,6 +94,29 @@ class RoutingTests(unittest.TestCase):
                 self.assertTrue(route['rust'])
                 self.assertTrue(route['frontend'])
 
+    def test_edited_frontend_only_fallback_full_passes_only_with_both_successes(self):
+        paths = ['web/tests/admin.spec.ts']
+        needed = relevant(paths)
+        self.assertEqual(needed, {'rust': False, 'frontend': True})
+        for fault in ('missing', 'stale', 'failure', 'cancelled'):
+            api = API()
+            if fault == 'missing':
+                api.runs = []
+            elif fault == 'stale':
+                api.jobs[0]['name'] = 'checks (' + BASE + ')'
+            else:
+                api.run['conclusion'] = fault
+            route = plan('pull_request', EVENT, paths, api, 20, MERGE)
+            self.assertEqual((route['rust'], route['frontend'], route['proof']), (True, True, 'full'))
+            gate(route, 'success', {'rust': 'success', 'frontend': 'success'}, needed)
+            with self.assertRaises(PolicyError):
+                gate({**route, 'rust': False}, 'success', {'rust': 'success', 'frontend': 'success'}, needed)
+            for name in ('rust', 'frontend'):
+                for result in ('failure', 'cancelled', 'skipped'):
+                    results = {'rust': 'success', 'frontend': 'success', name: result}
+                    with self.subTest(fault=fault, name=name, result=result), self.assertRaises(PolicyError):
+                        gate(route, 'success', results, needed)
+
     def test_gate_rejects_failure_cancelled_missing_or_unjustified_skip(self):
         route = plan('push', {}, [])
         for checks, rust, front in (('failure', 'success', 'success'), ('cancelled', 'success', 'success'),

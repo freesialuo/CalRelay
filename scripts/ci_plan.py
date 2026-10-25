@@ -108,6 +108,8 @@ def gate(route, checks, results, needed, previous=None):
         require(results.get(name) in allowed, 'Relevant check failed, cancelled or was unsafely skipped.')
     if route['proof'] == 'receipt':
         require(previous == {'id': int(route['receipt_id']), 'attempt': int(route['receipt_attempt'])}, 'Code evidence changed.')
+    elif route['proof'] == 'full':
+        require(route['rust'] is True and route['frontend'] is True, 'Full routing must require both code checks.')
     else:
         require(all(route[name] == needed[name] for name in needed), 'Skip is not justified by the change set.')
 
