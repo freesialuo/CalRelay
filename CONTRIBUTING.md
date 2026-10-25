@@ -17,6 +17,12 @@ Issue（范围与验收）→ 分支 → 实现与本地检查 → 提交 → PR
 
 PR 标题采用 `type(scope): description`，scope 可省略；正文写改动结果、实际验证与必要限制，并使用 `Closes #12`、`Fixes #12` 或 `Resolves #12` 关联同一 Issue。工作未完成时开 Draft PR。
 
+Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校验器从当前 GitHub PR API 响应确认作者为 `dependabot[bot]` 且类型为 `Bot`、head/base 仓库 ID 相同且非空、分支以 `dependabot/` 开头并有后缀。仅免除 Issue 分支格式与 closing reference；标题格式、main 目标分支、全部测试和 quality-gate 保持不变。普通用户、其他 bot、fork 或身份信息缺失仍走普通规则，不能凭分支名、标签或正文获得例外。
+
+`.github/dependabot.yml` 为根 Cargo workspace、`requirements/ci.txt` 和 GitHub Actions 每周检查版本更新，每生态最多 3 个打开的版本更新 PR。minor/patch 按生态分组，major 保持独立；分组不保证行为兼容，仍需审核和测试。Action 继续固定完整 SHA。配置在合并到默认分支后生效，不启用自动合并、不修改安全更新或访问设置；安全更新的触发与限额独立于版本更新。
+
+配置依据：[Dependabot 选项](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)、[支持的生态与 SHA 固定 Action](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories)。
+
 ## 提交与验证
 
 提交签名为可选项，不作为贡献或合并的前置条件。

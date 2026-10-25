@@ -11,10 +11,27 @@ TITLE = re.compile(r"^(feat|fix|docs|test|ci|chore|refactor)(?:\([a-z0-9-]+\))?!
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b", re.IGNORECASE)
 
 
+def is_dependabot_pr(pr):
+    # These are server-provided fields from the current PR API response, not
+    # labels, body text, branch names alone, or the actor rerunning the workflow.
+    user = pr.get('user') or {}
+    head = pr.get('head') or {}
+    head_repo = head.get('repo') or {}
+    base_repo = (pr.get('base') or {}).get('repo') or {}
+    return (
+        user.get('login') == 'dependabot[bot]'
+        and user.get('type') == 'Bot'
+        and bool(head_repo.get('id'))
+        and head_repo['id'] == base_repo.get('id')
+        and head.get('ref', '').startswith('dependabot/')
+        and len(head['ref']) > len('dependabot/')
+    )
+
+
 def validate_metadata(pr):
     errors = []
     match = BRANCH.fullmatch(pr['head']['ref'])
-    if not match:
+    if not match and not is_dependabot_pr(pr):
         errors.append('Branch must use <type>/<issue>-<slug>.')
     if not TITLE.fullmatch(pr['title']):
         errors.append('Title must use type(scope): description.')
@@ -56,7 +73,10 @@ def main():
             errors.append('The linked number must identify an Issue, not a PR.')
     if errors:
         raise SystemExit('\n'.join(errors))
-    print(f'PR metadata validated against Issue #{issue}.')
+    if issue is None:
+        print('Dependabot PR metadata validated (no manual Issue required).')
+    else:
+        print(f'PR metadata validated against Issue #{issue}.')
 
 
 if __name__ == '__main__':
