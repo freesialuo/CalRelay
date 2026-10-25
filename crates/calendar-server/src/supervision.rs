@@ -262,6 +262,15 @@ impl Health {
             }
         });
     }
+    fn database_result(&self, state: DatabaseState, now: Instant) {
+        self.update(|s| {
+            // An inconclusive retry cannot erase observed failure evidence.
+            if s.database != DatabaseState::Failed || state != DatabaseState::Unavailable {
+                s.database = state;
+            }
+            s.db_at = matches!(state, DatabaseState::Ready { .. }).then_some(now);
+        });
+    }
     fn report(&self, kind: WorkerKind, progress: Progress, now: Instant) {
         self.update(|s| {
             if !s.stopping {
@@ -392,22 +401,22 @@ async fn probes(
             match tokio::time::timeout(options.probe_timeout, database_probe(&services.storage))
                 .await
             {
-                Ok(Ok(paused)) => services.health.update(|s| {
-                    s.database = DatabaseState::Ready {
+                Ok(Ok(paused)) => services.health.database_result(
+                    DatabaseState::Ready {
                         recovery_paused: paused,
-                    };
-                    s.db_at = Some(Instant::now());
-                }),
+                    },
+                    Instant::now(),
+                ),
                 result => {
                     let failed = matches!(&result, Ok(Err(error)) if !transient_database(error));
-                    services.health.update(|s| {
-                        s.database = if failed {
+                    services.health.database_result(
+                        if failed {
                             DatabaseState::Failed
                         } else {
                             DatabaseState::Unavailable
-                        };
-                        s.db_at = None;
-                    });
+                        },
+                        Instant::now(),
+                    );
                 }
             }
 
@@ -633,6 +642,25 @@ mod tests {
         let snapshot = healthy.snapshot_at(now + Duration::from_secs(1000));
         assert!(snapshot.live && !snapshot.ready);
         assert_eq!(snapshot.phase, Phase::Stopping);
+    }
+    #[test]
+    fn a_db_failure_requires_real_success_before_a_later_timeout_can_clear_it() {
+        let (health, now) = assembled();
+        health.database_result(DatabaseState::Failed, now);
+        assert!(!health.snapshot_at(now).live);
+        health.database_result(DatabaseState::Unavailable, now);
+        assert!(
+            !health.snapshot_at(now).live,
+            "a timeout is not evidence that the failed DB recovered"
+        );
+        assert_eq!(health.snapshot_at(now).database, DatabaseState::Failed);
+        health.database_result(
+            DatabaseState::Ready {
+                recovery_paused: false,
+            },
+            now,
+        );
+        assert!(health.snapshot_at(now).live && health.snapshot_at(now).ready);
     }
     #[test]
     fn budget_configuration_fails_closed() {

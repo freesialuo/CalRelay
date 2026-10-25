@@ -1,4 +1,6 @@
-# 核心监督与健康探针（#36，装配/配置契约待集成）
+# 核心健康基础（#86；#36 装配/配置验收待集成）
+
+本批对应健康基础叶子 [#86](https://github.com/freesialuo/CalRelay/issues/86)，是 #36 的部分交付。
 
 本分支实现监督状态机、实际 HTTP/DB 探测、typed worker 注册与故障/关闭监督、healthcheck CLI。**生产来源扫描、规划请求构造和投递输出尚未装配，#36 仍未完整验收，不可提前关闭。** 测试中的合成 worker 不代表生产运行时。标准日历源可以经不同接入器进入系统，ICS 只是其中一种接入方式。
 
@@ -41,7 +43,7 @@
 
 ## DB probe 与恢复边界
 
-单个 probe 循环限频执行，DB/HTTP 请求各有短超时。DB 使用 `BEGIN IMMEDIATE`、读取恢复策略、`UPDATE recovery_control SET paused=paused WHERE id=1`，核验一行并 rollback；测试实际主库可写性，不只验证 TEMP 内存表。没有新迁移、探针状态表、持久审计或自动修复。rollback 完成后才报告 DB 成功。busy/locked 与超时仅使 DB 不就绪；损坏、只读、磁盘/其他 SQL 错误、丢失策略行或池异常暴露为核心健康故障，仍保持 HTTP 运行，不自动终止或修复。后续真实探测成功可恢复健康。取消事务沿用锁定 SQLx 的 drop/rollback 行为。
+单个 probe 循环限频执行，DB/HTTP 请求各有短超时。DB 使用 `BEGIN IMMEDIATE`、读取恢复策略、`UPDATE recovery_control SET paused=paused WHERE id=1`，核验一行并 rollback；测试实际主库可写性，不只验证 TEMP 内存表。没有新迁移、探针状态表、持久审计或自动修复。rollback 完成后才报告 DB 成功。busy/locked 与超时仅使 DB 不就绪；损坏、只读、磁盘/其他 SQL 错误、丢失策略行或池异常暴露为核心健康故障，仍保持 HTTP 运行，不自动终止或修复。后续真实探测成功可恢复健康，后续 busy/超时等无结论结果不能清除已观察到的核心故障。取消事务沿用锁定 SQLx 的 drop/rollback 行为。
 
 探针不设置 paused、不清除 cutoff、不触碰任务/attempt；监督和重启没有 resume 路径。恢复库经实际监督循环及两次重开仍保持暂停、历史抑制和零新 attempt；显式离线 resume 的既有维护契约继续有效。读写探测本身也受暂停回归约束。
 
@@ -55,7 +57,7 @@
 
 ## 验证与剩余验收
 
-- 有效 Red→Green：未实现 CLI 时真实子进程误启动服务并因缺少数据库配置失败；固定 ready 时新回归实际得到 200 而预期 503。实现后相同断言通过。按修订后的 AC2 新增回归又实际检出旧原型自动停止业务准入；移除健康驱动的 stop/退出后该回归 Green。
+- 有效 Red→Green：未实现 CLI 时真实子进程误启动服务并因缺少数据库配置失败；固定 ready 时新回归实际得到 200 而预期 503。实现后相同断言通过。按修订后的 AC2 新增回归又实际检出旧原型自动停止业务准入；移除健康驱动的 stop/退出后该回归 Green。另实际复现 DB 核心故障被后续超时错误清除的 Red，修复为必须由真实成功探测恢复，回归 Green。
 - 生产状态机直接接受测试提供的单调 Instant，确定性覆盖宽限前/精确边界、已开始进展在宽限内停滞、无装配不重启、注册不等于进展、外部降级、恢复暂停与粘滞故障。
 - `tests/supervision.rs`：真实 Axum/SQLite、合成任务的结束/Err/panic/停滞、核心健康故障的 live 503/请求 ID、DB 写锁超时与恢复、并发 stop、关闭预算取消、暂停后不变 cutoff，以及仅本地模拟 HTTP 503。worker/DB 健康失败后 HTTP 与业务准入仍保持，真实进展或测试操作者解除 DB 故障后健康可恢复；没有自动修复或任务重启。
 - `tests/process.rs`：真实标准 server 子进程遇到合成 SQL 故障后持续提供 live 503，不退出、不删除/修复故障对象；独立测试子进程通过公共装配 API 注入停滞工作器，观察 live 503、进程继续运行，直到实际 SIGTERM 正常退出，已提交数据和完整性保留。生产二进制没有测试故障开关。正常 SIGTERM 与数据库重开继续通过。
