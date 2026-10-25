@@ -19,6 +19,38 @@ docker compose up -d
 
 Compose 的 `deployment.json` 与 `secrets` bind 必须预先存在（`create_host_path: false`），配置错误应明确失败。不要把合成身份配置当作真实生产账号。可把整个服务接入受控内部代理网络；不要直接公开管理端口、Docker socket 或任意来源 CORS。更改示例端口时同时修改 JSON bind 与 Compose 端口映射；不新增监听 env。
 
+### 首次运行的最小旅程与限制
+
+1. 先按上文及[认证装配](admin-auth.md)、[凭据初始化](credential-bootstrap.md)填完真实 `admin` / `credentials`。master-key 必须是32个原始字节；配置和所有 secret 文件须让 UID/GID 65532 可读，父目录可遍历，并通过 Compose 只读挂载。应用不代改权限。
+2. 用自己的安全文件流程把 Bark device key 放入 `secrets/bark-main`（文件格式见凭据手册，不放 argv/env/UI）。现有整个 `secrets` 目录挂载会使其成为 `/run/secrets/bark-main`。仅创建一次 handle：
+
+   ```sh
+   docker compose run --rm --no-deps calrelay credential provision-bark --deployment-config /run/calrelay/deployment.json --credential-id bark-main --secret-file /run/secrets/bark-main
+   ```
+
+   将成功回执的 `credential_id` 填入 UI 的 Bark 输出引用，不填 device key。已存在时不覆盖；替换/轮换须按[正式 CLI 的 revision/CAS 流程](credential-bootstrap.md)，不去掉检查反复重试。
+3. `docker compose up -d` 后，在有限启动宽限内等待 fresh live/ready 成功：
+
+   ```sh
+   docker compose exec calrelay /usr/local/bin/calrelay healthcheck live --deployment-config /run/calrelay/deployment.json
+   docker compose exec calrelay /usr/local/bin/calrelay healthcheck ready --deployment-config /run/calrelay/deployment.json
+   ```
+
+   新建且非暂停的数据卷应最终二者均成功；全局 ready 不证明某个 ICS 已同步或 Bark 已送达设备。
+4. 通过已配置的 HTTPS/Access 管理入口登录。第一个自动拉取来源使用**公共 HTTPS ICS URL、一个日历映射、先禁用保存再显式启用**；pull 的周期/新鲜度和 snapshot 能力按[来源配置](source-configuration.md)、[实际扫描器](runtime-source-scanning.md)设置。当前 `IcsSourceRunner` 只处理 ICS pull 且 `calendars.len()==1`，否则 Unsupported；配置能保存不表示 runner 支持或已经同步。URL 不能带 userinfo（用户名/密码）、query 或 fragment；需要签名 query 的供应商 URL 首版暂不支持，不能删掉签名参数冒充可用公共 URL。需要另外取得供应商正式支持的公共 HTTPS ICS 入口，或等待后续能力。
+5. 按[主要配置页面](configuration-web.md)设置这个日历的规则、Bark 输出及聚合订阅。manual/static/push 配置页面本身不是自动导入入口，不能当作文件上传、浏览器抓取或完整自动导入已经交付；独立机器写入能力以[其自身契约](protected-ingest.md)为准。
+6. 停止用 `docker compose stop`，保留同一 Compose 项目的 `data` named volume、部署 JSON 和只读 secret 文件；以后从同一项目启动会重开这些数据。升级/恢复先按[一致性备份与恢复](backup-recovery.md)操作，不自动解除恢复暂停。
+
+### 分域部署：复制的订阅链接还需手工换 origin
+
+首版 UI 用 `location.origin` 将服务返回的相对 capability path 拼成绝对 URL。因此在 `admin.example.com` 经 Access、`feed.example.com` 仅用 capability 的分域部署中，**复制出来的管理域链接不能直接当作普通日历客户端的最终订阅地址**，否则会遇到 Access 登录。这是当前手工前置，不是已实现的 `public_feed_origin` 配置或 UI 自动转换功能。
+
+1. 先由部署者配置自己控制的可信 HTTPS feed origin，反向代理至同一 CalRelay 实例/数据库。该 host 仅允许 GET/HEAD 匹配 `/feeds/{public_id}/{secret}.ics` 和 `/feeds/aggregates/{public_id}/{secret}.ics` 的路由；其余路径/方法拒绝，不能转发管理 API 或 `/admin/`。管理 host 的 Access 保护保持开启；普通日历客户端通过 feed host 的 capability 访问，不依赖管理 Cookie/JWT/Turnstile。
+2. 在本地将 UI 复制链接的 **origin（scheme、host及端口）** 替换为上述已配置的 feed HTTPS origin，然后才粘贴到日历客户端。完整 secret path、public_id、`.ics` 后缀和若有的 query 必须原样保留，不解码/重拼 token 或删参数。只替换为自己的可信入口，不把完整链接发送到第三方转换、短链或检测服务。
+3. 在 feed 的代理/Cloudflare等层关闭完整 capability URL 日志；仅使用固定 `/feeds/[REDACTED]` 模板及不含 URL 的状态/请求 ID。不要记录原始 path/query/Referer，保留应用的 private cache 指令、不启用共享缓存；详见[feed 隐私与部署边界](readonly-feed.md)。
+
+当前应用授权不绑定 HTTP Host/origin：两条 feed handler 向存储授权传入 public_id、secret 和当前时间，校验用途摘要、期限/撤销和订阅/来源 scope。上述 origin 替换不改变这些值，因而当前实现支持；Host/路由隔离仍须由可信代理执行。源码依据为 `web/src/configuration-api.ts` 的 capability URL 拼接、`calendar-server/src/feed.rs` / `aggregate_feed.rs` 的路由与 handler，以及 `calendar-storage/src/feed.rs` / `aggregate.rs` 的授权查询。应用不会自动配置或证明这些外部域名、代理与日志策略。
+
 ## 构建与运行边界
 
 CD 构建接口：context 为仓库根 `.`，file 为根 `Dockerfile`，最终 target 为 `runtime`（也是默认最后阶段）；中间阶段为 `web` / `rust`。无 secret/build arg、无可开启 harness 的参数，Rust feature 固定在 Dockerfile 内。PR 构建不 push，发布 workflow 由独立流程 owner 维护，本叶子不执行首次发布。
