@@ -52,3 +52,9 @@ publisher 开始及最终别名写入前会再次读取请求 ref 与两个确�
 参考：[GitHub 发布 Docker 镜像](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)、[GHCR 权限与默认可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)、[Release 触发](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release)、[Docker 单 manifest 晋级](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)。
 
 Registry 读取依据：[OCI manifest 存在与 digest 检查](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#checking-if-content-exists-in-the-registry)、[Registry bearer 认证协议](https://distribution.github.io/distribution/spec/auth/token/)。
+
+## 首次 alpha 的只读故障检查
+
+run `40197637059` 的 package guard 失败时，不能由无 push 输出推断 registry 没有写入，也不能将可见性/仓库关联合并错误猜成临时延迟。`release-inspect/v0.1.0-alpha.1` 是独立只读入口：先合并经审核的检查代码并等确切 main CI 成功，再经维护者协调普通 push 该已验证 SHA 到这个分支。不要重复触发原 publication 请求。
+
+检查 job 只有 `packages: read`，跳过 build/publish，复用 API/registry reader；固定原 alpha tag、源码 SHA 和 run40197637059 的已测试 image ID。仅输出允许列出的 package 可见性、关联是否匹配/结构、匹配版本的第一页面时间/digest，以及 OCI config digest 是否等于原测试镜像。404、认证或网络错误均不被当作“从未写入”。事实写入 Actions 日志/summary，不读取真实业务数据或密钥，不构建、推送或运行镜像，不修改 package/repository 设置。现有发布 guards 保持原样；若确实 public/unassociated，维护者需决定必要动作，工具不能修设置或绕过 guard。

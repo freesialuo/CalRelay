@@ -90,6 +90,7 @@ class ImageReleasePolicyTests(unittest.TestCase):
 
     def test_git_request_rejects_untrusted_refs_or_changed_workflow(self):
         for changes in ({'ref': 'refs/heads/main'}, {'ref': 'refs/tags/v1.2.3'},
+                        {'ref': 'refs/heads/release-inspect/v0.1.0-alpha.1'},
                         {'ref': 'refs/heads/release-request/v1.2.3/extra'},
                         {'workflow_sha': 'd' * 40}, {'event_name': 'pull_request_target'}):
             with self.subTest(changes=changes), self.assertRaises(PolicyError):
@@ -468,7 +469,7 @@ class ImageWorkflowTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / '.github/workflows/container-image.yml'
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(workflow['on']), {'pull_request', 'release', 'workflow_dispatch', 'push'})
-        self.assertEqual(workflow['on']['push'], {'branches': ['release-request/v*']})
+        self.assertEqual(workflow['on']['push'], {'branches': ['release-request/v*', 'release-inspect/v0.1.0-alpha.1']})
         self.assertEqual(workflow['permissions'], {'contents': 'read'})
         build, publish = workflow['jobs']['build'], workflow['jobs']['publish']
         self.assertNotIn('packages', build['permissions'])
