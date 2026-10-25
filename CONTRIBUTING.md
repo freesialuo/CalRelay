@@ -26,9 +26,9 @@ Closes #86
 Remaining AC: #36 AC1, AC2, AC3 — 生产 runtime 注册与最终 CLI 配置接通仍由后续任务验收
 ```
 
-部分交付必须恰好声明一次分支 Issue 的 `Refs`，关闭一个不同的、当前开放且没有子项的真实 Issue，并用一行 `Remaining AC` 列出父项 AC 编号（逗号分隔）及具体剩余责任。编号须存在于当前父 Issue；分支父项保持开放，正文任何位置均不得含其 closing 关键字。目标叶子若已有原生 parent，必须与分支 Issue 一致；原生关系缺失时这些字段只声明逻辑追踪，不代表新建了原生关系，维护者仍须核对叶子范围和本 PR 实际成果。
+部分交付必须恰好声明一次分支 Issue 的 `Refs`，以本仓库 `#编号` 语法关闭一个不同的、当前开放且没有子项的真实 Issue，并用一行 `Remaining AC` 列出父项 AC 编号（逗号分隔）及具体剩余责任。编号须存在于当前父 Issue；分支父项保持开放，正文任何位置均不得含其 closing 关键字。目标叶子若已有原生 parent，必须与分支 Issue 一致；原生关系缺失时这些字段只声明逻辑追踪，不代表新建了原生关系，维护者仍须核对叶子范围和本 PR 实际成果，以及提交消息/手工关联的关闭效果。
 
-校验从 GitHub 读取当前 PR、分支 Issue 与叶子 Issue，读取失败不放行。注释、代码块、行内代码、引用和缩进代码中的字段不计入可见声明。部分模式不豁免标题、分支、main 目标、真实 Issue 类型、测试、CI 或合并授权；未声明该模式仍按完整交付校验。
+校验从 GitHub 读取当前 PR、分支 Issue 与叶子 Issue，读取失败不放行。注释、代码块、行内代码、引用和缩进代码中的字段不计入可见声明。部分模式不豁免标题、分支、main 目标、真实 Issue 类型、测试、CI 或合并授权；未声明该模式仍按完整交付校验。关键字冒号及跨仓库引用语义参照 [GitHub 官方说明](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)；部分模式不接受限定仓库或 URL closing，以免绕过父项检查。
 
 Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校验器从当前 GitHub PR API 响应确认作者为 `dependabot[bot]` 且类型为 `Bot`、head/base 仓库 ID 相同且非空、分支以 `dependabot/` 开头并有后缀。仅免除 Issue 分支格式与 closing reference；标题格式、main 目标分支、全部测试和 quality-gate 保持不变。普通用户、其他 bot、fork 或身份信息缺失仍走普通规则，不能凭分支名、标签或正文获得例外。
 
@@ -52,7 +52,7 @@ Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校�
 
 沿用仓库已有自动审核：已触发则读取结果并处理意见，未触发不等待。不主动发送 Codex 代码或安全审核请求，也不因新 head 主动请求复审；不额外要求新回执或固定时长轮询。测试、CI、仓库实际必需检查与审核、讨论解决及维护者合并授权保持不变。
 
-main 的目标规则：必须通过 PR、全部讨论解决、`quality-gate` 成功且基于最新 main。管理员无日常绕过例外，禁止强推与删除 main。
+main 要求通过 PR、全部讨论解决及 `quality-gate` 成功；实际保护规则以 GitHub 当前 API 为准。当前未启用 strict/up-to-date 要求，单纯落后 main 不构成门禁；有真实冲突或共享契约集成风险时才同步并重新验证。管理员无日常绕过例外，禁止强推与删除 main。
 
 本项目由一位维护者开发，不设置 GitHub 必需审批人数，不要求 code owner 或最新推送审批，也不模拟自我 approve。维护者检查最终差异与测试结果后，可在对话中明确批准该 PR 合并。
 

@@ -47,6 +47,26 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
             call('repos/owner/repo/issues/86'),
         ])
 
+    def test_keyword_colon_and_qualified_closing_cannot_close_parent(self):
+        self.pr['body'] = self.pr['body'].replace('Closes #86', 'Closes: #86')
+        self.assertEqual(validate_metadata(self.pr), ([], 36))
+        for extra in ('Closes: #36', 'Fixes owner/repo#36',
+                      'Resolves https://github.com/owner/repo/issues/36',
+                      'Closes other/repo#90'):
+            with self.subTest(extra=extra):
+                pr = deepcopy(self.pr)
+                pr['body'] += '\n' + extra
+                self.assertTrue(validate_metadata(pr)[0])
+
+    def test_malformed_or_duplicate_mode_fields_cannot_fall_back_to_full(self):
+        for mode in ('partial extra', '', 'full extra'):
+            with self.subTest(mode=mode):
+                pr = deepcopy(self.pr)
+                pr['body'] = 'Delivery: ' + mode + '\nCloses #36'
+                self.assertTrue(validate_metadata(pr)[0])
+        self.pr['body'] += '\nRemaining AC: malformed'
+        self.assertTrue(validate_metadata(self.pr)[0])
+
     def test_partial_cannot_close_parent_even_with_a_leaf(self):
         self.pr['body'] += '\nCloses #36'
         self.assertTrue(validate_metadata(self.pr)[0])

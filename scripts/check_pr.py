@@ -8,10 +8,14 @@ import urllib.request
 
 BRANCH = re.compile(r"^(feat|fix|docs|test|ci|chore|refactor)/([1-9]\d*)-[a-z0-9]+(?:-[a-z0-9]+)*$")
 TITLE = re.compile(r"^(feat|fix|docs|test|ci|chore|refactor)(?:\([a-z0-9-]+\))?!?: \S.+$")
-CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b", re.IGNORECASE)
-
-
-MODE = re.compile(r"^Delivery:[ \t]*(\S+)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+CLOSING_WORD = r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+CLOSING = re.compile(CLOSING_WORD + r":?\s+#([1-9]\d*)\b", re.IGNORECASE)
+NONLOCAL_CLOSING = re.compile(
+    CLOSING_WORD + r":?\s+(?:[\w.-]+/[\w.-]+#[1-9]\d*|"
+    r"https?://github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/[1-9]\d*)",
+    re.IGNORECASE,
+)
+MODE = re.compile(r"^Delivery:[ \t]*([^\n]*)$", re.IGNORECASE | re.MULTILINE)
 REFS = re.compile(r"^Refs[ \t]+#([1-9]\d*)[ \t]*$", re.IGNORECASE | re.MULTILINE)
 REMAINING = re.compile(
     r"^Remaining AC:[ \t]*#([1-9]\d*)[ \t]+"
@@ -41,7 +45,7 @@ def visible_body(body):
 
 def delivery_fields(pr):
     body = visible_body(pr.get('body') or '')
-    modes = [mode.lower() for mode in MODE.findall(body)]
+    modes = [mode.strip().lower() for mode in MODE.findall(body)]
     closing = {int(number) for number in CLOSING.findall(body)}
     return body, modes, closing, REMAINING.findall(body)
 
@@ -85,9 +89,12 @@ def validate_metadata(pr):
         raw_closing = {int(n) for n in CLOSING.findall(pr.get('body') or '')}
         if issue in raw_closing:
             errors.append('Partial delivery must not close the branch Issue.')
+        if NONLOCAL_CLOSING.search(pr.get('body') or ''):
+            errors.append('Partial closing references must use local #Issue syntax.')
         if len(closing) != 1 or issue in closing:
             errors.append('Partial delivery must close exactly one different leaf Issue.')
-        if len(remaining) != 1 or int(remaining[0][0]) != issue:
+        remaining_lines = re.findall(r'^Remaining AC:[^\n]*$', body, re.IGNORECASE | re.MULTILINE)
+        if len(remaining_lines) != 1 or len(remaining) != 1 or int(remaining[0][0]) != issue:
             errors.append('Partial delivery must list Remaining AC for the branch Issue with a reason.')
     elif issue is not None and issue not in closing:
         errors.append('Body must include a closing keyword for the branch Issue.')
