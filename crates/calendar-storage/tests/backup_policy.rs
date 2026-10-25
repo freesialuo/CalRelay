@@ -24,7 +24,7 @@ async fn seed(db: &Storage) -> Result {
           VALUES ('e','s','c','a',1,'{"schema_version":"1.0","external_uid":"a","title":"Synthetic","status":"confirmed","start":{"kind":"utc","value":"2026-11-02T17:00:00Z"},"duration":"PT1H"}','h');
         INSERT INTO outputs(id,kind) VALUES ('o','synthetic');
         INSERT INTO reminder_rules(id,policy_json) VALUES ('r','{"calendar_ids":["c"]}');
-        INSERT INTO rule_outputs VALUES ('r','o');
+        INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o');
         INSERT INTO planning_watermarks(scope_id,source_id,rule_id,output_id,source_revision,rule_revision,output_revision,planned_until,tzdata_version)
           VALUES ('w','s','r','o',1,1,1,20000,'2025b');
         INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id)
@@ -314,7 +314,7 @@ async fn v6_upgrades_to_recovery_policy_without_pausing_normal_database() -> Res
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success=1 ORDER BY version")
             .fetch_all(recovered.pool())
             .await?;
-    assert_eq!(recovered_versions, [1, 2, 3, 4, 5, 6, 7, 9, 10, 11]);
+    assert_eq!(recovered_versions, [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]);
     let recovery_policy: (bool, Option<i64>) =
         sqlx::query_as("SELECT paused,cutoff FROM recovery_control WHERE id=1")
             .fetch_one(recovered.pool())
@@ -356,7 +356,7 @@ async fn v6_upgrades_to_recovery_policy_without_pausing_normal_database() -> Res
         )
         .fetch_all(db.pool())
         .await?;
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 9, 10, 11]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]);
         db.close().await;
     }
     let db = Storage::open(&path).await?;

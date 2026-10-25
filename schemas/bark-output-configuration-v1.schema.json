@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "kind": {
+      "const": "bark"
+    },
+    "origin": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 8192,
+      "description": "HTTPS origin or /push only; no credentials/query/fragment. Transport still enforces SSRF."
+    },
+    "credential_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "request_timeout_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120000
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "enabled",
+    "kind",
+    "origin",
+    "credential_id",
+    "request_timeout_ms"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:calrelay:schema:bark-output-configuration:v1",
+  "title": "bark-output configuration v1",
+  "description": "Strict management shape; application and transactional reference validation also required."
+}

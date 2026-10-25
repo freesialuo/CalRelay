@@ -152,6 +152,7 @@ pub fn openapi() -> Value {
         "paths":paths,"components":{"schemas":{"Error":{"type":"object","additionalProperties":false,"required":["error"],"properties":{"error":{"type":"object","additionalProperties":false,"required":["code","request_id"],"properties":{"code":{"type":"string"},"request_id":{"type":"string"}}}}}}}});
     crate::ingest::describe(&mut document);
     crate::source_configuration::describe(&mut document);
+    crate::reminder_configuration::describe(&mut document);
     document
 }
 

@@ -191,7 +191,8 @@ pub trait ReminderPlanner {
     ) -> impl Future<Output = Result<(), PlanningError>> + Send;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RulePolicy {
     pub calendar_ids: Vec<String>,
     pub lead_ms: i64,

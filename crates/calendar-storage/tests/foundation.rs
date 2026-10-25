@@ -94,7 +94,7 @@ async fn migrations_are_repeatable_and_committed_data_survives_reopen() -> Resul
             sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success=1")
                 .fetch_one(db.pool())
                 .await?;
-        assert_eq!(migrations, 10);
+        assert_eq!(migrations, 11);
         let health: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(db.pool())
             .await?;
@@ -344,7 +344,7 @@ async fn upgrades_v1_database_to_latest_preserving_history_and_enforcing_plannin
     )
     .fetch_all(db.pool())
     .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10, 11]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]);
     let event_row: (String, i64, String) =
         sqlx::query_as("SELECT external_uid, revision, content_hash FROM events WHERE id = 'e1'")
             .fetch_one(db.pool())
@@ -414,7 +414,7 @@ async fn upgrades_v2_jobs_to_nullable_planning_context_without_losing_history() 
             sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(db.pool())
                 .await?;
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10, 11]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]);
         rejected(
             &db,
             "UPDATE delivery_jobs SET planning_context='invalid json' WHERE id='j'",
@@ -462,7 +462,7 @@ async fn upgrades_v3_to_delivery_attempts_preserving_jobs_and_failure_history() 
             .await?
             .run(&mut conn)
             .await?;
-        sqlx::raw_sql("INSERT INTO sources(id,kind) VALUES ('s','test'); INSERT INTO calendars(id,source_id,external_id) VALUES ('c','s','c'); INSERT INTO events(id,source_id,calendar_id,external_uid,revision,document_json,content_hash) VALUES ('e','s','c','a',1,'{}','h'); INSERT INTO outputs(id,kind) VALUES ('o','test'); INSERT INTO reminder_rules(id) VALUES ('r'); INSERT INTO rule_outputs VALUES ('r','o'); INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id,accepted_at) VALUES ('l','e','single','r','o',123); INSERT INTO delivery_jobs(id,logical_delivery_id,generation,event_revision,rule_revision,output_revision,due_at,state,next_attempt_at,planning_context) VALUES ('j','l',1,1,1,1,100,'accepted',100,'[null,\"2025b\"]');").execute(&mut conn).await?;
+        sqlx::raw_sql("INSERT INTO sources(id,kind) VALUES ('s','test'); INSERT INTO calendars(id,source_id,external_id) VALUES ('c','s','c'); INSERT INTO events(id,source_id,calendar_id,external_uid,revision,document_json,content_hash) VALUES ('e','s','c','a',1,'{}','h'); INSERT INTO outputs(id,kind) VALUES ('o','test'); INSERT INTO reminder_rules(id) VALUES ('r'); INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o'); INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id,accepted_at) VALUES ('l','e','single','r','o',123); INSERT INTO delivery_jobs(id,logical_delivery_id,generation,event_revision,rule_revision,output_revision,due_at,state,next_attempt_at,planning_context) VALUES ('j','l',1,1,1,1,100,'accepted',100,'[null,\"2025b\"]');").execute(&mut conn).await?;
         if conflict {
             sqlx::query("CREATE TABLE delivery_attempts(conflict INTEGER)")
                 .execute(&mut conn)
