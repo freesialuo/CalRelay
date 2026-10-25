@@ -53,9 +53,10 @@ impl HarnessRoot {
     ) -> Result<Server, HarnessError> {
         controlled_path(&self.path, database)?;
         controlled_path(&self.path, deployment)?;
+        let database_text = database.to_str().ok_or(ERROR)?;
         let bytes = read_secret_file(deployment, 65_536).map_err(|_| ERROR)?;
         let config = DeploymentConfig::from_deployment(bytes.expose(), |key| {
-            (key == "CALRELAY_DATABASE").then(|| database.to_string_lossy().into_owned())
+            (key == "CALRELAY_DATABASE").then(|| database_text.to_owned())
         })?;
         if !config.server.bind.ip().is_loopback()
             || config.server.bind.port() != 0

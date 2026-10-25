@@ -532,6 +532,37 @@ fn controlled_root_rejects_shared_directory_permissions() {
     assert!(HarnessRoot::new(f.root.path().into()).is_ok());
 }
 #[tokio::test]
+async fn non_utf8_database_paths_never_touch_the_original_or_lossy_target() {
+    use std::os::unix::ffi::OsStringExt;
+    let f = Fixture::new();
+    let database = f
+        .root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"database-\xff".to_vec()));
+    let lossy = PathBuf::from(database.to_string_lossy().into_owned());
+    std::fs::write(&lossy, b"existing lossy target").unwrap();
+    assert!(f
+        .root
+        .initialize(&database, &f.deployment, DatabaseMode::Fresh)
+        .await
+        .is_err());
+    assert!(!database.exists());
+    assert_eq!(std::fs::read(&lossy).unwrap(), b"existing lossy target");
+    std::fs::write(&database, b"existing original target").unwrap();
+    for mode in [DatabaseMode::Reopen, DatabaseMode::Restored] {
+        assert!(f
+            .root
+            .initialize(&database, &f.deployment, mode)
+            .await
+            .is_err());
+        assert_eq!(
+            std::fs::read(&database).unwrap(),
+            b"existing original target"
+        );
+        assert_eq!(std::fs::read(&lossy).unwrap(), b"existing lossy target");
+    }
+}
+#[tokio::test]
 async fn bad_keys_paths_and_modes_do_not_create_or_overwrite_a_database() {
     let f = Fixture::new();
     let missing = f.root.path().join("missing");
