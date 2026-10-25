@@ -68,8 +68,8 @@ impl Storage {
         let expires_at = now
             .checked_add(policy.retention_ms)
             .ok_or(IngestError::Invalid)?;
-        let token: Option<(String,i64)> = sqlx::query_as("SELECT t.id,s.revision FROM api_tokens t JOIN sources s ON s.id=t.source_id WHERE t.token_digest=? AND t.source_id=? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>?) AND s.enabled=1 AND ((?=0 AND t.can_upsert=1) OR (?=1 AND t.can_delete=1))")
-            .bind(token_hash).bind(&request.source_id).bind(now).bind(deleting).bind(deleting).fetch_optional(&mut *tx).await?;
+        let token: Option<(String,i64)> = sqlx::query_as("SELECT t.id,s.revision FROM api_tokens t JOIN sources s ON s.id=t.source_id WHERE t.token_digest=? AND t.source_id=? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>?) AND s.enabled=1 AND s.retired_at IS NULL AND (s.config_revision=0 OR (json_extract(s.config_json,'$.mode')='push-only' AND json_extract(s.config_json,'$.adapter')='standard-calendar' AND ((?=0 AND json_extract(s.config_json,'$.capabilities.upsert')=1) OR (?=1 AND json_extract(s.config_json,'$.capabilities.delete')=1)))) AND ((?=0 AND t.can_upsert=1) OR (?=1 AND t.can_delete=1))")
+            .bind(token_hash).bind(&request.source_id).bind(now).bind(deleting).bind(deleting).bind(deleting).bind(deleting).fetch_optional(&mut *tx).await?;
         let (token_id, source_revision) = token.ok_or(IngestError::Denied)?;
         sqlx::query("DELETE FROM ingest_requests WHERE expires_at<=?")
             .bind(now)

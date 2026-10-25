@@ -15,16 +15,62 @@ pub struct Config {
 pub struct ConfigError(pub &'static str);
 
 impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Self::from_lookup(|key| std::env::var(key).ok())
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
+        let bind = Self::deployment_bind_from_args(args)?;
+        Self::from_bind(bind, |key| std::env::var(key).ok())
     }
 
-    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+    /// Read the existing deployment bind contract without requiring or opening a database.
+    pub fn deployment_bind_from_args(
+        args: impl IntoIterator<Item = String>,
+    ) -> Result<SocketAddr, ConfigError> {
+        if std::env::var_os("CALRELAY_BIND").is_some() {
+            return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
+        }
+        let args: Vec<_> = args.into_iter().collect();
+        let [flag, path] = args.as_slice() else {
+            return Err(ConfigError("expected --deployment-config FILE"));
+        };
+        if flag != "--deployment-config" {
+            return Err(ConfigError("expected --deployment-config FILE"));
+        }
+        let bytes =
+            std::fs::read(path).map_err(|_| ConfigError("cannot read deployment configuration"))?;
+        Self::parse_bind(&bytes, &|key| std::env::var(key).ok())
+    }
+
+    pub fn from_deployment(
+        bytes: &[u8],
+        get: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let bind = Self::parse_bind(bytes, &get)?;
+        Self::from_bind(bind, get)
+    }
+
+    fn parse_bind(
+        bytes: &[u8],
+        get: &impl Fn(&str) -> Option<String>,
+    ) -> Result<SocketAddr, ConfigError> {
+        if get("CALRELAY_BIND").is_some() {
+            return Err(ConfigError("CALRELAY_BIND was removed; remove it and use --deployment-config FILE with explicit bind"));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Deployment {
+            bind: SocketAddr,
+        }
+        let deployment: Deployment = serde_json::from_slice(bytes).map_err(|_| {
+            ConfigError("deployment configuration must contain only an explicit bind address")
+        })?;
+        Ok(deployment.bind)
+    }
+
+    fn from_bind(
+        bind: SocketAddr,
+        get: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
         let config = Self {
-            bind: get("CALRELAY_BIND")
-                .ok_or(ConfigError("CALRELAY_BIND"))?
-                .parse()
-                .map_err(|_| ConfigError("CALRELAY_BIND"))?,
+            bind,
             database: get("CALRELAY_DATABASE")
                 .ok_or(ConfigError("CALRELAY_DATABASE"))?
                 .into(),

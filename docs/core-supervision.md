@@ -49,20 +49,22 @@
 
 默认 typed 预算：启动宽限 60s、停滞 30s、探测间隔 1s、单次探测超时 1s、关闭 10s。宽限范围 (0,300s]，其余 (0,120s]；停滞须至少为 `interval + 2 * probe_timeout`，避免正常 DB/HTTP 有界轮次触发误判。这些值可通过 typed assembly API 配置；**本分支不新增生产环境变量绑定**，最终持久配置/CLI 绑定由配置契约任务决定。
 
-## healthcheck CLI 与待迁移点
+## healthcheck CLI 与配置复用
 
-`target/debug/calendar-server healthcheck [live|ready]` 默认 live。探针不加载数据库配置、不打开/迁移存储、不启动服务或 worker。本机数值地址、无代理/重定向、请求总超时，仅 HTTP 200 响应头为成功；不读取或输出响应正文。非 200、协议错误、连接失败或超时非零退出，不依赖 curl。复用锁定 reqwest 0.12.24 与 SQLx 0.9.0，无依赖全量升级。
+`target/debug/calendar-server healthcheck [live|ready] --deployment-config FILE [--timeout-ms N]` 默认 live。探针不要求数据库环境配置、不打开/迁移存储、不启动服务或 worker。本机数值地址、无代理/重定向、请求总超时，仅 HTTP 200 响应头为成功；不读取或输出响应正文。非 200、协议错误、连接失败或超时非零退出，不依赖 curl。复用锁定 reqwest 0.12.24 与 SQLx 0.9.0，无依赖全量升级。
 
-**待配置契约迁移：当前兼容代码仍从既有 CALRELAY_BIND 取得监听/探针目标，并将通配监听映射到相应 loopback；这与用户明确的“监听地址不属于环境变量”最终要求冲突。唯一配置 owner 在 #80 实现显式 `--deployment-config` JSON 并拒绝 CALRELAY_BIND；该 PR 尚未合入，本分支不另创配置解析或替代监听环境变量，最终 CLI 对接留待最小集成。** CLI 当前 `CALRELAY_HEALTHCHECK_TIMEOUT_MS`（默认 2000、范围 1–120000）也需随环境变量白名单/配置入口统一核对。当前保留实现供本地验证，不提供最终部署用的环境变量示例。
+已普通合并 #82 的部署 JSON/来源 API。`Config::deployment_bind_from_args` 仅从 #82 原有实现提取文件读取与 bind 解析，服务器 `Config::from_args` 和健康命令复用同一函数、同一 strict JSON schema 与 CALRELAY_BIND 拒绝诊断，不另写解析器，不修改配置模型或迁移。健康命令不需要虚构数据库路径。通配监听地址仅在探针客户端映射到同地址族 loopback，零端口/非本机地址拒绝。动态零端口只用于测试服务，测试为探针写入已观察实际端口的临时部署文件。
+
+健康专属 `--timeout-ms` 默认 2000，范围 1–120000；非法/重复参数拒绝。监听/健康目标不再读取 CALRELAY_BIND，旧值即使只是残留也给迁移诊断且不回显内容；健康超时不再使用环境变量。没有新增部署配置字段、持久模型、schema 或迁移，其他配置/规则/Bark 契约仍由配置 owner 负责。
 
 ## 验证与剩余验收
 
-- 有效 Red→Green：未实现 CLI 时真实子进程误启动服务并因缺少数据库配置失败；固定 ready 时新回归实际得到 200 而预期 503。实现后相同断言通过。按修订后的 AC2 新增回归又实际检出旧原型自动停止业务准入；移除健康驱动的 stop/退出后该回归 Green。另实际复现 DB 核心故障被后续超时错误清除的 Red，修复为必须由真实成功探测恢复，回归 Green。
+- 有效 Red→Green：未实现 CLI 时真实子进程误启动服务并因缺少数据库配置失败；固定 ready 时新回归实际得到 200 而预期 503。实现后相同断言通过。按修订后的 AC2 新增回归又实际检出旧原型自动停止业务准入；移除健康驱动的 stop/退出后该回归 Green。部署 JSON 对接也先观察旧 CLI 拒绝参数的有效 Red，再复用单一读取接口后 Green。另实际复现 DB 核心故障被后续超时错误清除的 Red，修复为必须由真实成功探测恢复，回归 Green。
 - 生产状态机直接接受测试提供的单调 Instant，确定性覆盖宽限前/精确边界、已开始进展在宽限内停滞、无装配不重启、注册不等于进展、外部降级、恢复暂停与粘滞故障。
 - `tests/supervision.rs`：真实 Axum/SQLite、合成任务的结束/Err/panic/停滞、核心健康故障的 live 503/请求 ID、DB 写锁超时与恢复、并发 stop、关闭预算取消、暂停后不变 cutoff，以及仅本地模拟 HTTP 503。worker/DB 健康失败后 HTTP 与业务准入仍保持，真实进展或测试操作者解除 DB 故障后健康可恢复；没有自动修复或任务重启。
 - `tests/process.rs`：真实标准 server 子进程遇到合成 SQL 故障后持续提供 live 503，不退出、不删除/修复故障对象；独立测试子进程通过公共装配 API 注入停滞工作器，观察 live 503、进程继续运行，直到实际 SIGTERM 正常退出，已提交数据和完整性保留。生产二进制没有测试故障开关。正常 SIGTERM 与数据库重开继续通过。
 - `tests/recovery_lifecycle.rs`：真实备份恢复、历史任务、pause/cutoff、两次 server 启停，现已运行真实 HTTP/DB probe；显式 resume 后仅 cutoff 当时/之后任务能领取。CLI 的路径/失败状态/协议/超时使用临时 loopback peer。
 
-仍未验收：生产接入协调/规划/投递装配下的完整 live/ready/功能降级，以及监听/配置契约迁移后的最终 CLI。本 PR 仅交付健康基础，不把合成 worker 测试或当前独立监督框架当作端到端生产提醒服务。未运行生产外部服务、真实账号、远端部署、长时 fuzz 或形式证明。
+仍未验收：生产接入协调/规划/投递装配下的完整 live/ready/功能降级，以及真实生产循环下的最终 CLI/端到端集成。#82 已合并，健康 CLI 的部署 JSON 迁移在本批完成。本 PR 仅交付健康基础，不把合成 worker 测试或当前独立监督框架当作端到端生产提醒服务。未运行生产外部服务、真实账号、远端部署、长时 fuzz 或形式证明。
 
 参考：通过 Exa 查阅 Tokio 官方 [Instant 单调时间](https://docs.rs/tokio/latest/tokio/time/struct.Instant.html)、[pause/advance](https://docs.rs/tokio/latest/tokio/time/fn.pause.html)、[JoinSet 完成/取消](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html)。生产单调状态机采用显式 Instant 注入测试，不依赖 SQL I/O 的暂停时钟自动推进；SQLx API 同时核对本仓库锁定源码的 begin_with/Transaction rollback。

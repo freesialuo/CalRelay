@@ -14,11 +14,19 @@ impl Drop for Process {
         let _ = self.0.wait();
     }
 }
+fn health_deployment(database: &std::path::Path, address: &str) -> std::path::PathBuf {
+    let deployment = database.with_extension("health-deployment.json");
+    std::fs::write(&deployment, serde_json::json!({"bind":address}).to_string()).unwrap();
+    deployment
+}
 fn spawn(database: &std::path::Path, bind: &str) -> Process {
+    let deployment = database.with_extension("deployment.json");
+    std::fs::write(&deployment, serde_json::json!({"bind":bind}).to_string()).unwrap();
     Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
-            .env("CALRELAY_BIND", bind)
+            .arg("--deployment-config")
+            .arg(deployment)
             .env("CALRELAY_DATABASE", database)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -66,8 +74,8 @@ fn sigterm_stops_listener_and_database_reopens_cleanly() {
     for mode in ["live", "ready"] {
         let probe = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
-            .env("CALRELAY_BIND", address)
-            .args(["healthcheck", mode])
+            .args(["healthcheck", mode, "--deployment-config"])
+            .arg(health_deployment(&database, address))
             .output()
             .unwrap();
         assert!(
@@ -105,7 +113,8 @@ fn bad_config_and_migration_failure_do_not_listen() {
     let mut missing = Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
-            .env("CALRELAY_BIND", address.to_string())
+            .arg("--deployment-config")
+            .arg(health_deployment(&database, &address.to_string()))
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
@@ -187,8 +196,8 @@ fn failed_database_probe_exposes_health_without_terminating_or_repairing_policy(
     wait_unhealthy(address, &mut process.0);
     let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
         .env_clear()
-        .env("CALRELAY_BIND", address)
-        .args(["healthcheck", "live"])
+        .args(["healthcheck", "live", "--deployment-config"])
+        .arg(health_deployment(&database, address))
         .output()
         .unwrap();
     assert!(!result.status.success());
@@ -321,4 +330,21 @@ fn real_process_stall_is_exposed_until_explicit_sigterm_and_preserves_committed_
         assert_eq!(integrity, "ok");
         db.close().await;
     });
+}
+
+#[test]
+fn legacy_bind_is_rejected_with_upgrade_diagnostic_before_creating_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("must-not-exist.db");
+    let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .env("CALRELAY_BIND", "secret-invalid")
+        .env("CALRELAY_DATABASE", &database)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let diagnostic = String::from_utf8(result.stderr).unwrap();
+    assert!(diagnostic.contains("--deployment-config"), "{diagnostic}");
+    assert!(!diagnostic.contains("secret-invalid"));
+    assert!(!database.exists());
 }

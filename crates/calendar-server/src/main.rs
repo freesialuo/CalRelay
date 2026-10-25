@@ -15,12 +15,9 @@ async fn main() -> std::process::ExitCode {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("healthcheck") {
-        return healthcheck::run(&arguments[1..]).await.map_err(Into::into);
+        return healthcheck::run(&arguments[1..]).await;
     }
-    if !arguments.is_empty() {
-        return Err("usage: calendar-server [healthcheck [live|ready]]".into());
-    }
-    let config = Config::from_env()?;
+    let config = Config::from_args(arguments)?;
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

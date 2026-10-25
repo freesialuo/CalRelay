@@ -7,15 +7,19 @@ use std::{
 };
 
 fn probe(address: &str, mode: Option<&str>) -> Output {
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = dir.path().join("deployment.json");
+    std::fs::write(&deployment, serde_json::json!({"bind":address}).to_string()).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_calendar-server"));
-    command
-        .env_clear()
-        .env("CALRELAY_BIND", address)
-        .arg("healthcheck");
+    command.env_clear().arg("healthcheck");
     if let Some(mode) = mode {
         command.arg(mode);
     }
-    command.output().unwrap()
+    command
+        .arg("--deployment-config")
+        .arg(deployment)
+        .output()
+        .unwrap()
 }
 
 fn fixture(reply: &'static [u8], mode: Option<&str>, expected_path: &str) -> Output {
@@ -83,13 +87,52 @@ fn failed_or_malformed_probes_fail_closed() {
 fn probe_has_a_total_timeout_when_local_peer_stalls() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let started = std::time::Instant::now();
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = dir.path().join("deployment.json");
+    std::fs::write(
+        &deployment,
+        serde_json::json!({"bind": listener.local_addr().unwrap()}).to_string(),
+    )
+    .unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
         .env_clear()
-        .env("CALRELAY_BIND", listener.local_addr().unwrap().to_string())
-        .env("CALRELAY_HEALTHCHECK_TIMEOUT_MS", "100")
-        .arg("healthcheck")
+        .args(["healthcheck", "--deployment-config"])
+        .arg(deployment)
+        .args(["--timeout-ms", "100"])
         .output()
         .unwrap();
     assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("healthcheck request failed"));
     assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn healthcheck_reuses_the_deployment_contract_and_rejects_legacy_bind_without_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let deployment = dir.path().join("deployment.json");
+    std::fs::write(&deployment, r#"{"bind":"127.0.0.1:8080"}"#).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .env("CALRELAY_BIND", "secret-invalid")
+        .args(["healthcheck", "--deployment-config"])
+        .arg(&deployment)
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(error.contains("CALRELAY_BIND was removed"));
+    assert!(!error.contains("secret-invalid"));
+    std::fs::write(
+        &deployment,
+        r#"{"bind":"127.0.0.1:8080","unknown":"secret-invalid"}"#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .args(["healthcheck", "--deployment-config"])
+        .arg(deployment)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-invalid"));
 }

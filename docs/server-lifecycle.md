@@ -1,16 +1,16 @@
 # 服务装配与生命周期（#27）
 
-`calendar-server` 依赖 application、adapters 与 storage；`Services` 持有迁移后的真实 SQLite 存储、应用投递策略和 ICS 接入预算。当前只安装健康、版本和 OpenAPI 只读路由；业务路由、生产任务调度和输出适配器由各自 Issue 交付，不启动虚假的投递器或连接外部服务。
+`calendar-server` 依赖 application、adapters 与 storage；`Services` 持有迁移后的真实 SQLite 存储、应用投递策略和 ICS 接入预算。当前安装健康、版本、OpenAPI 和 #30 机器路由；#34/#80 管理会话/配置只由显式可信装配启用，默认 binary `admin=None`。生产任务调度和输出适配器由各自 Issue 交付，不启动虚假的投递器或连接外部服务。
 
 ## 启动
 
-监听配置迁移中：以下 CALRELAY_BIND 是既有兼容接口，与用户最终要求“监听地址不属于环境变量”不符；固定值/CLI 参数与环境变量白名单由配置契约任务确定，不能据此作为最终部署接口。监督预算通过 typed API 配置，不新增环境变量绑定。
+监听配置由 #80/#82 的单一部署 JSON 契约定义。健康命令复用同一 bind 读取函数，不读取监听环境变量、不加载数据库；监督预算通过 typed API 配置，不新增环境变量绑定。
 
 ```sh
-CALRELAY_BIND=127.0.0.1:8080 CALRELAY_DATABASE=/data/calrelay.db cargo run -p calendar-server --locked
+CALRELAY_DATABASE=/data/calrelay.db cargo run -p calendar-server --locked -- --deployment-config /path/to/deployment.json
 ```
 
-必须显式指定监听地址与持久化数据库文件，数据库父目录必须已存在。先校验配置，注册 SIGTERM 处理器，再通过 `Storage::open` 完成迁移，最后绑定监听器；配置、迁移或绑定失败使进程非零退出。不存在“迁移失败但健康检查成功”的降级空服务。错误诊断不回显配置值或数据库内部错误。
+deployment.json 只包含 `{"bind":"部署者明确选择的数值地址:端口"}`（此文字是格式占位，不是有效地址）；不提供默认监听或替代监听 env。旧 `CALRELAY_BIND`（包括空值）在读取文件/打开 DB 前拒绝，给出移除该项并使用 `--deployment-config FILE` 的升级诊断，不回显值。未知/重复字段、非法地址、缺参数或不可读文件均启动失败。必须显式指定监听地址与持久化数据库文件，数据库父目录必须已存在。先校验配置，注册 SIGTERM 处理器，再通过 `Storage::open` 完成迁移，最后绑定监听器；配置、迁移或绑定失败使进程非零退出。不存在“迁移失败但健康检查成功”的降级空服务。错误诊断不回显配置值或数据库内部错误。
 
 HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 
@@ -28,7 +28,7 @@ HTTP 配置（均为启动时校验，非法数字不回退默认值）：
 - `GET /api/v1/version` 返回 `name`、包 `version`、`api_version: "v1"`；`GET /api/v1/openapi.json` 返回 OpenAPI 3.1 文档及统一错误 schema。
 - 每个请求由服务生成 `X-Request-Id`，不信任客户端提供的同名头；下游通过 `RequestId` extension 读取。失败响应形如 `{"error":{"code":"not_found","request_id":"…"}}`，正文 ID 与响应头一致，不包含底层异常细节。替换错误正文时保留 `Allow`、`WWW-Authenticate`、`Retry-After` 等协议头，移除旧正文长度、编码和校验缓存元数据。
 - 全局边界在路由匹配之外运行，涵盖 404/405。读取请求正文时按实际字节计数，超限返回 413，不能靠缺失或伪造 Content-Length 绕过。响应先有界收集，超限整体替换为 500 `response_too_large`，不发送截断成功内容；错误 envelope 小于最小响应预算。当前边界面向有限 JSON 响应，未来流式路由需单独定义契约。
-- 请求正文读取、处理和响应收集共用总时限，超时返回 408 `request_timeout`。路由不得阻塞 Tokio 执行线程。当前没有任何管理或摄取写路由。
+- 请求正文读取、处理和响应收集共用总时限，超时返回 408 `request_timeout`。路由不得阻塞 Tokio 执行线程。机器写路由见 protected-ingest，管理配置见 [来源配置](source-configuration.md)。
 - 健康端点按部署网络限制在内部，不在这里引入尚未交付的管理鉴权接口。
 
 ## 停止

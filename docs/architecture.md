@@ -167,4 +167,4 @@ API token 绑定 source_id，正文不允许覆盖；事件 external_uid 须与�
 
 核心服务持续承载网页/API、来源协调刷新、规划与投递。server 的 composition root 负责安全装配，runtime supervisor 监督真实注册工作器，HTTP、监督和业务用例职责分离；不扩为分布式高可用，不以假心跳承诺永不掉线。真实 HTTP/DB/工作进度探针、启动宽限、单调时钟、恢复 pause/cutoff 与健康暴露见[核心运行边界](product-design.md#中心核心服务与保活边界)；Docker HEALTHCHECK 不自行重启，核心不新增主动退出/自重启策略；Docker 恢复由外部部署机制负责，具体选型待确定。间歇接入器离线不等于核心不健康。
 
-业务来源/能力/周期、日历选择、规则、输出和订阅的持久配置由 #73 单一 owner 管理，UI 通过版本化 API 修改；env 不在启动时覆盖已保存业务配置。监听地址绝不属于 env；现有 `CALRELAY_BIND` 是待移除的历史冲突，本设计不改 runtime、不选择固定地址/端口或替代 env。逐项权威/持久性/生效时机见[配置权威表](operations.md#7-配置权威与迁移目标)。远端 producer 隔离、浏览器权限/token 策略和首次 UI 到投递/订阅时序见[产品设计](product-design.md)。
+业务来源/能力/周期、日历选择、规则、输出和订阅的持久配置由 #73 单一 owner 管理，UI 通过版本化 API 修改；env 不在启动时覆盖已保存业务配置。监听地址绝不属于 env；`CALRELAY_BIND` 已由 #80 移除，`--deployment-config FILE` 提供显式 bind，不选择固定地址/端口或替代 env。来源配置第一批见[来源配置](source-configuration.md)，#73 其余 CRUD/执行语义仍未完成。逐项权威/持久性/生效时机见[配置权威表](operations.md#7-配置权威与迁移目标)。远端 producer 隔离、浏览器权限/token 策略和首次 UI 到投递/订阅时序见[产品设计](product-design.md)。

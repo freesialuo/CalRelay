@@ -3,6 +3,7 @@ pub mod admin;
 mod config;
 mod http;
 mod ingest;
+mod source_configuration;
 pub mod supervision;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
