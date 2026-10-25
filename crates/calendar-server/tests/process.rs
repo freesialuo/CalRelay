@@ -63,6 +63,19 @@ fn sigterm_stops_listener_and_database_reopens_cleanly() {
     let mut response = String::new();
     connection.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    for mode in ["live", "ready"] {
+        let probe = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+            .env_clear()
+            .env("CALRELAY_BIND", address)
+            .args(["healthcheck", mode])
+            .output()
+            .unwrap();
+        assert!(
+            probe.status.success(),
+            "{}",
+            String::from_utf8_lossy(&probe.stderr)
+        );
+    }
     assert!(Command::new("kill")
         .args(["-TERM", &process.0.id().to_string()])
         .status()

@@ -303,6 +303,7 @@ dependencies = [
  "calendar-application",
  "calendar-storage",
  "jsonschema",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",
