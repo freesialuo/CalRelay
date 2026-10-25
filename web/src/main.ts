@@ -1,8 +1,10 @@
+import { mountAdminLogin } from "./admin-login";
 import { adminSession } from "./admin-session";
 import { readProbe } from "./api";
 import { SourcesAPI } from "./sources-api";
 import { mountSources } from "./sources-page";
 
+let disposeLogin: (() => void) | undefined;
 let sourcesView: ReturnType<typeof mountSources> | undefined;
 let renderedHash = location.hash;
 
@@ -92,6 +94,8 @@ function render(): void {
     return;
   }
   sourcesView?.dispose();
+  disposeLogin?.();
+  disposeLogin = undefined;
   sourcesView = undefined;
   renderedHash = location.hash;
   for (const controller of active) controller.abort();
@@ -117,7 +121,7 @@ function render(): void {
   const main = element("main");
   const notice = element(
     "p",
-    "来源配置已接入条件请求；写入需真实管理登录。规则、输出与订阅尚未接通。",
+    "可管理来源、日历映射与更新方式；规则、输出与订阅页面尚未接入。",
     "notice",
   );
   main.append(notice);
@@ -137,8 +141,8 @@ function render(): void {
     main.append(
       element("h1", "日历与规则"),
       panel(
-        "日历选择与提醒规则尚未接通",
-        "日历映射、规则及其 revision 必须来自真实 API。当前不能读取或保存，也不会用示例事件替代实例数据。",
+        "日历映射与提醒规则",
+        "日历映射请在来源页面编辑；提醒规则页面尚未接入。实例数据以真实 API 回读为准。",
         "写入发生 CAS 冲突时需要重新读取并核对；响应丢失不能当作保存成功，也不应自动重复提交。",
       ),
     );
@@ -168,7 +172,7 @@ function render(): void {
       probe("管理会话", "/api/admin/v1/session"),
       panel(
         "来源、规划、投递与审计",
-        "业务诊断 API 尚未接通。HTTP 成功不证明工作器已装配；来源陈旧、外部失败和核心健康需要分别读取。",
+        "本页面尚未接入业务诊断查询。HTTP 成功不证明工作器已装配；来源陈旧、外部失败和核心健康需要分别读取。",
         "页面返回或刷新会取消当前检查并清除检查结果。管理会话依赖安全 Cookie 与服务端身份校验，前端不保存 token。",
       ),
     );
@@ -177,16 +181,25 @@ function render(): void {
     "footer",
     "配置与运行诊断以真实服务为准 · 尚未完成产品全旅程验收",
   );
-  shell.append(header, nav, main, footer);
+  shell.append(header, nav);
+  mountLoginContainer(shell);
+  shell.append(main, footer);
   root.replaceChildren(shell);
 }
 window.addEventListener("hashchange", render);
 window.addEventListener("pagehide", () => {
   for (const controller of active) controller.abort();
   sourcesView?.dispose();
+  sourcesView = undefined;
+  disposeLogin?.();
+  disposeLogin = undefined;
   adminSession.clear();
 });
 render();
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) render();
 });
+
+function mountLoginContainer(shell: HTMLElement): void {
+  disposeLogin = mountAdminLogin(shell, adminSession);
+}

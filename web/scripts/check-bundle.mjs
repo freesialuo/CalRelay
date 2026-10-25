@@ -6,6 +6,8 @@ const markers = [
   "CALRELAY_PRIVATE_CANARY_79cc3812",
   "CALRELAY_PUBLIC_CANARY_10b72dfe",
   "synthetic_browser_test_challenge",
+  "synthetic-challenge:",
+  "offline-widget",
 ];
 await promisify(execFile)(
   process.execPath,

@@ -54,6 +54,16 @@ export class AdminSession extends EventTarget {
   #grant?: SessionGrant;
   #busy = false;
   #generation = 0;
+  #deadline?: ReturnType<typeof setTimeout>;
+  #store(grant: SessionGrant): void {
+    clearTimeout(this.#deadline);
+    this.#grant = grant;
+    this.#deadline = setTimeout(
+      () => this.clear(),
+      Math.max(0, grant.expires_at * 1000 - Date.now()),
+    );
+    if (typeof this.#deadline === "object") this.#deadline.unref();
+  }
   constructor(
     private readonly transport: typeof fetch = globalThis.fetch.bind(
       globalThis,
@@ -70,6 +80,8 @@ export class AdminSession extends EventTarget {
     return this.#busy;
   }
   clear(): void {
+    clearTimeout(this.#deadline);
+    this.#deadline = undefined;
     this.#grant = undefined;
     this.#generation++;
     this.dispatchEvent(new Event("change"));
@@ -104,7 +116,7 @@ export class AdminSession extends EventTarget {
         (data.expires_at ?? 0) * 1000 <= Date.now()
       )
         throw new Error("Invalid session grant");
-      this.#grant = data as SessionGrant;
+      this.#store(data as SessionGrant);
     } catch (error) {
       this.clear();
       if (error instanceof AdminFailure) throw error;
@@ -156,7 +168,7 @@ export class AdminSession extends EventTarget {
         next !== authorization.write_nonce &&
         generation === this.#generation
       )
-        this.#grant = { ...authorization, write_nonce: next };
+        this.#store({ ...authorization, write_nonce: next });
       return response;
     } finally {
       this.#busy = false;
@@ -172,7 +184,7 @@ export class AdminSession extends EventTarget {
     unsafe: boolean,
   ): Promise<Response> {
     if (
-      !/^\/api\/admin\/v1\/(?:session|sources(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?)$/.test(
+      !/^\/api\/admin\/v1\/(?:bootstrap|session|sources(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?)$/.test(
         path,
       )
     )

@@ -121,3 +121,16 @@ test("concurrent login cannot overwrite a newer authorization", async () => {
   }
   expect(session.writable).toBe(false);
 });
+
+test("session expiry emits a change and removes write capability", async () => {
+  const session = new AdminSession(async () =>
+    Response.json({ ...grant, expires_at: Math.floor(Date.now() / 1000) + 2 }),
+  );
+  await session.establish("test_challenge", signal());
+  let changes = 0;
+  session.addEventListener("change", () => {
+    changes++;
+  });
+  await expect.poll(() => changes, { timeout: 4000 }).toBe(1);
+  expect(session.writable).toBe(false);
+});

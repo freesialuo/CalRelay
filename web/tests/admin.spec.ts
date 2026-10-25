@@ -18,7 +18,12 @@ test("real local HTTP version, health, optional admin session and refresh", asyn
 }) => {
   const methods: string[] = [];
   page.on("request", (request) => {
-    if (/\/(api|health)\//.test(request.url())) methods.push(request.method());
+    if (
+      /\/(?:api\/v1\/version|health\/(?:live|ready)|api\/admin\/v1\/session)$/.test(
+        request.url(),
+      )
+    )
+      methods.push(request.method());
   });
   await page.goto("/admin/#diagnostics");
   // Sections are located by their accessible heading, independent of card layout.
@@ -196,7 +201,9 @@ for (const status of [200, 204]) {
       route.fulfill({ status }),
     );
     await page.goto("/admin/#diagnostics");
-    const card = page.locator("section").filter({ hasText: "管理会话" });
+    const card = page.locator("section").filter({
+      has: page.getByRole("heading", { name: "管理会话", exact: true }),
+    });
     await card.getByRole("button", { name: "检查", exact: true }).click();
     await expect(card.getByRole("status")).toContainText(
       status === 204 ? "本次管理身份与会话检查通过" : "未取得可信结果",
@@ -217,4 +224,27 @@ test("a stalled read has a bounded unknown outcome and can be retried", async ({
   await expect(
     card.getByRole("button", { name: "检查", exact: true }),
   ).toBeEnabled();
+});
+
+test("enabled management bootstrap cannot start login over plaintext HTTP", async ({
+  page,
+}) => {
+  await page.route("**/api/admin/v1/bootstrap", (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        turnstile: {
+          site_key: "public_fixture_key",
+          hostname: "127.0.0.1",
+          action: "admin-login",
+        },
+      },
+    }),
+  );
+  await page.goto("/admin/");
+  const panel = page.getByRole("region", { name: "管理登录", exact: true });
+  await expect(panel.getByRole("status")).toContainText("HTTPS");
+  await expect(
+    panel.getByRole("button", { name: "验证管理身份", exact: true }),
+  ).toBeHidden();
 });

@@ -44,12 +44,21 @@ export function mountSources(
   const authorize = () => {
     authorization.textContent = api.session.writable
       ? "当前浏览器持有短期写入授权；来源与 feed token 均不提供管理权限。"
-      : "当前没有可用的内存写入授权。请通过真实管理登录入口完成人机验证；仅有 Cookie 不能恢复 CSRF/nonce。未装配登录的部署暂不能写入。";
+      : "当前没有可用的管理写入授权。请在上方验证管理身份；刷新或授权失效后需要重新验证。来源和订阅 token 不提供管理权限。";
     for (const button of writes)
       button.disabled =
         !api.session.writable || writing || button.dataset.blocked === "true";
   };
-  api.session.addEventListener("change", authorize);
+  let previouslyAuthorized = api.session.writable;
+  const sessionChanged = () => {
+    authorize();
+    if (!api.session.busy) {
+      const authorized = api.session.writable;
+      if (authorized && !previouslyAuthorized) void load();
+      previouslyAuthorized = authorized;
+    }
+  };
+  api.session.addEventListener("change", sessionChanged);
   const display = (message: string, state: string) => {
     if (!disposed) {
       status.textContent = message;
@@ -189,6 +198,8 @@ export function mountSources(
     const verify = node("button", "读取最新版本（保留输入）");
     verify.type = "button";
     const compare = node("div");
+    const outcome = node("p");
+    outcome.setAttribute("role", "alert");
     let blocked = retired;
     const localWrites = new Set<HTMLButtonElement>([save]);
     let inFlight: AbortController | undefined;
@@ -199,10 +210,9 @@ export function mountSources(
       inFlight?.abort();
       api.session.clear();
       blocked = true;
-      display(
-        "写入结果未知：取消等待不等于撤回。请重新登录并读取该来源核实，勿重复提交。",
-        "error",
-      );
+      outcome.textContent =
+        "写入结果未知：取消等待不等于撤回。请重新登录并读取该来源核实，勿重复提交。";
+      display(outcome.textContent, "error");
     });
     const write = async (
       operation: (sourceId: string, signal: AbortSignal) => Promise<void>,
@@ -223,6 +233,7 @@ export function mountSources(
       verify.disabled = true;
       cancelRequest.hidden = false;
       authorize();
+      outcome.textContent = "";
       display("写入中，请等待服务端回执…", "pending");
       let confirmed = false;
       try {
@@ -235,6 +246,10 @@ export function mountSources(
             ["unknown", "conflict", "denied"].includes(error.kind)
           )
             blocked = true;
+          outcome.textContent =
+            error instanceof AdminFailure
+              ? error.message
+              : "未确认写入结果，请读取当前来源核实。";
           fail(error);
         }
       } finally {
@@ -301,7 +316,7 @@ export function mountSources(
         display("已读取当前来源，请比较后显式采用最新版本。", "success");
       });
     });
-    form.append(save, cancel, verify, cancelRequest, compare);
+    form.append(outcome, save, cancel, verify, cancelRequest, compare);
     if (record && !retired) {
       const retire = node("button", "退休来源");
       retire.type = "button";
@@ -380,7 +395,7 @@ export function mountSources(
       disposed = true;
       for (const controller of requests) controller.abort();
       if (writing) api.session.clear();
-      api.session.removeEventListener("change", authorize);
+      api.session.removeEventListener("change", sessionChanged);
       window.removeEventListener("beforeunload", unload);
     },
   };

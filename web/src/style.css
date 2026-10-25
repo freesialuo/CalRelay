@@ -188,3 +188,7 @@ button:disabled {
 .source-form [hidden] {
   display: none;
 }
+h1,
+h2 {
+  overflow-wrap: anywhere;
+}
