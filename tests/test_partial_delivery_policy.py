@@ -160,6 +160,20 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
                     pr['body'] = span + '\n' + self.pr['body']
                     self.assertEqual(validate_metadata(pr), ([], 36))
 
+    def test_lazy_blockquote_examples_do_not_activate_partial_delivery(self):
+        for quote in ('> Example only', '>> Nested example', '  > Indented example'):
+            with self.subTest(quote=quote):
+                pr = deepcopy(self.pr)
+                pr['body'] = quote + '\n' + self.pr['body']
+                self.assertTrue(validate_metadata(pr)[0])
+                pr['body'] = quote + '\n-*_' + '\n' + self.pr['body']
+                self.assertTrue(validate_metadata(pr)[0])
+            for separator in ('\n\n', '\n# Actual delivery\n', '\n---\n'):
+                with self.subTest(quote=quote, separator=separator):
+                    pr = deepcopy(self.pr)
+                    pr['body'] = quote + separator + self.pr['body']
+                    self.assertEqual(validate_metadata(pr), ([], 36))
+
     def test_full_delivery_still_requires_visible_branch_closing(self):
         for body in ('Refs #36\nCloses #86', '<!-- Closes #36 -->',
                      '```\nCloses #36\n```', '> Closes #36'):
