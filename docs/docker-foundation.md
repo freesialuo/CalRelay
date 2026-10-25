@@ -5,7 +5,7 @@
 ## 构建与配置
 
 ```sh
-docker build --tag calrelay:local .
+docker build --target runtime --tag calrelay:local .
 cp examples/docker-deployment.json deployment.json
 mkdir -p secrets
 docker compose config --quiet
@@ -19,6 +19,8 @@ docker compose up -d
 Compose 的 `deployment.json` 与 `secrets` bind 必须预先存在（`create_host_path: false`），配置错误应明确失败。不要把示例无管理员模式用于生产管理。可把整个服务接入受控内部代理网络；不要直接公开管理端口、Docker socket 或任意来源 CORS。更改示例端口时同时修改 JSON bind 与 Compose 端口映射；不新增监听 env。
 
 ## 构建与运行边界
+
+CD 构建接口：context 为仓库根 `.`，file 为根 `Dockerfile`，最终 target 为 `runtime`（也是默认最后阶段）；中间阶段为 `web` / `rust`。无 secret/build arg、无可开启 harness 的参数，Rust feature 固定在 Dockerfile 内。PR 构建不 push，发布 workflow 由独立流程 owner 维护，本叶子不执行首次发布。
 
 - Rust 1.99.1、Node 24.19.0、distroless cc-debian12 nonroot 使用固定多架构 index digest；Cargo.lock/npm lockfile 锁定依赖。常规依赖更新通过 PR 更新 digest 与验证记录，不跟随浮动 tag。此基础不承诺跨不同 CPU/编译环境的逐字节相同结果。
 - Node 阶段真实 typecheck/build/bundle canary；Rust 只构建 `calendar-server --no-default-features --features production-web`，未启用 `test-harness`，最终仅复制 strip 后 binary 与空 `/data`。运行不需要 Node、编译器、shell、dist 目录或开发服务器。

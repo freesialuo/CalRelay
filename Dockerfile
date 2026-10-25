@@ -15,7 +15,7 @@ RUN cargo build --release --locked -p calendar-server --bin calendar-server --no
     && strip target/release/calendar-server \
     && mkdir /data
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS runtime
 COPY --from=rust /build/target/release/calendar-server /usr/local/bin/calrelay
 COPY --from=rust --chown=65532:65532 /data /data
 USER 65532:65532

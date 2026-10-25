@@ -130,7 +130,7 @@ jobs:
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Build locked production image
-        run: docker build --tag calrelay:ci .
+        run: docker build --target runtime --tag calrelay:ci .
       - name: Real isolated Engine packaging checks
         run: python3 scripts/check_docker_image.py calrelay:ci
 
