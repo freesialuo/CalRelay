@@ -38,6 +38,8 @@ pub enum CoreFault {
     Stalled(Component),
     #[error("core shutdown budget exceeded")]
     ShutdownTimeout,
+    #[error("shutdown cancellation or storage cleanup did not complete")]
+    ShutdownIncomplete,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Progress {
@@ -78,6 +80,7 @@ pub struct SupervisionConfig {
     pub stall_timeout: Duration,
     pub probe_interval: Duration,
     pub probe_timeout: Duration,
+    /// Graceful drain budget, then an equal bounded cancellation/rollback window if needed.
     pub shutdown_timeout: Duration,
 }
 impl Default for SupervisionConfig {
@@ -516,8 +519,21 @@ pub(crate) async fn serve(
         .is_err()
     {
         services.health.fail(CoreFault::ShutdownTimeout);
+        // All admitted operations participate, including futures in an embedding task
+        // outside this JoinSet. The latched signal wins over a concurrently released barrier.
+        services.cancel_admitted();
         tasks.abort_all();
-        // This deadline is reached only after an explicit stop or actual HTTP termination.
+        let cleanup = async {
+            tokio::join!(tasks.shutdown(), services.drain_cancelled());
+        };
+        if tokio::time::timeout(options.shutdown_timeout, cleanup)
+            .await
+            .is_err()
+        {
+            // The pool has been marked closed and cancellation remains latched. Do not
+            // report completed cleanup if foreign leases or noncooperative I/O still exist.
+            return Err(CoreFault::ShutdownIncomplete.into());
+        }
         return Err(CoreFault::ShutdownTimeout.into());
     }
     match terminal.or(shutdown_http_fault) {

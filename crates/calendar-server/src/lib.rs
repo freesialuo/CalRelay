@@ -46,6 +46,7 @@ pub struct Services {
     stopping: AtomicBool,
     tasks: RwLock<()>,
     shutdown: watch::Sender<bool>,
+    force_cancel: watch::Sender<bool>,
 }
 impl Services {
     /// Business task admission; HTTP readiness is evaluated by `health.snapshot()`.
@@ -57,6 +58,8 @@ impl Services {
         self.stopping.store(true, Ordering::SeqCst);
         self.shutdown.send_replace(true);
     }
+    /// None means admission was refused or force-cancelled after drain expiry.
+    /// Keep the complete bounded operation and its transactions inside this future.
     pub async fn run_task<T>(&self, operation: impl AsyncFnOnce(&Storage) -> T) -> Option<T> {
         if !self.ready() {
             return None;
@@ -65,7 +68,26 @@ impl Services {
         if !self.ready() {
             return None;
         }
-        Some(operation(&self.storage).await)
+        let mut cancellation = self.force_cancel.subscribe();
+        tokio::select! {
+            biased;
+            () = async {
+                while !*cancellation.borrow_and_update() {
+                    if cancellation.changed().await.is_err() { break; }
+                }
+            } => None,
+            result = operation(&self.storage) => Some(result),
+        }
+    }
+    fn cancel_admitted(&self) {
+        self.force_cancel.send_replace(true);
+    }
+    async fn drain_cancelled(&self) {
+        // Close the pool immediately while cancelled operations release their permits and
+        // transactions; close waits for SQLx rollback/checked-out connection cleanup.
+        tokio::join!(self.storage.close(), async {
+            let _permit = self.tasks.write().await;
+        });
     }
     pub async fn drain(&self) {
         self.stop();
@@ -94,6 +116,7 @@ impl Server {
         let ingest_policy = ingest::policy()?;
         let storage = Storage::open(&config.database).await?;
         let (shutdown, _) = watch::channel(false);
+        let (force_cancel, _) = watch::channel(false);
         Ok(Self {
             config,
             admin: None,
@@ -107,6 +130,7 @@ impl Server {
                 stopping: AtomicBool::new(false),
                 tasks: RwLock::new(()),
                 shutdown,
+                force_cancel,
             }),
         })
     }

@@ -457,3 +457,111 @@ async fn db_failure_and_manual_repair_change_health_without_stopping_the_core() 
     tx.send(()).unwrap();
     serving.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn shutdown_timeout_cancels_an_independently_admitted_transaction_before_return() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(&dir.path().join("admitted-cancel.db"));
+    let mut budgets = options();
+    budgets.shutdown_timeout = Duration::from_millis(80);
+    let server = Server::initialize_with_supervision(cfg.clone(), budgets)
+        .await
+        .unwrap();
+    let services = server.services.clone();
+    sqlx::query("CREATE TABLE shutdown_witness(value INTEGER)")
+        .execute(services.storage.pool())
+        .await
+        .unwrap();
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let operation_services = services.clone();
+    let operation = tokio::spawn(async move {
+        operation_services
+            .run_task(async |storage: &calendar_storage::Storage| {
+                let mut transaction = storage.pool().begin().await.unwrap();
+                sqlx::query("INSERT INTO shutdown_witness VALUES(86)")
+                    .execute(&mut *transaction)
+                    .await
+                    .unwrap();
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.await;
+                transaction.commit().await.unwrap();
+            })
+            .await
+    });
+    entered_rx.await.unwrap();
+    let (second_entered_tx, second_entered_rx) = tokio::sync::oneshot::channel();
+    let (second_release_tx, second_release_rx) = tokio::sync::oneshot::channel();
+    let second_services = services.clone();
+    let second = tokio::spawn(async move {
+        second_services
+            .run_task(async |_: &calendar_storage::Storage| {
+                second_entered_tx.send(()).unwrap();
+                let _ = second_release_rx.await;
+            })
+            .await
+    });
+    second_entered_rx.await.unwrap();
+    let listener = server.bind().await.unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(1), server.serve(listener, async {}))
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        calendar_server::StartError::Supervision(CoreFault::ShutdownTimeout)
+    ));
+    // All admitted futures must already be dropped before returning completed cleanup.
+    assert!(services.storage.pool().is_closed());
+    assert!(release_tx.send(()).is_err());
+    assert!(second_release_tx.send(()).is_err());
+    assert_eq!(second.await.unwrap(), None);
+    // No barrier release after return can permit a late commit in the embedding runtime.
+    assert_eq!(
+        operation.await.unwrap(),
+        None,
+        "the admitted operation survived shutdown and committed late"
+    );
+    assert!(services.storage.pool().is_closed());
+    let reopened = calendar_storage::Storage::open(&cfg.database)
+        .await
+        .unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM shutdown_witness")
+        .fetch_one(reopened.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 0,
+        "cancelled transaction must roll back before shutdown returns"
+    );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn unconfirmed_storage_cleanup_has_a_separate_bounded_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut budgets = options();
+    budgets.shutdown_timeout = Duration::from_millis(50);
+    let server =
+        Server::initialize_with_supervision(config(&dir.path().join("foreign-lease.db")), budgets)
+            .await
+            .unwrap();
+    let services = server.services.clone();
+    // A foreign lease is outside run_task's cancellation scope. Never claim it was drained.
+    let foreign = services.storage.pool().acquire().await.unwrap();
+    let listener = server.bind().await.unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(1), server.serve(listener, async {}))
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        calendar_server::StartError::Supervision(CoreFault::ShutdownIncomplete)
+    ));
+    assert!(
+        services.storage.pool().is_closed(),
+        "new acquisitions must be fenced even when cleanup is incomplete"
+    );
+    drop(foreign);
+    services.storage.close().await;
+}

@@ -50,3 +50,6 @@ SIGTERM/Ctrl-C 或 `Services::stop` 将健康就绪与业务准入置为 false�
 限额回归采用受控源码 mutation：临时取消请求字节上限，HTTP 契约测试必须从 413 退化为 200 而失败，再恢复生产实现验证 Green；编译失败不算 Red。恢复生命周期回归另经受控 mutation 验证：临时在启动中自动调用 resume，暂停断言实际从 `(1,1000)` 变为 `(0,1000)` 而失败；恢复原实现后通过。实际执行结果见 PR。
 
 实际参考：[Axum middleware](https://docs.rs/axum/0.8.6/axum/middleware/index.html)、[graceful shutdown](https://docs.rs/axum/0.8.6/axum/serve/struct.WithGracefulShutdown.html)、[有界 to_bytes](https://docs.rs/axum/0.8.6/axum/body/fn.to_bytes.html)。
+
+
+#86 关闭补充：正常停止先保留 shutdown_timeout 供在途操作排空；超时后广播取消所有 run_task 操作（包括独立嵌入任务），并 abort 受监督 future，再以等长窗口等待回滚与池收尾。取消返回 None；确认收尾后仍返回 ShutdownTimeout，无法确认则返回 ShutdownIncomplete，均不当作成功。不要把事务/连接带出有界操作。健康发现从不触发这些关闭步骤。
