@@ -1,4 +1,4 @@
-use calendar_server::{Config, Server};
+use calendar_server::DeploymentConfig;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -12,11 +12,11 @@ async fn main() -> std::process::ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::from_args(std::env::args().skip(1))?;
+    let config = DeploymentConfig::from_args(std::env::args().skip(1))?;
     // Register the termination handler before migrations or binding to avoid a startup race.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let server = Server::initialize(config).await?;
+    let server = config.initialize().await?;
     let listener = server.bind().await?;
     eprintln!("CalRelay listening on {}", listener.local_addr()?);
     server
