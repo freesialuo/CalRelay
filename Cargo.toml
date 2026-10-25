@@ -5,6 +5,7 @@ members = [
     "crates/calendar-application",
     "crates/calendar-adapters",
     "crates/calendar-storage",
+    "crates/calendar-server",
 ]
 
 [workspace.package]
