@@ -100,3 +100,7 @@ Exa 核对的 `ical 0.11.0` 公共源码（`src/line.rs`、`src/property.rs`、`
 ## 凭据与机器 token（#26）
 
 Exa 核对的 RustCrypto 0.10.1 官方 API 与公共源码、采用边界见 [凭据安全实现参考](credential-security.md#实现参考)。
+
+## 安全远程获取（#28）
+
+Exa 检索及锁定 Reqwest 0.12.24 源码核对记录见 [远程获取实现参考](remote-fetch.md#实现参考)。
