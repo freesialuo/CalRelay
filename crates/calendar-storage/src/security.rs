@@ -138,7 +138,9 @@ impl CredentialProvider for SecurityStore<'_> {
     ) -> Result<SecretBytes, SecurityError> {
         let row:CredentialRow=sqlx::query_as("SELECT kind,ciphertext,nonce,key_version,revision FROM credentials WHERE id=? AND kind=?")
             .bind(id).bind(expected_kind).fetch_optional(self.storage.pool()).await.map_err(storage_error)?.ok_or(SecurityError::Denied)?;
-        self.keys.decrypt(id, &row)
+        self.keys
+            .decrypt(id, &row)
+            .map(|secret| secret.with_revision(row.revision as u64))
     }
 }
 impl SecurityStore<'_> {

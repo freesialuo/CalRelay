@@ -32,6 +32,7 @@ pub struct HttpSource<F> {
 struct Checkpoint {
     #[serde(default)]
     binding: String,
+    credential_revision: Option<u64>,
     etag: Option<String>,
     last_modified: Option<String>,
 }
@@ -100,6 +101,7 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
             .fetch(RemoteFetchRequest {
                 url: url.to_string(),
                 authentication: self.authentication.clone(),
+                cached_credential_revision: checkpoint.credential_revision,
                 validators,
                 has_committed_snapshot: cursor.is_none() && state.has_snapshot && can_validate,
                 now_ms: now,
@@ -119,6 +121,7 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
         }
         let response_checkpoint = Checkpoint {
             binding: binding.clone(),
+            credential_revision: doc.credential_revision,
             etag: doc.validators.etag,
             last_modified: doc.validators.last_modified,
         };
@@ -210,6 +213,20 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
                 (events, next, snapshot_token)
             }
         };
+        if (next.is_some() || cursor.is_some())
+            && !matches!(self.authentication, RemoteAuthentication::None)
+            && doc.credential_revision.is_none()
+        {
+            return Err(E::InvalidSnapshot);
+        }
+        // The upstream version is scoped to the authenticated representation as well.
+        let snapshot_token = snapshot_token
+            .map(|token| {
+                serde_json::to_vec(&(token, doc.credential_revision))
+                    .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+                    .map_err(|_| E::Adapter)
+            })
+            .transpose()?;
         // A first-page validator cannot validate a whole paginated collection.
         let checkpoint = if next.is_some() || page_url != url {
             Checkpoint {

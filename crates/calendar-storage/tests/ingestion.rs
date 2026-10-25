@@ -174,11 +174,12 @@ async fn ac2_first_304_rejected_then_only_verification_advances_and_old_cas_fail
     Ok(())
 }
 
+type RecordedFetch = (String, bool, Option<String>, Option<u64>);
 struct FakeRemote {
     replies: std::sync::Mutex<
         std::collections::VecDeque<std::result::Result<RemoteFetchOutcome, RemoteFetchError>>,
     >,
-    calls: std::sync::Mutex<Vec<(String, bool, Option<String>)>>,
+    calls: std::sync::Mutex<Vec<RecordedFetch>>,
 }
 impl RemoteFetcher for FakeRemote {
     async fn fetch(
@@ -189,6 +190,7 @@ impl RemoteFetcher for FakeRemote {
             req.url.clone(),
             req.has_committed_snapshot,
             req.validators.etag,
+            req.cached_credential_revision,
         ));
         self.replies
             .lock()
@@ -208,6 +210,7 @@ impl RemoteFetcher for FakeRemote {
 }
 fn remote_reply(body: Vec<u8>) -> std::result::Result<RemoteFetchOutcome, RemoteFetchError> {
     Ok(RemoteFetchOutcome::Modified(RemoteDocument {
+        credential_revision: None,
         final_url: String::new(),
         body,
         validators: RemoteValidators {
@@ -652,6 +655,7 @@ async fn redirected_resources_do_not_reuse_a_different_targets_equal_etag() -> R
             }
             let uid = if index == 0 { "a" } else { "b" };
             Ok(RemoteFetchOutcome::Modified(RemoteDocument{
+    credential_revision:None,
     final_url:format!("https://calendar.example/feeds/{uid}"),
     body:format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261022T000000Z\r\nDTSTART:20261102T170000Z\r\nSUMMARY:Imported\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").into_bytes(),
     validators:RemoteValidators{etag:Some("\"1\"".into()),last_modified:None}
@@ -696,6 +700,117 @@ async fn redirected_resources_do_not_reuse_a_different_targets_equal_etag() -> R
             .fetch_all(db.pool())
             .await?;
     assert_eq!(live, vec!["b"]);
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn credential_revision_round_trips_with_the_committed_validators() -> Result {
+    use calendar_adapters::{
+        ingestion::{HttpSource, SourceFormat},
+        IcsLimits,
+    };
+    use std::{collections::VecDeque, sync::Arc};
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    let reply=Ok(RemoteFetchOutcome::Modified(RemoteDocument{credential_revision:Some(7),final_url:"https://calendar.example/feed".into(),body:b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTAMP:20261022T000000Z\r\nDTSTART:20261102T170000Z\r\nSUMMARY:Imported\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n".to_vec(),validators:RemoteValidators{etag:Some("\"same\"".into()),last_modified:None}}));
+    let remote = Arc::new(FakeRemote {
+        replies: std::sync::Mutex::new(VecDeque::from([
+            reply,
+            Ok(RemoteFetchOutcome::NotModified(RemoteValidators::default())),
+        ])),
+        calls: Default::default(),
+    });
+    let adapter = HttpSource {
+        fetcher: remote.clone(),
+        url: "https://calendar.example/feed".into(),
+        authentication: RemoteAuthentication::Bearer {
+            credential_id: "shared".into(),
+        },
+        calendar_id: "c".into(),
+        format: SourceFormat::Ics(IcsLimits::default()),
+    };
+    synchronize(
+        &db,
+        &adapter,
+        "s",
+        10,
+        DeletionPolicy::Limit(0),
+        SyncLimits::default(),
+    )
+    .await?;
+    let checkpoint: serde_json::Value =
+        serde_json::from_str(&db.source_state("s").await?.checkpoint.unwrap())?;
+    assert_eq!(checkpoint["credential_revision"], 7);
+    assert_eq!(
+        synchronize(
+            &db,
+            &adapter,
+            "s",
+            20,
+            DeletionPolicy::Limit(0),
+            SyncLimits::default()
+        )
+        .await?,
+        SyncOutcome::NotModified
+    );
+    {
+        let calls = remote.calls.lock().unwrap();
+        assert_eq!(calls[1].3, Some(7));
+        assert_eq!(calls[1].2.as_deref(), Some("\"same\""));
+    }
+    db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn credential_changes_between_pages_cannot_mix_account_snapshots() -> Result {
+    use calendar_adapters::ingestion::{HttpSource, JsonMapping, SourceFormat};
+    use std::{
+        collections::{BTreeMap, VecDeque},
+        sync::Arc,
+    };
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    let replies=[(7,"a",json!("/p2")),(8,"b",json!(null))].map(|(revision,uid,next)|Ok(RemoteFetchOutcome::Modified(RemoteDocument{credential_revision:Some(revision),final_url:"https://calendar.example/feed".into(),body:serde_json::to_vec(&json!({"snapshot_id":"same-upstream-version","items":[{"uid":uid,"name":uid,"status":"confirmed","when":{"kind":"utc","value":"2026-11-02T17:00:00Z"}}],"next":next})).unwrap(),validators:RemoteValidators::default()})));
+    let remote = Arc::new(FakeRemote {
+        replies: std::sync::Mutex::new(VecDeque::from(replies)),
+        calls: Default::default(),
+    });
+    let adapter = HttpSource {
+        fetcher: remote,
+        url: "https://calendar.example/feed".into(),
+        authentication: RemoteAuthentication::Bearer {
+            credential_id: "shared".into(),
+        },
+        calendar_id: "c".into(),
+        format: SourceFormat::Json(JsonMapping {
+            items: "/items".into(),
+            fields: BTreeMap::from([
+                ("external_uid".into(), "/uid".into()),
+                ("title".into(), "/name".into()),
+                ("status".into(), "/status".into()),
+                ("start".into(), "/when".into()),
+            ]),
+            next: "/next".into(),
+        }),
+    };
+    let before = db.source_state("s").await?;
+    assert_eq!(
+        synchronize(
+            &db,
+            &adapter,
+            "s",
+            10,
+            DeletionPolicy::Limit(0),
+            SyncLimits::default()
+        )
+        .await,
+        Err(IngestionError::InvalidSnapshot)
+    );
+    assert_eq!(db.source_state("s").await?, before);
     db.close().await;
     Ok(())
 }

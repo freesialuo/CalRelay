@@ -16,11 +16,14 @@ pub struct RemoteFetchRequest {
     pub url: String,
     pub authentication: RemoteAuthentication,
     pub validators: RemoteValidators,
+    /// Revision associated with cached authenticated validators.
+    pub cached_credential_revision: Option<u64>,
     /// Trusted caller sets this only for a successfully committed snapshot.
     pub has_committed_snapshot: bool,
     pub now_ms: i64,
 }
 pub struct RemoteDocument {
+    pub credential_revision: Option<u64>,
     /// Effective HTTPS URL after validated redirects; use as the base of page-relative links.
     pub final_url: String,
     pub body: Vec<u8>,

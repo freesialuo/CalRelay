@@ -2,10 +2,18 @@
 use std::{fmt, future::Future};
 use zeroize::Zeroizing;
 
-pub struct SecretBytes(Zeroizing<Vec<u8>>);
+pub struct SecretBytes(Zeroizing<Vec<u8>>, Option<u64>);
 impl SecretBytes {
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self(Zeroizing::new(bytes))
+        Self(Zeroizing::new(bytes), None)
+    }
+    /// Provider revision from the same record read as this secret.
+    pub fn with_revision(mut self, revision: u64) -> Self {
+        self.1 = Some(revision);
+        self
+    }
+    pub fn revision(&self) -> Option<u64> {
+        self.1
     }
     /// Only expose at a trusted cryptographic or transport boundary.
     pub fn expose(&self) -> &[u8] {
