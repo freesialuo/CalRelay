@@ -44,6 +44,11 @@ python3 scripts/check_docker_image.py calrelay:local
 
 脚本只创建带随机本任务前缀的容器与 named volumes，使用完整实际 admin/credentials 配置、合成身份/32字节 key 和 secret canary，最终清理自己的容器/卷。验证真实首页/资产/API、CLI/live、实际 readiness、Docker healthy 与无就绪误重启、非 root/只读挂载、SIGTERM 干净退出、正式 CLI 创建/重开解密旋转 Bark 凭据、SQLite 完整性与历史持久，以及导出根目录无 Node/harness/源码/secret canary。脚本不模拟/禁用鉴权，验证缺失管理身份真实拒绝，不 seed 业务源、不发送 Bark、不连接生产账号。当前 runtime 未组合时应观察 ready=503；后续真实组合可为 200，测试不会伪造 readiness。此停止测试不替代外部恢复和 stop/kill API 竞争实验。
 
-镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地尚未完成完整镜像构建/运行，arm64 亦未验证，index 存在 arm64 不等于已验收。
+镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地常规多阶段 Dockerfile 网络构建尚未完成，arm64 亦未验证，index 存在 arm64 不等于已验收。
 
 本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据，不能声称本地镜像运行通过；真实受控 CI 结果以当前 PR head Checks 为准。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。
+
+
+离线实际镜像验证：在相同固定 Node/Rust 基础镜像中，以禁网容器和只读挂载的专用公开依赖缓存执行 `npm ci --offline --ignore-scripts`、真实 typecheck/build/bundle canary，以及 `cargo build --release --offline --locked -p calendar-server --bin calendar-server --no-default-features --features production-web`。缓存只挂 npm `_cacache` 和 Cargo `registry`，不挂用户凭据或工具配置。将该实际编译 payload 交给 Dockerfile 未改动的最终 `runtime` 阶段，本地镜像 `sha256:2cd06b1baa28387a05dc902e5a45f709751ac3f9ffcca201fbad07ffc1e0e119` 通过完整脚本：真实 HTTP/管理拒绝/健康、非 root/只读挂载、30秒内 SIGTERM、SQLite/正式凭据 CLI 重开旋转、CA/时区与镜像内容。实际 ready=503，符合本批尚未装配生产 worker 的 main；这不代表三 worker/完整产品已验收。
+
+这项证据验证真实编译与 runtime 容器，**不把离线分步构建称为常规多阶段 Dockerfile 已在本地完整通过**。后者的标准网络构建/运行由统一 CD runner 验证，结果以对应提交的实际检查为准。首轮本地 smoke 还检出了测试输入默认0600、docker cp后root所有导致非root不可读的问题；仅合成测试文件显式0444，生产权限和鉴权保持严格，失败时输出有界脱敏诊断。

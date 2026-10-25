@@ -84,6 +84,10 @@ try:
         master.write_bytes(bytes(range(32)))  # Synthetic CI material, never copied into the image.
         secret = directory / "canary"
         secret.write_bytes(MARKER)
+        # docker cp preserves file mode but creates root-owned files in the volume.
+        # These are synthetic test inputs; permit the production UID to read them.
+        for synthetic_file in (deployment, probe_only, secret, master, turnstile):
+            synthetic_file.chmod(0o444)
         docker("cp", str(deployment), SEED + ":/run/calrelay/deployment.json")
         docker("cp", str(secret), SEED + ":/run/secrets/canary")
         docker("cp", str(master), SEED + ":/run/secrets/calrelay-master-v1")
@@ -102,7 +106,9 @@ try:
         require(state["HostConfig"]["ReadonlyRootfs"], "read-only root")
         mounts = {entry["Destination"]: entry for entry in state["Mounts"]}
         require(not mounts["/run/calrelay"]["RW"] and not mounts["/run/secrets"]["RW"], "read-only config/secrets")
-        port = state["NetworkSettings"]["Ports"]["3000/tcp"][0]["HostPort"]
+        published = state["NetworkSettings"]["Ports"].get("3000/tcp") or []
+        require(published, "container exited before its published port was available; see startup diagnostics")
+        port = published[0]["HostPort"]
         base = "http://127.0.0.1:" + port
         deadline = time.monotonic() + 45
         while True:
@@ -179,8 +185,16 @@ try:
         require("usr/local/bin/calrelay" in names, "standard binary present")
         require("etc/ssl/certs/ca-certificates.crt" in names and "usr/share/zoneinfo/UTC" in names, "CA and timezone data")
         require(not any("harness" in name or "node_modules" in name or name.endswith("/node") or name.startswith("build/") for name in names), "no harness/Node/source tree")
-    print("PASS: real image HTTP/assets/API/live, honest readiness, nonroot/read-only mounts, SIGTERM, SQLite reopen, runtime contents")
-    print("UNVERIFIED: production workers/credentials/UI journey, arm64, external recovery/Engine stop-kill races, upgrades/scanning/SBOM")
+    print("PASS: real image HTTP/assets/API/live, honest readiness, nonroot/read-only mounts, SIGTERM, SQLite reopen, real credential CLI create/rotate, runtime contents")
+    print("UNVERIFIED: production workers/real accounts/full UI journey, arm64, external recovery/Engine stop-kill races, upgrades/scanning/SBOM")
+except Exception as failure:
+    if isinstance(failure, subprocess.CalledProcessError):
+        error = (failure.stderr or b"").replace(MARKER, b"[SYNTHETIC_SECRET_REDACTED]")
+        print("Docker command diagnostics:", error.decode(errors="replace"), file=sys.stderr)
+    result = subprocess.run(["docker", "logs", "--tail", "30", CONTAINER], capture_output=True, timeout=10)
+    diagnostic = (result.stdout + result.stderr).replace(MARKER, b"[SYNTHETIC_SECRET_REDACTED]")
+    print("Container startup/stop diagnostics:", diagnostic.decode(errors="replace"), file=sys.stderr)
+    raise
 finally:
     for container in (CONTAINER, SEED):
         docker("rm", "--force", "--volumes", container, check=False)
