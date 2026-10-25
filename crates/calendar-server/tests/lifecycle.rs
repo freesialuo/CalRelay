@@ -11,7 +11,7 @@ fn config(path: &std::path::Path) -> Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         database: path.into(),
         max_request_bytes: 64,
-        max_response_bytes: 32_768,
+        max_response_bytes: 65_536,
         request_timeout: Duration::from_secs(1),
     }
 }
@@ -36,7 +36,7 @@ async fn get(
         .to_str()
         .unwrap()
         .to_owned();
-    let bytes = to_bytes(response.into_body(), 40_000).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 65_536).await.unwrap();
     let value = if bytes.is_empty() {
         serde_json::Value::Null
     } else {
@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 8);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 9);
     for path in [
         "/health/live",
         "/health/ready",

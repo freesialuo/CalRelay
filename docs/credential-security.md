@@ -18,7 +18,7 @@
 
 - 每次签发生成 32 随机字节，以 64 个小写十六进制字符返回一次；只落库 SHA-256 摘要。摘要输入有版本与 `api`/`feed` 用途前缀，无明文 token、主密钥或管理员身份信息。
 - API token 绑定存在的 source_id，分别授予 Upsert/Delete，至少一项；鉴权同时验证摘要、来源、动作、来源 enabled、revoked_at 和 expires_at。到期等号即失效，时间由调用者传入 UTC Unix 毫秒。
-- 订阅 token 绑定 public_id 和单一来源，只返回已授权来源，不提供写入能力；验证 token 与 public_id 后才取得来源。当前只支持 source-wide 的空对象 scope_json，其他范围显式拒绝；#32 将实现字段/日历过滤、权限先于缓存、ETag 与路由。
+- 订阅 token 绑定 public_id 和单一来源，只返回已授权来源，不提供写入能力；验证 token 与 public_id 后才取得来源。历史 source-only 鉴权 helper 只接受字面空对象 scope_json，其他范围显式拒绝；[#32 独立 feed 边界](readonly-feed.md)返回完整已验证 policy，实现有限字段/日历过滤、权限先于缓存、ETag 与路由。
 - `rotate_feed_token` 使用订阅 revision CAS 更换摘要，旧 token 立即失效，保留来源、期限与范围，撤销后不能借轮换复活。API token 更新通过签发新的最小权限 token 并撤销旧记录完成；不复用订阅或管理会话。
 - 撤销持久化且幂等，不因 UTC 回跳恢复。鉴权结果只是当次检查结果，敏感业务提交仍需在业务边界处理配置/权限变更竞争，不能把长期缓存的鉴权结果当成永不过期授权。
 
