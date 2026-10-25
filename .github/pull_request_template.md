@@ -4,6 +4,8 @@
 
 Closes #
 
+<!-- 完整交付关闭分支 Issue；部分交付请替换上一行，按 CONTRIBUTING.md 的 Delivery/Refs/closing/Remaining AC 格式声明已完成叶子和父项剩余责任，不关闭未完成父项。 -->
+
 ## 验证
 
 列出实际执行的检查及结果；未执行的项目说明原因。

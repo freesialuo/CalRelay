@@ -15,7 +15,20 @@ Issue（范围与验收）→ 分支 → 实现与本地检查 → 提交 → PR
 
 从最新 `origin/main` 创建分支：`<type>/<issue>-<slug>`，type 为 `feat`、`fix`、`docs`、`test`、`ci`、`chore` 或 `refactor`，例如 `feat/12-ics-ingestion`。分支号必须是本仓库对应的 Issue。
 
-PR 标题采用 `type(scope): description`，scope 可省略；正文写改动结果、实际验证与必要限制，并使用 `Closes #12`、`Fixes #12` 或 `Resolves #12` 关联同一 Issue。工作未完成时开 Draft PR。
+PR 标题采用 `type(scope): description`，scope 可省略；正文写改动结果、实际验证与必要限制。完整交付（默认，或显式 `Delivery: full`）使用 `Closes #12`、`Fixes #12` 或 `Resolves #12` 关闭分支对应的 Issue。工作未完成时开 Draft PR。
+
+已有父任务分支可以交付一个已完成的叶子范围，无需为通过校验而提前关闭父项。此时正文使用可见的独立文本行，例如：
+
+```text
+Delivery: partial
+Refs #36
+Closes #86
+Remaining AC: #36 AC1, AC2, AC3 — 生产 runtime 注册与最终 CLI 配置接通仍由后续任务验收
+```
+
+部分交付必须恰好声明一次分支 Issue 的 `Refs`，关闭一个不同的、当前开放且没有子项的真实 Issue，并用一行 `Remaining AC` 列出父项 AC 编号（逗号分隔）及具体剩余责任。编号须存在于当前父 Issue；分支父项保持开放，正文任何位置均不得含其 closing 关键字。目标叶子若已有原生 parent，必须与分支 Issue 一致；原生关系缺失时这些字段只声明逻辑追踪，不代表新建了原生关系，维护者仍须核对叶子范围和本 PR 实际成果。
+
+校验从 GitHub 读取当前 PR、分支 Issue 与叶子 Issue，读取失败不放行。注释、代码块、行内代码、引用和缩进代码中的字段不计入可见声明。部分模式不豁免标题、分支、main 目标、真实 Issue 类型、测试、CI 或合并授权；未声明该模式仍按完整交付校验。
 
 Dependabot 自动依赖 PR 是人工 Issue/分支命名规则的窄例外：校验器从当前 GitHub PR API 响应确认作者为 `dependabot[bot]` 且类型为 `Bot`、head/base 仓库 ID 相同且非空、分支以 `dependabot/` 开头并有后缀。仅免除 Issue 分支格式与 closing reference；标题格式、main 目标分支、全部测试和 quality-gate 保持不变。普通用户、其他 bot、fork 或身份信息缺失仍走普通规则，不能凭分支名、标签或正文获得例外。
 
