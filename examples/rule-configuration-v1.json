@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "name": "Start reminder",
+  "enabled": false,
+  "policy": {
+    "calendar_ids": [
+      "calendar-a"
+    ],
+    "lead_ms": 900000,
+    "all_day_time": "09:00"
+  },
+  "output_ids": [
+    "bark-a"
+  ]
+}
