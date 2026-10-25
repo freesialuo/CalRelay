@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod common;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
@@ -21,7 +22,11 @@ fn health_deployment(database: &std::path::Path, address: &str) -> std::path::Pa
 }
 fn spawn(database: &std::path::Path, bind: &str) -> Process {
     let deployment = database.with_extension("deployment.json");
-    std::fs::write(&deployment, serde_json::json!({"bind":bind}).to_string()).unwrap();
+    std::fs::write(
+        &deployment,
+        common::deployment(database.parent().unwrap(), bind).to_string(),
+    )
+    .unwrap();
     Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
@@ -61,6 +66,23 @@ fn sigterm_stops_listener_and_database_reopens_cleanly() {
     });
     let line = rx.recv_timeout(Duration::from_secs(10)).unwrap();
     let address = line.strip_prefix("CalRelay listening on ").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+            .env_clear()
+            .args(["healthcheck", "ready", "--deployment-config"])
+            .arg(health_deployment(&database, address))
+            .output()
+            .unwrap();
+        if result.status.success() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "real workers did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let mut connection = TcpStream::connect(address).unwrap();
     connection
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -70,7 +92,7 @@ fn sigterm_stops_listener_and_database_reopens_cleanly() {
         .unwrap();
     let mut response = String::new();
     connection.read_to_string(&mut response).unwrap();
-    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     for mode in ["live", "ready"] {
         let probe = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
@@ -79,7 +101,7 @@ fn sigterm_stops_listener_and_database_reopens_cleanly() {
             .output()
             .unwrap();
         assert!(
-            probe.status.success() == (mode == "live"),
+            probe.status.success(),
             "{}",
             String::from_utf8_lossy(&probe.stderr)
         );

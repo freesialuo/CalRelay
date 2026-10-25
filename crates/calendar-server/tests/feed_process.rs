@@ -1,5 +1,6 @@
 //! Real local HTTP process: no request target or capability may appear in stdout/stderr.
 #![cfg(unix)]
+mod common;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
@@ -38,7 +39,11 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
         (std::str::from_utf8(token.expose()).unwrap().to_owned(),url,secret)
     });
     let deployment = dir.path().join("deployment.json");
-    std::fs::write(&deployment, r#"{"bind":"127.0.0.1:0"}"#).unwrap();
+    std::fs::write(
+        &deployment,
+        common::deployment(dir.path(), "127.0.0.1:0").to_string(),
+    )
+    .unwrap();
     let stdout = dir.path().join("stdout");
     let mut process = Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))

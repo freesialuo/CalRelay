@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod common;
 use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader},
@@ -37,7 +38,8 @@ async fn real_standard_binary_mounts_guard_and_redacts_invalid_secret_before_lis
     let secret = dir.path().join("secret");
     std::fs::write(&secret, b"synthetic-production-test-secret").unwrap();
     let deployment = dir.path().join("deployment.json");
-    let document = json!({"bind":"127.0.0.1:0","admin":{"team":"synthetic-team","audience":"admin-aud","origin":"https://admin.example.test","hostname":"admin.example.test","action":"admin-login","site_key":"synthetic-site-key","administrators":{"alice-sub":"alice@example.test"},"session_seconds":120,"turnstile_secret_file":secret}});
+    let mut document = json!({"bind":"127.0.0.1:0","admin":{"team":"synthetic-team","audience":"admin-aud","origin":"https://admin.example.test","hostname":"admin.example.test","action":"admin-login","site_key":"synthetic-site-key","administrators":{"alice-sub":"alice@example.test"},"session_seconds":120,"turnstile_secret_file":secret}});
+    document["credentials"] = common::deployment(dir.path(), "127.0.0.1:0")["credentials"].clone();
     std::fs::write(&deployment, document.to_string()).unwrap();
     let mut child = Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))

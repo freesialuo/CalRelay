@@ -59,8 +59,18 @@ fn parse_rule_policy(raw: &str) -> Result<RulePolicy, PlanningError> {
     })
 }
 
-fn db_err(error: sqlx::Error) -> PlanningError {
-    PlanningError::Database(error.to_string())
+pub(crate) fn db_err(error: sqlx::Error) -> PlanningError {
+    match &error {
+        sqlx::Error::PoolTimedOut => PlanningError::Busy,
+        sqlx::Error::Database(e)
+            if e.code()
+                .and_then(|c| c.parse::<i32>().ok())
+                .is_some_and(|c| matches!(c & 255, 5 | 6)) =>
+        {
+            PlanningError::Busy
+        }
+        _ => PlanningError::Database("planning storage failed".into()),
+    }
 }
 
 impl ReminderPlanner for Storage {

@@ -172,6 +172,8 @@ pub struct PlanningRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanningError {
+    #[error("SQLite is busy; retry on a later planning scan")]
+    Busy,
     #[error("planning window or request parameters are invalid")]
     InvalidWindow,
     #[error("unsupported capability: {0}")]
