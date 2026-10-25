@@ -69,7 +69,7 @@ SQLite WAL 需要同主机本地文件系统，不能把多节点容器共享的
 | `/health/ready` | 迁移完成、数据库可读写、配置加载完成、核心工作器已启动 | 不接收新管理写入与 ingest |
 | 功能状态 | 各来源同步时间、Bark 错误、队列延迟、磁盘容量 | 降级告警，不直接判定进程死亡 |
 
-数据库写探测需限频、短超时，不在每次检查写大量审计。迁移期间 ready=false；live 给明确启动宽限。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启。
+探针复用同一核心 runtime，不创建第二套服务/调度循环，不写敏感数据；真实 HTTP/DB/必需工作器进度不得用独立 ticker 假冒。数据库写探测需限频、短超时，不在每次检查写大量审计。迁移期间 ready=false；live 给明确启动宽限，心跳/宽限/探测截止使用单调时钟。外部 ICS、Bark 或 Cloudflare 短时不可达不触发整个进程重启。
 
 **Docker healthcheck 将容器标记为 unhealthy，不会单独使普通 Compose 容器重启；restart 策略作用于进程退出。** 因此采用两层机制：核心任务监督器发现不可恢复故障时安全退出非零；宿主机独立监督（如 systemd timer）在持续 live 失败后执行受控重启。后者覆盖进程完全卡死的情况，必须按实际部署系统提供配置与演练。[Docker 重启策略](https://docs.docker.com/engine/containers/start-containers-automatically/)、[Compose healthcheck](https://docs.docker.com/reference/compose-file/services/#healthcheck)
 

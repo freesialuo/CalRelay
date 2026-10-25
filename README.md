@@ -24,7 +24,7 @@ flowchart LR
     ADM --> P
 ```
 
-首版采用 Rust 模块化单体、TypeScript 管理界面、单实例 SQLite 和 Docker 部署。模块通过明确接口协作，核心不依赖具体接入器或输出器。
+首版采用 Rust 模块化单体、TypeScript 管理界面、单实例 SQLite 和 Docker 部署。核心服务持续提供网页/API、协调来源刷新、规划与投递，并监督实际工作器；composition root 与 runtime supervisor 分工，业务模块通过明确接口协作，核心不依赖具体接入器或输出器。保活采用真实健康探针、有界故障退出与部署/外部监督，不承诺永不掉线。
 
 | 文档 | 内容 |
 | --- | --- |

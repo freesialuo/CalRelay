@@ -24,6 +24,8 @@ flowchart LR
     Bark -->|接受或错误响应| Platform
     Platform -->|管理身份与人机验证请求| Identity[Access 与 Turnstile]
     Identity -->|签名材料与验证结果| Platform
+    Deploy[Docker 与宿主机监督] -->|健康探测请求| Platform
+    Platform -->|live ready 与退出状态| Deploy
 ```
 
 ## DFD Level 1：主要数据流
@@ -59,6 +61,12 @@ flowchart LR
     D1 -->|订阅策略与 token 摘要| P7
     D2 -->|多源 revision 向量与事件| P7
     P7 -->|ICS 或鉴权后的 304| Client
+    Deploy[Docker 与外部监督] -->|健康探测请求| P8(8 核心运行监督与探针)
+    P2 -->|真实工作轮次与进度| P8
+    P5 -->|真实工作轮次与进度| P8
+    P6 -->|真实工作轮次与进度| P8
+    D1 -->|有界 DB 探测结果与恢复状态| P8
+    P8 -->|live ready 与故障诊断| Deploy
 ```
 
 失败的鉴权、越权、结构/语义校验不进入 P4，拒绝诊断不含 token 或事件正文。缓存属于 P7 的派生数据，必须在权限验证之后使用；图不为缓存增加一个外部可达真相源。
@@ -94,7 +102,18 @@ flowchart TB
         Delivery --> Secrets
         Push --> BarkAdapter[Bark HTTPS adapter]
         Render --> IcsAdapter[ICS renderer adapter]
-        Bootstrap[服务 bootstrap 与真实工作器注册] --> Source
+        Bootstrap[核心服务 composition root] --> Http[持续 HTTP 与静态网页服务]
+        Http --> Admin
+        Http --> Ingest
+        Http --> Feed
+        Bootstrap --> Supervisor[Runtime supervisor 与真实工作器注册]
+        Supervisor --> Probe[有界 HTTP DB 与工作进度探针]
+        Supervisor --> Clock[单调时钟与启动宽限]
+        Probe --> Repo
+        Supervisor --> Source
+        Supervisor --> Planner
+        Supervisor --> Delivery
+        Bootstrap --> Source
         Bootstrap --> Planner
         Bootstrap --> Delivery
     end
@@ -104,9 +123,11 @@ flowchart TB
     Repo --> DB[(单实例 SQLite)]
     Secrets --> SecretFile[部署只读密钥文件]
     BarkAdapter --> Bark[Bark 服务]
+    Docker[Docker 与宿主外部监督] --> Http
+    Http --> Supervisor
 ```
 
-domain/application 定义契约，adapters/storage 实现，server 装配。producer 无 DB、管理 API、主密钥或内部可信 context 权限；语言无关只表示协议互通。配置插件是受限 adapter 配置，远端可执行插件部署在独立进程/容器，由部署者选择隔离与资源限额，不由主服务加载任意代码。可执行下载、生命周期管理或沙箱产品化不在本轮首版承诺内。
+核心服务是持续运行的中心角色：composition root 负责安全配置、依赖装配和启动顺序，HTTP 服务持续提供网页/API，runtime supervisor 管理实际注册的来源扫描、规划和投递工作器。三者是职责分离的模块，不是将业务塞进一个巨型类，也不只是一次性调用库。domain/application 定义契约，adapters/storage 实现，server 装配。producer 无 DB、管理 API、主密钥或内部可信 context 权限；语言无关只表示协议互通。配置插件是受限 adapter 配置，远端可执行插件部署在独立进程/容器，由部署者选择隔离与资源限额，不由主服务加载任意代码。可执行下载、生命周期管理或沙箱产品化不在本轮首版承诺内。
 
 ## UML 主流程时序
 
@@ -114,6 +135,8 @@ domain/application 定义契约，adapters/storage 实现，server 装配。prod
 sequenceDiagram
     actor U as 管理员 UI
     participant A as 管理鉴权与配置 API
+    participant Core as 核心服务 composition root 与 HTTP
+    participant Sup as Runtime supervisor
     participant C as 能力协调与协议 adapter
     participant V as 标准源鉴权验证入口
     participant S as SQLite 仓储
@@ -123,6 +146,9 @@ sequenceDiagram
     actor X as 外部 producer
     actor F as 日历客户端
     participant G as 订阅鉴权与汇总
+    Core->>S: 迁移 配置 secret 引用与持久 pause cutoff 加载
+    Core->>Sup: 注册真实来源 规划 投递工作器与单调时钟
+    Core->>Core: 安全装配并持续提供网页 API
     U->>A: 来源 日历 周期 规则 输出 订阅 CRUD 与 CAS
     A->>A: Access 会话 CSRF Origin 与业务验证
     A->>S: 配置 revision 与审计原子持久化
@@ -160,9 +186,24 @@ sequenceDiagram
     G->>G: auth-before-cache 后命中缓存或投影汇总
     G->>S: 返回前再次核实 revision 与 policy fence
     G-->>F: private no-cache ICS 或获准的 304
+    Core->>Sup: 健康请求读取真实探针与工作进度
+    Sup->>S: 有界 DB 读写探测与恢复暂停查询
+    Sup-->>Core: live ready 与独立 freshness 诊断
+    alt 不可恢复核心故障
+        Sup->>Core: 停止领取 有界 drain 非零退出
+        Note over Core,Sup: 部署重启进程 完全卡死由宿主监督处理
+    else 单源或 Bark 外部失败
+        Note over C,B: 源级隔离 有界退避与业务降级 不整体重启
+    end
 ```
 
 拒绝响应实际返回调用方（上图 X 代表输入调用方，pull/manual 错误返回协调诊断/UI），不是向无关 producer 发消息。CAS 冲突不触发后续规划；规划与投递循环独立扫描持久状态，并非每次提交同步发送。源失败不会停止其他源。客户端 GET 决定读取时机，后台周期只负责支持 pull 的源刷新与规划；Bark 只发送到期规则，不能每周期全量盲发。
+
+## 中心核心服务与保活边界
+
+核心持续运行但不能承诺永不掉线。liveness 检查核心 HTTP 处理能力及实际必需工作器的进度；readiness 检查迁移、配置、安全装配、真实 DB 读写能力与必需工作器注册就绪，恢复 pause/cutoff 按安全契约反映且不得自动解除；freshness 是按来源能力的业务状态，与上述健康分离。探针使用现有 runtime 的有界操作，不再启动一套服务、任务循环或第二个 runtime，不写入敏感数据。DB 写探测仅用受控非敏感探测记录/事务且限频，具体方式由 #36/#75 冻结。
+
+工作器报告实际工作轮次/完成与失败进度，长等待状态也有可核实生命周期；独立 ticker 不能掩盖死锁。启动宽限、超时与停滞期限使用单调时钟，业务到期时间使用 UTC Clock。不可恢复 HTTP/DB/必需工作器故障须停止新领取、有界关闭并非零退出，由部署 restart policy 恢复；外部源/Bark 故障隔离、退避和降级，不造成整体重启风暴。Docker HEALTHCHECK 只改变健康状态，普通 restart policy 主要响应进程退出，完全卡死另由宿主外部监督探测并有限重启/告警。健康探针无权恢复 pause 或更改 cutoff，任务与水位依然以 SQLite 为真相源。
 
 ## 标准日历源契约（目标 v1，尚待 #73 冻结）
 

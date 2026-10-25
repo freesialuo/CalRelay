@@ -163,6 +163,8 @@ API token 绑定 source_id，正文不允许覆盖；事件 external_uid 须与�
 
 管理 API 在实现阶段提供 OpenAPI，并由契约生成 TypeScript 类型；禁止前后端各自手写不同的时间模型。事件 schema 是结构契约，跨字段与时区校验仍由领域层执行。
 
-## 8. 配置与部署契约
+## 8. 核心服务与配置部署契约
+
+核心服务持续承载网页/API、来源协调刷新、规划与投递。server 的 composition root 负责安全装配，runtime supervisor 监督真实注册工作器，HTTP、监督和业务用例职责分离；不扩为分布式高可用，不以假心跳承诺永不掉线。真实 HTTP/DB/工作进度探针、启动宽限、单调时钟、恢复 pause/cutoff 与有界故障退出见[核心运行边界](product-design.md#中心核心服务与保活边界)；Docker HEALTHCHECK 不自行重启，进程退出由部署策略恢复，完全卡死由外部监督处理。
 
 业务来源/能力/周期、日历选择、规则、输出和订阅的持久配置由 #73 单一 owner 管理，UI 通过版本化 API 修改；env 不在启动时覆盖已保存业务配置。监听地址绝不属于 env；现有 `CALRELAY_BIND` 是待移除的历史冲突，本设计不改 runtime、不选择固定地址/端口或替代 env。逐项权威/持久性/生效时机见[配置权威表](operations.md#7-配置权威与迁移目标)。远端 producer 隔离、浏览器权限/token 策略和首次 UI 到投递/订阅时序见[产品设计](product-design.md)。
