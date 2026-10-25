@@ -192,3 +192,9 @@ h1,
 h2 {
   overflow-wrap: anywhere;
 }
+.source-form label,
+.source-form legend {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}

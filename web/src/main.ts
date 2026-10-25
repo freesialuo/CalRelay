@@ -1,6 +1,8 @@
 import { mountAdminLogin } from "./admin-login";
 import { adminSession } from "./admin-session";
 import { readProbe } from "./api";
+import { ConfigurationAPI } from "./configuration-api";
+import { mountConfiguration } from "./configuration-page";
 import { SourcesAPI } from "./sources-api";
 import { mountSources } from "./sources-page";
 
@@ -31,6 +33,7 @@ const pages = [
   ["capabilities", "能力与周期"],
   ["calendars", "日历与规则"],
   ["outputs", "输出与订阅"],
+  ["subscriptions", "汇总订阅"],
   ["diagnostics", "诊断"],
 ] as const;
 const active = new Set<AbortController>();
@@ -121,7 +124,7 @@ function render(): void {
   const main = element("main");
   const notice = element(
     "p",
-    "可管理来源、日历映射与更新方式；规则、输出与订阅页面尚未接入。",
+    "按来源 → Bark 输出 → 提醒规则 → 汇总订阅配置。首次 Bark 凭据请先由部署管理员通过安全 CLI 初始化。",
     "notice",
   );
   main.append(notice);
@@ -137,26 +140,15 @@ function render(): void {
         "push-only 来源仅在明确 SLA 时判断 freshness。接入器离线不等于核心服务故障。",
       ),
     );
-  } else if (page === "calendars") {
-    main.append(
-      element("h1", "日历与规则"),
-      panel(
-        "日历映射与提醒规则",
-        "日历映射请在来源页面编辑；提醒规则页面尚未接入。实例数据以真实 API 回读为准。",
-        "写入发生 CAS 冲突时需要重新读取并核对；响应丢失不能当作保存成功，也不应自动重复提交。",
-      ),
-    );
-  } else if (page === "outputs") {
-    main.append(
-      element("h1", "输出与订阅"),
-      panel(
-        "Bark 输出尚未接通",
-        "Bark 接受请求（accepted）不等于设备已经展示通知。结果未知需要核对投递尝试与审计，不自动重发。",
-      ),
-      panel(
-        "订阅配置尚未接通",
-        "订阅是日历客户端的只读输出。feed token 不提供管理权限；订阅 URL 和一次性密钥需要真实权限与生命周期接口。",
-      ),
+  } else if (
+    page === "calendars" ||
+    page === "outputs" ||
+    page === "subscriptions"
+  ) {
+    const kind = page === "calendars" ? "rules" : page;
+    sourcesView = mountConfiguration(
+      main,
+      new ConfigurationAPI(kind, adminSession),
     );
   } else {
     main.append(

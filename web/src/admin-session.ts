@@ -132,7 +132,7 @@ export class AdminSession extends EventTarget {
   }
   async write(
     path: string,
-    method: "PUT" | "DELETE",
+    method: "PUT" | "DELETE" | "POST",
     headers: Record<string, string>,
     body: string | undefined,
     signal: AbortSignal,
@@ -184,7 +184,7 @@ export class AdminSession extends EventTarget {
     unsafe: boolean,
   ): Promise<Response> {
     if (
-      !/^\/api\/admin\/v1\/(?:bootstrap|session|sources(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?)$/.test(
+      !/^\/api\/admin\/v1\/(?:bootstrap|session|(?:(?:sources|rules|outputs|subscriptions)(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?|subscriptions\/[A-Za-z0-9_-]{1,128}\/token))$/.test(
         path,
       )
     )
@@ -242,13 +242,13 @@ export async function requireStatus(
   if (status === 409)
     throw new AdminFailure(
       "conflict",
-      "配置版本冲突或来源已退休。输入已保留；请重新读取并比较，勿覆盖新版本。",
+      "配置版本冲突或资源已退休。输入已保留；请重新读取并比较，勿覆盖新版本。",
       requestId,
     );
   if (status === 404)
     throw new AdminFailure(
       "missing",
-      "来源不存在、尚未托管或接口未装配；没有确认保存。",
+      "资源不存在、尚未托管或接口未装配；没有确认保存。",
       requestId,
     );
   if (status === 400 || status === 413 || status === 422)
