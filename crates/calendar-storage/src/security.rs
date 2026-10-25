@@ -235,7 +235,7 @@ pub enum ApiAction {
     Delete,
 }
 
-fn digest(purpose: &str, secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
+pub(crate) fn digest(purpose: &str, secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
     if secret.len() != 64
         || !secret
             .iter()
@@ -250,7 +250,7 @@ fn digest(purpose: &str, secret: &[u8]) -> Result<Vec<u8>, SecurityError> {
     hash.update(secret);
     Ok(hash.finalize().to_vec())
 }
-fn issue(purpose: &str) -> Result<(SecretBytes, Vec<u8>), SecurityError> {
+pub(crate) fn issue(purpose: &str) -> Result<(SecretBytes, Vec<u8>), SecurityError> {
     let mut raw = Zeroizing::new([0u8; 32]);
     random(raw.as_mut())?;
     let mut hex = Zeroizing::new(Vec::with_capacity(64));

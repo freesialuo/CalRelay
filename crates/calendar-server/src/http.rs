@@ -27,7 +27,8 @@ pub fn router(services: Arc<Services>, config: Config) -> Router {
         .route("/api/v1/version", get(|| async { Json(json!({"name":"CalRelay", "version":env!("CARGO_PKG_VERSION"), "api_version":"v1"})) }))
         .route("/api/v1/openapi.json", get(|| async { Json(openapi()) }))
         .fallback(|| async { StatusCode::NOT_FOUND })
-        .with_state(services)
+        .with_state(services.clone())
+        .merge(crate::feed::router(services, config.max_response_bytes))
         .layer(middleware::from_fn_with_state(config, boundary))
 }
 
