@@ -144,6 +144,29 @@ fn check_profile(event: &EventV1) -> Result<(), RenderError> {
         ));
     }
     if let Some(recurrence) = &event.recurrence {
+        for date in recurrence.rdates.as_deref().unwrap_or_default() {
+            if let RDate::Period(period) = date {
+                if matches!(period.start, Temporal::Date { .. }) {
+                    return Err(RenderError::Unsupported("DATE-valued RDATE PERIOD"));
+                }
+                if let Some(end) = &period.end {
+                    let compatible = match (&period.start, end) {
+                        (Temporal::Utc { .. }, Temporal::Utc { .. })
+                        | (Temporal::Floating { .. }, Temporal::Floating { .. }) => true,
+                        (
+                            Temporal::Zoned { tzid: start, .. },
+                            Temporal::Zoned { tzid: end, .. },
+                        ) => start == end,
+                        _ => false,
+                    };
+                    if !compatible {
+                        return Err(RenderError::Unsupported(
+                            "RDATE PERIOD endpoint timezone bindings",
+                        ));
+                    }
+                }
+            }
+        }
         for exception in recurrence.exceptions.as_deref().unwrap_or_default() {
             if exception.range != RecurrenceRange::Single
                 || !matches!(exception.change, Change::Cancelled)

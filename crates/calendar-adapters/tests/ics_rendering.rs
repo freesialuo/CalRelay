@@ -231,3 +231,77 @@ fn ac2_timezone_binding_cannot_be_borrowed_from_another_event() {
         "a same-name custom definition must not reinterpret another event's IANA binding"
     );
 }
+
+#[test]
+fn ac2_date_periods_are_explicitly_rejected() {
+    let mut value = serde_json::to_value(event()).unwrap();
+    value["start"] = json!({"kind":"date","date":"2026-11-02"});
+    value["duration"] = json!("P1D");
+    value["recurrence"] = json!({"rdates":[{"kind":"period","start":{"kind":"date","date":"2026-11-09"},"duration":"P1D"}]});
+    let original: EventV1 = serde_json::from_value(value).unwrap();
+    calendar_domain::validate_event(&original).unwrap();
+    assert!(matches!(
+        render_ics(&[entry(&original)]),
+        Err(RenderError::Unsupported(_))
+    ));
+}
+
+#[test]
+fn ac2_period_endpoints_require_one_timezone_binding() {
+    for (start, end) in [
+        (
+            json!({"kind":"zoned","local":"2026-11-09T09:00:00","tzid":"Custom/Source"}),
+            json!({"kind":"zoned","local":"2026-11-09T11:00:00","tzid":"Custom/Other"}),
+        ),
+        (
+            json!({"kind":"zoned","local":"2026-11-09T09:00:00","tzid":"Custom/Source"}),
+            json!({"kind":"utc","value":"2026-11-09T11:00:00Z"}),
+        ),
+        (
+            json!({"kind":"utc","value":"2026-11-09T09:00:00Z"}),
+            json!({"kind":"zoned","local":"2026-11-09T11:00:00","tzid":"Custom/Source"}),
+        ),
+    ] {
+        let mut value = serde_json::to_value(event()).unwrap();
+        value["timezones"] = json!([
+            {"tzid":"Custom/Source","vtimezone":include_str!("fixtures/render/source.vtimezone")},
+            {"tzid":"Custom/Other","vtimezone":include_str!("fixtures/render/source.vtimezone").replace("Custom/Source","Custom/Other")}
+        ]);
+        value["start"] = start.clone();
+        value["recurrence"] = json!({"rdates":[{"kind":"period","start":start,"end":end}]});
+        let original: EventV1 = serde_json::from_value(value).unwrap();
+        calendar_domain::validate_event(&original).unwrap();
+        assert!(matches!(
+            render_ics(&[entry(&original)]),
+            Err(RenderError::Unsupported(_))
+        ));
+    }
+}
+
+#[test]
+fn ac2_period_endpoints_with_same_binding_round_trip() {
+    for (start, end) in [
+        (
+            json!({"kind":"utc","value":"2026-11-09T09:00:00Z"}),
+            json!({"kind":"utc","value":"2026-11-09T11:00:00Z"}),
+        ),
+        (
+            json!({"kind":"floating","local":"2026-11-09T09:00:00"}),
+            json!({"kind":"floating","local":"2026-11-09T11:00:00"}),
+        ),
+        (
+            json!({"kind":"zoned","local":"2026-11-09T09:00:00","tzid":"Custom/Source"}),
+            json!({"kind":"zoned","local":"2026-11-09T11:00:00","tzid":"Custom/Source"}),
+        ),
+    ] {
+        let mut value = serde_json::to_value(event()).unwrap();
+        value["start"] = start.clone();
+        if start["kind"] == "zoned" {
+            value["timezones"] = json!([{"tzid":"Custom/Source","vtimezone":include_str!("fixtures/render/source.vtimezone")}]);
+        }
+        value["recurrence"] = json!({"rdates":[{"kind":"period","start":start,"end":end}]});
+        let original: EventV1 = serde_json::from_value(value).unwrap();
+        let output = render_ics(&[entry(&original)]).unwrap();
+        assert_eq!(parse(&output)[0].recurrence, original.recurrence);
+    }
+}
