@@ -1,6 +1,8 @@
 name: Container image
 
 on:
+  push:
+    branches: ['release-request/v*']
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -100,7 +102,8 @@ jobs:
     needs: build
     if: >-
       github.repository == 'freesialuo/CalRelay' && needs.build.outputs.publish == 'true' &&
-      ((github.event_name == 'release' && github.event.action == 'published') ||
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-request/v')) ||
+       (github.event_name == 'release' && github.event.action == 'published') ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish))
     runs-on: ubuntu-latest
     timeout-minutes: 20

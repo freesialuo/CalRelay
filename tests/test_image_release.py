@@ -60,6 +60,73 @@ class ImageReleasePolicyTests(unittest.TestCase):
         args.update(changes)
         return source_plan(**args)
 
+    def request(self, **changes):
+        reference = 'refs/heads/release-request/v1.2.3'
+        self.api.responses[PREFIX + '/git/ref/heads/release-request/v1.2.3'] = {
+            'ref': reference, 'object': {'type': 'commit', 'sha': WORKFLOW_SHA}}
+        self.api.responses[PREFIX + f'/compare/{WORKFLOW_SHA}...main'] = {
+            'status': 'ahead', 'merge_base_commit': {'sha': WORKFLOW_SHA}}
+        run = self.api.run(id=8, run_number=13, head_sha=WORKFLOW_SHA)
+        self.api.responses[PREFIX + f'/actions/workflows/42/runs?event=push&branch=main&head_sha={WORKFLOW_SHA}&per_page=100'] = {
+            'total_count': 1, 'workflow_runs': [run]}
+        self.api.responses[PREFIX + '/actions/runs/8'] = run
+        self.api.responses[PREFIX + '/actions/runs/8/jobs?filter=latest&per_page=100'] = deepcopy(
+            self.api.responses[PREFIX + '/actions/runs/7/jobs?filter=latest&per_page=100'])
+        args = dict(event_name='push', event={'repository': {'full_name': REPOSITORY},
+                                            'after': WORKFLOW_SHA, 'deleted': False, 'forced': False},
+                    ref=reference, sha=WORKFLOW_SHA, workflow_sha=WORKFLOW_SHA, api=self.api)
+        args.update(changes)
+        return args
+
+    def test_git_request_builds_existing_tag_using_qualified_main_control(self):
+        plan = source_plan(**self.request())
+        self.assertTrue(plan['publish'])
+        self.assertEqual(plan['sha'], SHA)
+        self.assertEqual(plan['workflow_sha'], WORKFLOW_SHA)
+        self.assertEqual(plan['version'], 'v1.2.3')
+        self.assertEqual(plan['ci_run'], 7)
+        self.assertIn(PREFIX + '/actions/runs/8', self.api.calls)
+        self.assertIn(PREFIX + '/actions/runs/7', self.api.calls)
+
+    def test_git_request_rejects_untrusted_refs_or_changed_workflow(self):
+        for changes in ({'ref': 'refs/heads/main'}, {'ref': 'refs/tags/v1.2.3'},
+                        {'ref': 'refs/heads/release-request/v1.2.3/extra'},
+                        {'workflow_sha': 'd' * 40}, {'event_name': 'pull_request_target'}):
+            with self.subTest(changes=changes), self.assertRaises(PolicyError):
+                source_plan(**self.request(**changes))
+        for key, value in (('deleted', True), ('forced', True), ('after', 'e' * 40),
+                           ('repository', {'full_name': 'fork/repo'})):
+            args = self.request()
+            args['event'][key] = value
+            with self.subTest(key=key), self.assertRaises(PolicyError):
+                source_plan(**args)
+
+    def test_git_request_rejects_non_main_failed_or_superseded_control(self):
+        for fault in ('ancestry', 'ci', 'moved', 'deleted'):
+            args = self.request()
+            if fault == 'ancestry':
+                self.api.responses[PREFIX + f'/compare/{WORKFLOW_SHA}...main']['status'] = 'diverged'
+            elif fault == 'ci':
+                self.api.responses[PREFIX + '/actions/runs/8']['conclusion'] = 'failure'
+            elif fault == 'moved':
+                self.api.responses[PREFIX + '/git/ref/heads/release-request/v1.2.3']['object']['sha'] = 'e' * 40
+            else:
+                del self.api.responses[PREFIX + '/git/ref/heads/release-request/v1.2.3']
+            with self.subTest(fault=fault), self.assertRaises(PolicyError):
+                source_plan(**args)
+            self.api = API()
+
+    def test_git_request_still_requires_immutable_target_tag_and_its_current_ci(self):
+        for fault in ('missing-tag', 'failed-tag-ci'):
+            args = self.request()
+            if fault == 'missing-tag':
+                del self.api.responses[PREFIX + '/git/ref/tags/v1.2.3']
+            else:
+                self.api.responses[PREFIX + '/actions/runs/7']['conclusion'] = 'failure'
+            with self.subTest(fault=fault), self.assertRaises(PolicyError):
+                source_plan(**args)
+            self.api = API()
+
     def test_canonical_versions_and_prerelease_rules(self):
         self.assertEqual(parse_version('v0.1.0').core, (0, 1, 0))
         self.assertTrue(parse_version('v1.2.3-rc.1').prerelease)
@@ -317,6 +384,19 @@ class ImageArtifactTests(unittest.TestCase):
                 self.publication(latest=False, after_pull=change)
             self.api = API()
 
+    def test_git_request_uses_same_publisher_and_rechecks_superseded_request(self):
+        policy = ImageReleasePolicyTests()
+        policy.api = self.api
+        self.context = {key: value for key, value in policy.request().items() if key != 'api'}
+
+        def move_request(api):
+            api.responses[PREFIX + '/git/ref/heads/release-request/v1.2.3']['object']['sha'] = 'e' * 40
+
+        with self.assertRaises(PolicyError):
+            self.publication(latest=False, after_pull=move_request)
+        self.assertFalse(any(c[:3] == ('buildx', 'imagetools', 'create') for c in self.docker_calls))
+        self.assertEqual(self.api.calls.count(PREFIX + '/git/ref/heads/release-request/v1.2.3'), 2)
+
     def test_metadata_lag_does_not_overwrite_existing_different_candidate(self):
         # A previous publication succeeded, but Packages still omits its tag.
         with self.assertRaises(PolicyError):
@@ -387,12 +467,15 @@ class ImageWorkflowTests(unittest.TestCase):
         import yaml
         path = Path(__file__).resolve().parents[1] / '.github/workflows/container-image.yml'
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(set(workflow['on']), {'pull_request', 'release', 'workflow_dispatch'})
+        self.assertEqual(set(workflow['on']), {'pull_request', 'release', 'workflow_dispatch', 'push'})
+        self.assertEqual(workflow['on']['push'], {'branches': ['release-request/v*']})
         self.assertEqual(workflow['permissions'], {'contents': 'read'})
         build, publish = workflow['jobs']['build'], workflow['jobs']['publish']
         self.assertNotIn('packages', build['permissions'])
         self.assertEqual(publish['permissions'], {'contents': 'read', 'actions': 'read', 'packages': 'write'})
         self.assertEqual(publish['needs'], 'build')
+        self.assertIn("github.event_name == 'push'", publish['if'])
+        self.assertIn("startsWith(github.ref, 'refs/heads/release-request/v')", publish['if'])
         self.assertIn("github.repository == 'freesialuo/CalRelay'", publish['if'])
         self.assertIn("github.ref == 'refs/heads/main'", publish['if'])
         self.assertEqual(publish['concurrency']['cancel-in-progress'], 'false')
