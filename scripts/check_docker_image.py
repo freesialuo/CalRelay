@@ -44,6 +44,18 @@ def get(base, path):
         return error.code, error.headers, error.read()
 
 
+
+def wait_ready(base, timeout=65):
+    deadline = time.monotonic() + timeout
+    while True:
+        status = get(base, "/health/ready")[0]
+        if status == 200:
+            return
+        require(status == 503, "unexpected readiness response")
+        require(time.monotonic() < deadline, "fresh production runtime must start all three workers and become ready")
+        time.sleep(0.2)
+
+
 def snapshot(directory, name):
     target = directory / name
     docker("cp", CONTAINER + ":/data/calrelay.db", str(target))
@@ -74,6 +86,13 @@ try:
         deployment = directory / "deployment.json"
         configuration = json.loads((Path(__file__).resolve().parents[1] / "examples/docker-deployment.json").read_text())
         deployment.write_text(json.dumps(configuration))
+        missing_bootstrap = []
+        for section in ("admin", "credentials"):
+            invalid = json.loads(deployment.read_text())
+            del invalid[section]
+            path = directory / f"missing-{section}.json"
+            path.write_text(json.dumps(invalid))
+            missing_bootstrap.append((section, path))
         turnstile = directory / "turnstile"
         turnstile.write_bytes(MARKER + b"_TURNSTILE")
         configuration["admin"]["turnstile_secret_file"] = "/run/secrets/intentionally-missing"
@@ -86,13 +105,15 @@ try:
         secret.write_bytes(MARKER)
         # docker cp preserves file mode but creates root-owned files in the volume.
         # These are synthetic test inputs; permit the production UID to read them.
-        for synthetic_file in (deployment, probe_only, secret, master, turnstile):
+        for synthetic_file in (deployment, probe_only, secret, master, turnstile, *(path for _, path in missing_bootstrap)):
             synthetic_file.chmod(0o444)
         docker("cp", str(deployment), SEED + ":/run/calrelay/deployment.json")
         docker("cp", str(secret), SEED + ":/run/secrets/canary")
         docker("cp", str(master), SEED + ":/run/secrets/calrelay-master-v1")
         docker("cp", str(turnstile), SEED + ":/run/secrets/turnstile")
         docker("cp", str(probe_only), SEED + ":/run/calrelay/probe-only.json")
+        for section, path in missing_bootstrap:
+            docker("cp", str(path), SEED + f":/run/calrelay/missing-{section}.json")
         docker("run", "--detach", "--name", CONTAINER, "--read-only",
                "--user", "65532:65532", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--pids-limit", "128",
@@ -131,18 +152,32 @@ try:
         require(get(base, "/api/admin/v1/sources")[0] in (401, 403), "real management auth must reject missing identity")
         for path in ("/api/unknown", "/admin/assets/%2e%2e%2fdeployment.json", "/run/secrets/canary"):
             require(get(base, path)[0] == 404, "path boundary " + path)
-        readiness = get(base, "/health/ready")[0]
-        require(readiness in (200, 503), "readiness must report the real runtime state")
-        print("Observed runtime readiness HTTP", readiness, flush=True)
+        # This volume is fresh and not restored/paused. Never accept missing workers.
+        wait_ready(base)
+        print("Observed production three-worker readiness HTTP 200", flush=True)
+        docker("exec", CONTAINER, "/usr/local/bin/calrelay", "healthcheck", "ready",
+               "--deployment-config", "/run/calrelay/deployment.json", "--timeout-ms", "2000")
         docker("exec", CONTAINER, "/usr/local/bin/calrelay", "healthcheck", "live",
                "--deployment-config", "/run/calrelay/deployment.json", "--timeout-ms", "2000")
         docker("exec", "-e", "CALRELAY_DATABASE=/run/secrets/no-database", CONTAINER,
                "/usr/local/bin/calrelay", "healthcheck", "live", "--deployment-config",
                "/run/calrelay/probe-only.json", "--timeout-ms", "2000")
+        health_deadline = time.monotonic() + 25
         while inspect()["State"]["Health"]["Status"] != "healthy":
-            require(time.monotonic() < deadline, "Docker live health deadline")
+            require(time.monotonic() < health_deadline, "Docker live health deadline")
             time.sleep(0.2)
-        require(inspect()["RestartCount"] == 0, "ready=false must not cause restart")
+        require(inspect()["RestartCount"] == 0, "healthy production runtime must not restart")
+        for section, _ in missing_bootstrap:
+            rejected_database = f"/data/rejected-{section}.db"
+            rejected = subprocess.run([
+                "docker", "exec", "-e", "CALRELAY_DATABASE=" + rejected_database, CONTAINER,
+                "/usr/local/bin/calrelay", "--deployment-config", f"/run/calrelay/missing-{section}.json",
+            ], capture_output=True, timeout=10)
+            require(rejected.returncode != 0, f"missing {section} must fail closed")
+            copied = subprocess.run([
+                "docker", "cp", CONTAINER + ":" + rejected_database, str(directory / f"rejected-{section}.db"),
+            ], capture_output=True, timeout=10)
+            require(copied.returncode != 0, f"missing {section} must fail before database creation")
         receipt = json.loads(docker("exec", CONTAINER, "/usr/local/bin/calrelay", "credential", "provision-bark",
                                     "--deployment-config", "/run/calrelay/deployment.json",
                                     "--credential-id", "packaging-bark", "--secret-file", "/run/secrets/canary"))
@@ -171,6 +206,7 @@ try:
                 pass
             require(time.monotonic() < deadline, "persistent restart deadline")
             time.sleep(0.1)
+        wait_ready(base)
         rotated = json.loads(docker("exec", CONTAINER, "/usr/local/bin/calrelay", "credential", "rotate-bark",
                                     "--deployment-config", "/run/calrelay/deployment.json",
                                     "--credential-id", "packaging-bark", "--expected-revision", "0"))
@@ -185,8 +221,8 @@ try:
         require("usr/local/bin/calrelay" in names, "standard binary present")
         require("etc/ssl/certs/ca-certificates.crt" in names and "usr/share/zoneinfo/UTC" in names, "CA and timezone data")
         require(not any("harness" in name or "node_modules" in name or name.endswith("/node") or name.startswith("build/") for name in names), "no harness/Node/source tree")
-    print("PASS: real image HTTP/assets/API/live, honest readiness, nonroot/read-only mounts, SIGTERM, SQLite reopen, real credential CLI create/rotate, runtime contents")
-    print("UNVERIFIED: production workers/real accounts/full UI journey, arm64, external recovery/Engine stop-kill races, upgrades/scanning/SBOM")
+    print("PASS: real image HTTP/assets/API/live, three-worker readiness after startup/reopen, nonroot/read-only mounts, SIGTERM, SQLite reopen, real credential CLI create/rotate, runtime contents")
+    print("UNVERIFIED: real accounts/full UI journey, arm64, external recovery/Engine stop-kill races, upgrades/scanning/SBOM")
 except Exception as failure:
     if isinstance(failure, subprocess.CalledProcessError):
         error = (failure.stderr or b"").replace(MARKER, b"[SYNTHETIC_SECRET_REDACTED]")
