@@ -1,3 +1,4 @@
+mod healthcheck;
 use calendar_server::DeploymentConfig;
 
 #[tokio::main]
@@ -13,6 +14,9 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("healthcheck") {
+        return healthcheck::run(&args[1..]).await;
+    }
     if args.first().is_some_and(|s| s == "credential") {
         let receipt =
             calendar_server::credentials_bootstrap::run_credential_cli(args.into_iter().skip(1))

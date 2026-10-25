@@ -10,7 +10,7 @@
 
 credentials可省略；提供时两个字段必填，未知/重复字段、null、非正/非规范版本号、重复版本、超过16个key或相对路径均拒绝。每个master-key文件恰好32个原始字节，不接受编码或换行。当前版本必须在映射中；保留旧版本直到所有记录和备份都已完成轮换。没有默认测试key或自动生成key。
 
-配置解析仅读取部署JSON并验证形状/路径，不打开master-key/Turnstile文件或数据库。只有标准server的initialize和明确的credential命令加载KeyRing；健康/诊断CLI应只读取DeploymentConfig.server，不调用initialize。bind仍只来自部署JSON，CALRELAY_BIND继续拒绝，数据库沿用CALRELAY_DATABASE。
+配置解析仅读取部署JSON并验证形状/路径，不打开master-key/Turnstile文件或数据库。只有标准server的initialize和明确的credential命令加载KeyRing；healthcheck CLI 通过 Config::deployment_bind_from_args 仅读取部署地址，不调用 initialize，不要求数据库或加载凭据文件。bind仍只来自部署JSON，CALRELAY_BIND继续拒绝，数据库沿用CALRELAY_DATABASE。
 
 初始化在监听前完成：加载配置的KeyRing和admin verifier，迁移数据库，装配共享Services/provider与管理guard，之后才bind。错误固定脱敏；无KeyRing时凭据provider返回MissingKey，不回退明文。恢复pause/cutoff不因装配或CLI解除。
 
@@ -50,7 +50,7 @@ RuntimeCredentialProvider持有共享Services/KeyRing，实现既有CredentialPr
 
 ## 验证与范围
 
-真实子进程和临时SQLite验证create-only、CAS替换/并发冲突、purpose拒绝、轮换后移除旧key、重开解密及既有Bark配置引用；文件/配置负例、输出脱敏、parse-only不打开缺失key/DB、失败不创建数据库、SIGTERM/restore状态保持。所有secret/key均为合成测试材料；不进行真实服务调用或用户凭据读取。
+真实子进程和临时SQLite验证create-only、CAS替换/并发冲突、purpose拒绝、轮换后移除旧key、重开解密及既有Bark配置引用；文件/配置负例、输出脱敏、parse-only不打开缺失key/DB、失败不创建数据库、SIGTERM/restore状态保持；合入#71后，真实healthcheck子进程同时带不存在的admin/master-key文件仍成功探测本地模拟HTTP，不要求数据库。所有secret/key均为合成测试材料；不进行真实服务调用或用户凭据读取。
 
 有效Red：标准binary原先拒绝credential子命令，合成provision测试观察到预期成功缺失；夹具/编译失败不计为Red。另外去掉purpose谓词的受控mutation会把跨kind替换变为Ok而预期Denied；恢复后通过。最终实际gate以PR记录为准。
 
