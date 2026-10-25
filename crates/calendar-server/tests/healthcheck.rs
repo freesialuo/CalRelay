@@ -138,7 +138,7 @@ fn healthcheck_reuses_the_deployment_contract_and_rejects_legacy_bind_without_se
 }
 
 #[test]
-fn admin_deployment_probe_does_not_load_secrets_or_require_database() {
+fn admin_and_credential_deployment_probe_does_not_load_secrets_or_require_database() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -148,6 +148,7 @@ fn admin_deployment_probe_does_not_load_secrets_or_require_database() {
         &deployment,
         serde_json::json!({
             "bind":address,
+            "credentials":{"current_key_version":1,"key_files":{"1":dir.path().join("missing-master-key")}},
             "admin":{"team":"synthetic-team","audience":"admin-aud",
             "origin":"https://admin.example.test","hostname":"admin.example.test",
             "action":"admin-login","site_key":"synthetic-site-key",

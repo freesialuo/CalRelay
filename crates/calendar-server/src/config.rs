@@ -82,6 +82,7 @@ fn number(
 pub struct DeploymentConfig {
     pub server: Config,
     pub admin: Option<crate::admin_bootstrap::AdminBootstrapConfig>,
+    pub credentials: Option<crate::credentials_bootstrap::CredentialKeysConfig>,
 }
 impl DeploymentConfig {
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ConfigError> {
@@ -123,7 +124,7 @@ impl DeploymentConfig {
         }
         serde_json::from_slice(bytes).map_err(|_| {
             ConfigError(
-                "invalid deployment configuration; expected explicit bind and optional admin",
+                "invalid deployment configuration; expected explicit bind and optional admin/credentials",
             )
         })
     }
@@ -134,15 +135,24 @@ impl DeploymentConfig {
         if let Some(admin) = &document.admin {
             admin.validate()?;
         }
+        if let Some(credentials) = &document.credentials {
+            credentials.validate()?;
+        }
         Ok(Self {
             server: Config::with_bind(document.bind, get)?,
             admin: document.admin,
+            credentials: document.credentials,
         })
     }
     fn server_only(self) -> Result<Config, ConfigError> {
         if self.admin.is_some() {
             return Err(ConfigError(
                 "admin configuration requires DeploymentConfig bootstrap",
+            ));
+        }
+        if self.credentials.is_some() {
+            return Err(ConfigError(
+                "credentials configuration requires DeploymentConfig bootstrap",
             ));
         }
         Ok(self.server)
@@ -154,7 +164,11 @@ impl DeploymentConfig {
         } else {
             None
         };
-        let server = crate::Server::initialize(self.server).await?;
+        let keys = self.credentials.as_ref().map(|c| c.load()).transpose()?;
+        let mut server = crate::Server::initialize(self.server).await?;
+        if let Some(keys) = keys {
+            server = server.with_credential_keys(keys)?;
+        }
         if let (Some(admin), Some(verifier)) = (self.admin, verifier) {
             Ok(server.with_admin_site_key(verifier, admin.site_key)?)
         } else {
@@ -169,4 +183,9 @@ struct Document {
     bind: SocketAddr,
     #[serde(default, deserialize_with = "crate::admin_bootstrap::configured_admin")]
     admin: Option<crate::admin_bootstrap::AdminBootstrapConfig>,
+    #[serde(
+        default,
+        deserialize_with = "crate::credentials_bootstrap::configured_credentials"
+    )]
+    credentials: Option<crate::credentials_bootstrap::CredentialKeysConfig>,
 }

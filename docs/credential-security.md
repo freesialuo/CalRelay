@@ -6,13 +6,15 @@
 
 - 使用固定 `chacha20poly1305 0.10.1` 的 XChaCha20-Poly1305；每次写入由操作系统 CSPRNG 产生独立 24 字节 nonce。密文包含 16 字节认证标签，明文长度限 1–65536 字节。
 - AAD 是 JSON 元组 `("CalRelay/credential/v1", id, kind, key_version)`，将凭据身份、用途与密钥版本绑定到密文；复制到其他行或篡改元数据均无法解密。SQL 同时禁止身份/类型更新。
-- `KeyRing::from_files(current, files)` 从版本到文件路径的映射加载正整数版本；每个文件恰好 32 原始字节，不接受文本编码、换行、缺失或长度错误。读取上限 33 字节。调用者须把文件独立于数据库、以只读 secret 挂载；库读取文件，不负责验证容器挂载标志或部署配置。
+- `KeyRing::from_files(current, files)` 从版本到文件路径的映射加载正整数版本；每个文件恰好 32 原始字节，不接受文本编码、换行、缺失或长度错误。读取上限 33 字节。#99 将常规文件只读/有界加载统一到 read_secret_file；Unix 拒绝末端 symlink、FIFO 和目录，错误保持固定分类。调用者须把文件独立于数据库、以只读 secret 挂载；库读取文件，不负责验证容器挂载标志或部署配置。
 - 主密钥、明文包装及随机 token 缓冲在 drop 时由 `zeroize` 清除；`SecretBytes` 不提供 Display/Serialize/Clone，Debug 固定脱敏。调用者仅在可信加密或网络边界通过 `expose()` 取值，并负责不打印、不自行长久复制。
 - `create_credential` 新建；`replace_credential` 用预期 revision 原子替换外部凭据值，也可用新值恢复已无法解密的记录；`rotate_credential` 解密旧值再用当前密钥重加密。更新以 revision 及原密文等条件执行 CAS，同时写 nonce、版本、revision 和 rotated_at，失败不部分写入。并发旧 revision 返回 Conflict，不覆盖新值。
 - 轮换步骤：独立生成新密钥文件并只读挂载；在 key ring 中保留旧版本、切换 current；按记录的 revision 逐条 rotate；核对所有 `credentials.key_version`，完成备份/恢复密钥保留计划后再移除旧密钥。中断后根据版本和 revision 续做；不自动丢弃旧密钥，也不把整库轮换宣称为单一事务。
 - MissingKey、Authentication、KeyFile、Storage 等错误为固定文本，不携带密钥、明文、SQL 参数、底层异常或文件路径。解密失败不返回部分明文。
 
 迁移 `0005` 建立 credentials、api_tokens、feed_subscriptions，给 sources 添加凭据外键。outputs 已有 credential_id，通过插入/更新及被引用凭据删除触发器保护引用，避免重建与投递历史关联的表。历史非空 outputs.credential_id 在旧版本尚无 credentials 可引用，迁移会拒绝该悬空引用并回滚，保留原表、配置和迁移历史；维护者须先调查并显式修复历史配置，不自动清空引用。
+
+生产本地初始化与 runtime provider 见 [凭据 bootstrap](credential-bootstrap.md)；不新增明文 HTTP 或 token 用途变化。
 
 ## token 边界
 
