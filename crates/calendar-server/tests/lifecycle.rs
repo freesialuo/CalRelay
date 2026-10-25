@@ -132,7 +132,12 @@ async fn http_contract_limits_ids_errors_and_openapi() {
                 .unwrap()
                 .ends_with("Error")
         );
-        assert_eq!(get(app.clone(), path, "GET", "").await.0, StatusCode::OK);
+        let expected = if path == "/health/ready" {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(get(app.clone(), path, "GET", "").await.0, expected);
     }
     server.services.stop();
     let (status, id, value) = get(app.clone(), "/health/ready", "GET", "").await;

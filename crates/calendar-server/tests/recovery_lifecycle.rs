@@ -28,7 +28,11 @@ async fn health(server: &Server) -> Result {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "production workers are not assembled"
+    );
     Ok(())
 }
 struct Time(i64);
@@ -117,7 +121,7 @@ async fn server_restart_preserves_recovery_pause_until_explicit_resume() -> Resu
             .fetch_one(server.services.storage.pool())
             .await?;
         assert_eq!(attempts, 0);
-        server.services.drain().await;
+        supervised_pause(server).await?;
     }
     backup::resume(&recovered).await?;
     let server = Server::initialize(config(&recovered)).await?;
@@ -150,5 +154,43 @@ async fn server_restart_preserves_recovery_pause_until_explicit_resume() -> Resu
         .await?;
     assert_eq!(old, "expired");
     server.services.drain().await;
+    Ok(())
+}
+
+// Exercise the real HTTP/DB probe loop on the recovered jobs, not just initialize/drop.
+async fn supervised_pause(server: Server) -> Result {
+    let services = server.services.clone();
+    let mut changes = services.health.subscribe();
+    let listener = server.bind().await?;
+    let address = listener.local_addr()?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let serving = tokio::spawn(server.serve(listener, async {
+        let _ = rx.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if matches!(
+                services.health.snapshot().database,
+                calendar_server::supervision::DatabaseState::Ready {
+                    recovery_paused: true
+                }
+            ) {
+                break;
+            }
+            changes.changed().await.unwrap();
+        }
+    })
+    .await?;
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(1))
+        .build()?
+        .get(format!("http://{address}/health/live"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), 200);
+    assert!(!services.health.snapshot().ready);
+    tx.send(()).unwrap();
+    serving.await??;
     Ok(())
 }
