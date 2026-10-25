@@ -570,3 +570,58 @@ async fn managed_source_configuration_revision_and_retirement_fence_warm_feed_ca
     assert!(!denied.headers().contains_key("etag"));
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM feed_subscriptions WHERE id='managed-feed' AND revoked_at IS NOT NULL").fetch_one(db.pool()).await.unwrap(),1);
 }
+
+#[tokio::test]
+async fn excessive_recurrence_output_rejects_without_304_old_payload_or_etag() {
+    let (_dir, server, url) = fixture().await;
+    let app = server.router();
+    let db = &server.services.storage;
+    let first = request(app.clone(), &url, None).await;
+    let tag = first.headers()["etag"].to_str().unwrap().to_owned();
+    let raw: String = sqlx::query_scalar("SELECT document_json FROM events WHERE id='event'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    value["title"] = "oversized-calendar-secret".repeat(200).into();
+    value["recurrence"] = serde_json::json!({"rrule":"FREQ=DAILY;COUNT=129","exceptions":[]});
+    for day in 1..=128 {
+        let at = chrono::DateTime::from_timestamp(1792922400 + day * 86400, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        value["recurrence"]["exceptions"].as_array_mut().unwrap().push(serde_json::json!({"recurrence_id":{"kind":"utc","value":at},"range":"single","change":{"kind":"cancelled"}}));
+    }
+    for sql in [
+        "UPDATE events SET document_json=? WHERE id='event'",
+        "UPDATE event_revisions SET document_json=? WHERE event_id='event'",
+    ] {
+        sqlx::query(sql)
+            .bind(value.to_string())
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE sources SET revision=revision+1 WHERE id='s'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let response = request(app, &url, Some(&tag)).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    assert!(!response.headers().contains_key("etag"));
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), 16384)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    for forbidden in [
+        "BEGIN:VCALENDAR",
+        "visible title",
+        "oversized-calendar-secret",
+    ] {
+        assert!(!body.contains(forbidden));
+    }
+}

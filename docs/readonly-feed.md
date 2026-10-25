@@ -28,7 +28,7 @@
 
 ## 快照、缓存与并发
 
-授权、scope、calendar 归属、source revision、事件和最新事件修订时间在 SQLite 一致读快照中取得。事件按内部 ID 排序，包含保留文档的删除墓碑；不依赖提醒任务或规划窗口。缺失事件修订元数据使整份请求失败，不静默遗漏。每份快照最多 10000 事件、16 MiB 原始 JSON；输出受服务 max_response_bytes 限制，不截断返回部分日历。
+授权、scope、calendar 归属、source revision、事件和最新事件修订时间在 SQLite 一致读快照中取得。事件按内部 ID 排序，包含保留文档的删除墓碑；不依赖提醒任务或规划窗口。缺失事件修订元数据使整份请求失败，不静默遗漏。每份快照最多 10000 事件、16 MiB 原始 JSON；在调用 renderer 前对原始文档做保守预算准入：VCALENDAR 固定 256 bytes，每个母事件按 `512 + 4 × 原始 JSON bytes`，每个例外按 `512 + 4 × (原始标题 bytes + recurrence_id JSON bytes)` 收费；4 倍覆盖当前受限 profile 的 TEXT 转义、CRLF/折叠和 temporal/property 编码，512 覆盖固定 UID/stamps/status framing。逐项 checked arithmetic 扣减 `max_response_bytes`，溢出或超限在原始/投影渲染前返回 503，无旧 payload/ETag。该估算刻意保守，可能拒绝实际输出能容纳的输入；增加 renderer 支持时须重新核实此界。最终输出仍再检查长度，不截断返回部分日历。
 
 权限检查先于每次缓存查找及 If-None-Match 比较。缓存键包括订阅 ID、配置 revision、source ID、数据 revision 和原始 scope 的 SHA-256；ETag 再绑定完整键及最终输出字节。不同配置或数据 revision 即使生成相同正文也有不同 ETag。缓存最多保留 16 份受输出预算约束的文档，满后清空；无共享缓存或长期授权缓存。
 
@@ -55,6 +55,6 @@
 | AC3 | application/feed_contract：逐字段及 override 独立投影、严格 schema 负例；storage：跨 source 拒绝、calendar 过滤、一致旧/新快照、缺 metadata 故障；HTTP：缩权后旧 ETag 得到新正文或空日历、renderer 边界；合并 #30 后验证 feed token 不能调用 ingest、有效 API delete 使 feed 缓存失效且保留 ingest OpenAPI；启用 management 后仍允许无 Access/Turnstile 的 feed GET/304，模拟管理 transport 调用计数为零，admin/ingest OpenAPI 路径均保留；feed_process：真实日志无 URL/token |
 | 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007、已有 0007+0009 和已有 0007+0009+0010、已有 0007+0009+0010+0011 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
 
-有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。补充 OpenAPI 契约回归：最初因缺少 feed GET 描述而失败，新增 GET/HEAD 契约并由真实服务重新生成 TypeScript 后通过；文档增大导致生命周期夹具预算不足的 500 不计需求 Red，生产响应限制未改变。最终完整验证和已有审核状态见 PR。
+有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。补充 OpenAPI 契约回归：最初因缺少 feed GET 描述而失败，新增 GET/HEAD 契约并由真实服务重新生成 TypeScript 后通过；文档增大导致生命周期夹具预算不足的 500 不计需求 Red，生产响应限制未改变。自动 Code Review P2 发现“渲染后才检查大小”的例外扇出内存风险。有效回归使用 1 KiB 标题、256 个受 renderer 支持的取消例外：原始输入预算可容纳，实际输出超过 256 KiB；预算 guard 前会触发禁止进入的 encoder 回调，修复后 legacy/v1 均提前拒绝。受控跳过例外收费后同一回归再次失败，恢复后通过；另验证算术溢出、充足预算支持原事件、HTTP 503 不回传旧 ETag/正文。编译错误不计 Red。最终完整验证和已有审核状态见 PR。
 
 参考：通过 Exa 查阅 [Axum Router merge/state 官方源码](https://github.com/tokio-rs/axum/blob/axum-v0.8.6/axum/src/routing/mod.rs)，采用独立 router/state 后最小 merge；条件请求采用 [RFC 9110 §13.1.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.2)的弱比较，缓存指令依据 [RFC 9111 §5.2](https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2)；协议编码仍采用[既有 renderer](ics-rendering.md)，不重新实现 RFC 5545。

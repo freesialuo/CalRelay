@@ -126,7 +126,10 @@ async fn feed(
         key = snapshot.authorization.key.clone();
         let doc = match render(snapshot, state.max_bytes) {
             Ok(doc) => Arc::new(doc),
-            Err(()) => return StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+            Err(FeedRenderError::Invalid) => {
+                return StatusCode::UNPROCESSABLE_ENTITY.into_response()
+            }
+            Err(FeedRenderError::Budget) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
         let mut cache = state.cache.lock().await;
         // Bound retained output to at most sixteen max_response_bytes documents.
@@ -178,24 +181,68 @@ async fn finish_feed(
     h.insert("etag", document.etag.parse().expect("ASCII digest"));
     response
 }
-fn render(snapshot: FeedSnapshot, max_bytes: usize) -> Result<Document, ()> {
+#[derive(Debug, PartialEq, Eq)]
+enum FeedRenderError {
+    Invalid,
+    Budget,
+}
+fn render(snapshot: FeedSnapshot, max_bytes: usize) -> Result<Document, FeedRenderError> {
+    render_with(snapshot, max_bytes, render_ics)
+}
+fn component_budget(input_bytes: usize) -> Option<usize> {
+    input_bytes.checked_mul(4)?.checked_add(512)
+}
+fn render_with(
+    snapshot: FeedSnapshot,
+    max_bytes: usize,
+    mut encode: impl FnMut(&[FeedEvent<'_>]) -> Result<String, calendar_adapters::renderer::RenderError>,
+) -> Result<Document, FeedRenderError> {
     let mut documents: Vec<EventV1> = snapshot
         .records
         .iter()
-        .map(|r| serde_json::from_str(&r.document_json).map_err(|_| ()))
+        .map(|r| serde_json::from_str(&r.document_json).map_err(|_| FeedRenderError::Invalid))
         .collect::<Result<_, _>>()?;
+    // Bound the original document before either encoding pass. For #31's restricted
+    // profile, 4x covers TEXT escaping, CRLF/folding and temporal/property prefixes;
+    // 512 covers each component's fixed UID/stamps/status framing. Only SUMMARY and
+    // recurrence identity are repeated for cancellation exceptions (not the entire JSON).
+    // This intentionally conservative admission budget may reject an output that would fit.
+    let mut remaining = max_bytes.checked_sub(256).ok_or(FeedRenderError::Budget)?;
+    let mut charge = |bytes: usize| -> Result<(), FeedRenderError> {
+        remaining = remaining
+            .checked_sub(bytes)
+            .ok_or(FeedRenderError::Budget)?;
+        Ok(())
+    };
+    for (record, document) in snapshot.records.iter().zip(&documents) {
+        charge(component_budget(record.document_json.len()).ok_or(FeedRenderError::Budget)?)?;
+        for exception in document
+            .recurrence
+            .iter()
+            .flat_map(|r| r.exceptions.iter().flatten())
+        {
+            let identity = serde_json::to_vec(&exception.recurrence_id)
+                .map_err(|_| FeedRenderError::Invalid)?;
+            let repeated = document
+                .title
+                .len()
+                .checked_add(identity.len())
+                .ok_or(FeedRenderError::Budget)?;
+            charge(component_budget(repeated).ok_or(FeedRenderError::Budget)?)?;
+        }
+    }
     let stamps: Vec<String> = snapshot
         .records
         .iter()
         .map(|r| {
             chrono::DateTime::from_timestamp_millis(r.changed_at)
                 .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                .ok_or(())
+                .ok_or(FeedRenderError::Invalid)
         })
         .collect::<Result<_, _>>()?;
     // Validate the original input against #31's profile before removing content.
     // Redaction must not accidentally make unsupported/invalid input renderable.
-    let render_documents = |documents: &[EventV1]| -> Result<String, ()> {
+    let mut render_documents = |documents: &[EventV1]| -> Result<String, FeedRenderError> {
         let events: Vec<_> = snapshot
             .records
             .iter()
@@ -204,14 +251,17 @@ fn render(snapshot: FeedSnapshot, max_bytes: usize) -> Result<Document, ()> {
             .map(|((r, document), stamp)| {
                 Ok(FeedEvent {
                     event_id: &r.event_id,
-                    revision: r.revision.try_into().map_err(|_| ())?,
+                    revision: r
+                        .revision
+                        .try_into()
+                        .map_err(|_| FeedRenderError::Invalid)?,
                     changed_at: stamp,
                     deleted: r.deleted,
                     document,
                 })
             })
             .collect::<Result<_, _>>()?;
-        render_ics(&events).map_err(|_| ())
+        encode(&events).map_err(|_| FeedRenderError::Invalid)
     };
     let original = render_documents(&documents)?;
     let body = if snapshot.authorization.scope == calendar_application::FeedScope::Legacy {
@@ -223,7 +273,7 @@ fn render(snapshot: FeedSnapshot, max_bytes: usize) -> Result<Document, ()> {
         render_documents(&documents)?
     };
     if body.len() > max_bytes {
-        return Err(());
+        return Err(FeedRenderError::Budget);
     }
     use sha2::{Digest, Sha256};
     let key = serde_json::to_vec(&(
@@ -233,7 +283,7 @@ fn render(snapshot: FeedSnapshot, max_bytes: usize) -> Result<Document, ()> {
         snapshot.authorization.key.data_revision,
         snapshot.authorization.key.scope_digest,
     ))
-    .map_err(|_| ())?;
+    .map_err(|_| FeedRenderError::Invalid)?;
     let mut hash = Sha256::new();
     hash.update(key);
     hash.update(body.as_bytes());
@@ -346,5 +396,74 @@ mod tests {
                 .is_empty());
             db.close().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use calendar_application::{EventV1, FeedScope};
+    use calendar_storage::feed::{FeedAuthorization, FeedRecord};
+    fn snapshot(restricted: bool) -> FeedSnapshot {
+        let mut value = serde_json::json!({"schema_version":"1.0","external_uid":"upstream","title":"x".repeat(1024),"status":"confirmed","start":{"kind":"utc","value":"2026-01-01T00:00:00Z"},"duration":"PT1H","recurrence":{"rrule":"FREQ=DAILY;COUNT=257","exceptions":[]}});
+        for day in 1..=256 {
+            let at = chrono::DateTime::from_timestamp(1767225600 + day * 86400, 0)
+                .unwrap()
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string();
+            value["recurrence"]["exceptions"].as_array_mut().unwrap().push(serde_json::json!({"recurrence_id":{"kind":"utc","value":at},"range":"single","change":{"kind":"cancelled"}}));
+        }
+        let document: EventV1 = serde_json::from_value(value.clone()).unwrap();
+        // Prove the test data is supported by the existing renderer.
+        let output = render_ics(&[FeedEvent {
+            event_id: "event",
+            revision: 1,
+            changed_at: "2026-01-01T00:00:00Z",
+            deleted: false,
+            document: &document,
+        }])
+        .unwrap();
+        assert!(output.len() > 256 * 1024);
+        assert!(component_budget(value.to_string().len()).unwrap() + 256 < 256 * 1024);
+        FeedSnapshot {
+            authorization: FeedAuthorization {
+                key: FeedKey {
+                    subscription_id: "s".into(),
+                    configuration_revision: 0,
+                    source_id: "source".into(),
+                    data_revision: 1,
+                    scope_digest: [0; 32],
+                },
+                scope: if restricted {
+                    FeedScope::parse(r#"{"version":1,"calendar_ids":["c"],"visible_fields":[]}"#)
+                        .unwrap()
+                } else {
+                    FeedScope::Legacy
+                },
+            },
+            records: vec![FeedRecord {
+                event_id: "event".into(),
+                revision: 1,
+                changed_at: 1767225600000,
+                deleted: false,
+                document_json: value.to_string(),
+            }],
+        }
+    }
+    #[test]
+    fn recurring_fanout_is_rejected_before_original_or_projected_encoding() {
+        for restricted in [false, true] {
+            let result = render_with(snapshot(restricted), 256 * 1024, |_| {
+                panic!("over-budget input reached the encoder")
+            });
+            assert!(matches!(result, Err(FeedRenderError::Budget)));
+        }
+    }
+    #[test]
+    fn arithmetic_overflow_denies_and_a_sufficient_budget_preserves_supported_rendering() {
+        assert_eq!(component_budget(usize::MAX), None);
+        assert_eq!(component_budget(usize::MAX / 4), None);
+        let document = render(snapshot(false), 8 * 1024 * 1024).unwrap();
+        assert!(document.body.len() > 256 * 1024);
     }
 }
