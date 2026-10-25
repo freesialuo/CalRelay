@@ -1,5 +1,7 @@
 //! Application contracts. No database or network dependencies.
 
+pub mod configuration;
+
 mod ingest;
 pub use ingest::*;
 

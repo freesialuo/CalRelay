@@ -77,7 +77,7 @@ async fn authorization_uses_digest_expiry_scope_source_and_rotation() -> Result 
 }
 #[tokio::test]
 async fn out_of_order_0008_upgrade_preserves_0009_checksums_and_restores() -> Result {
-    for (had_ingest, had_admin) in [(false, false), (true, false), (true, true)] {
+    for (had_ingest, max_version) in [(false, 9), (true, 9), (true, 10), (true, 11)] {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("db");
         let mut conn = sqlx::SqliteConnection::connect_with(
@@ -90,7 +90,7 @@ async fn out_of_order_0008_upgrade_preserves_0009_checksums_and_restores() -> Re
         static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
         conn.execute("CREATE TABLE _sqlx_migrations(version BIGINT PRIMARY KEY,description TEXT NOT NULL,installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,success BOOLEAN NOT NULL,checksum BLOB NOT NULL,execution_time BIGINT NOT NULL)").await?;
         for m in MIGRATIONS.iter().filter(|m| {
-            (m.version <= 9 || had_admin) && m.version != 8 && (m.version != 7 || had_ingest)
+            m.version <= max_version && m.version != 8 && (m.version != 7 || had_ingest)
         }) {
             conn.execute(m.sql.as_ref()).await?;
             sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES (?,?,1,?,0)").bind(m.version).bind(m.description.as_ref()).bind(m.checksum.as_ref()).execute(&mut conn).await?;

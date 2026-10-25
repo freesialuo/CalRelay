@@ -1,0 +1,161 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "adapter": {
+      "enum": [
+        "ics",
+        "standard-calendar"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "pull",
+        "manual-static",
+        "push-only"
+      ]
+    },
+    "endpoint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 4096
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "credential_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "refresh_interval_ms": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 60000,
+          "maximum": 604800000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "freshness_sla_ms": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 60000,
+          "maximum": 2592000000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot": {
+          "type": "boolean"
+        },
+        "delta": {
+          "type": "boolean"
+        },
+        "upsert": {
+          "type": "boolean"
+        },
+        "delete": {
+          "type": "boolean"
+        },
+        "conditional_read": {
+          "type": "boolean"
+        },
+        "pagination": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "snapshot",
+        "delta",
+        "upsert",
+        "delete",
+        "conditional_read",
+        "pagination"
+      ]
+    },
+    "calendars": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "external_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "IANA TZID; validated semantically"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "external_id",
+          "selected"
+        ]
+      }
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "enabled",
+    "adapter",
+    "mode",
+    "capabilities",
+    "calendars"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:calrelay:schema:source-configuration:v1",
+  "title": "SourceConfigurationV1",
+  "description": "Structural shape. Application validation additionally enforces capability/mode/URL/timezone/calendar identity semantics. See docs/source-configuration.md."
+}

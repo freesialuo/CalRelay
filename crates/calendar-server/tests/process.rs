@@ -15,10 +15,13 @@ impl Drop for Process {
     }
 }
 fn spawn(database: &std::path::Path, bind: &str) -> Process {
+    let deployment = database.with_extension("deployment.json");
+    std::fs::write(&deployment, serde_json::json!({"bind":bind}).to_string()).unwrap();
     Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
-            .env("CALRELAY_BIND", bind)
+            .arg("--deployment-config")
+            .arg(deployment)
             .env("CALRELAY_DATABASE", database)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -113,4 +116,21 @@ fn bad_config_and_migration_failure_do_not_listen() {
     assert_eq!(diagnostic, "database initialization failed\n");
     assert!(TcpStream::connect(address).is_err());
     assert_eq!(std::fs::read(&database).unwrap(), b"this is not a database");
+}
+
+#[test]
+fn legacy_bind_is_rejected_with_upgrade_diagnostic_before_creating_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("must-not-exist.db");
+    let result = Command::new(env!("CARGO_BIN_EXE_calendar-server"))
+        .env_clear()
+        .env("CALRELAY_BIND", "secret-invalid")
+        .env("CALRELAY_DATABASE", &database)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let diagnostic = String::from_utf8(result.stderr).unwrap();
+    assert!(diagnostic.contains("--deployment-config"), "{diagnostic}");
+    assert!(!diagnostic.contains("secret-invalid"));
+    assert!(!database.exists());
 }

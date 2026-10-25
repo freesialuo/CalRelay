@@ -683,3 +683,50 @@ async fn ac4_backward_clock_between_claim_and_prepare_defers_until_due_or_retry_
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn management_retirement_preserves_inflight_acceptance_and_its_cancel_race() -> Result {
+    use calendar_application::configuration::{ConfigurationCondition, SourceConfigurationV1};
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    // Simulate an explicitly migrated managed configuration without changing the historical seed.
+    let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))?;
+    config.enabled = true;
+    config.calendars[0].id = "c".into();
+    sqlx::query("UPDATE sources SET config_json=?,config_revision=1 WHERE id='s'")
+        .bind(serde_json::to_string(&config)?)
+        .execute(db.pool())
+        .await?;
+    let time = Time::at(1000);
+    let p = policy();
+    let lease = db.claim("a", &p, &time).await?.unwrap();
+    db.prepare(&lease, &p, &time).await?.unwrap();
+    db.retire_source_configuration("s", 1, "alice", 1001)
+        .await?;
+    assert_eq!(state(&db).await?, "cancelled");
+    db.finish(&lease, Outcome::Accepted, &p, &time).await?;
+    assert_eq!(
+        history(&db).await?,
+        vec![(1, Some("accepted".into()), Some("cancelled".into()))]
+    );
+    let accepted: Option<i64> = sqlx::query_scalar("SELECT accepted_at FROM logical_deliveries")
+        .fetch_one(db.pool())
+        .await?;
+    assert_eq!(accepted, Some(1000));
+    assert!(db.claim("b", &p, &time).await?.is_none());
+    assert!(db
+        .put_source_configuration(
+            "s",
+            ConfigurationCondition::Revision(2),
+            config,
+            "alice",
+            1002
+        )
+        .await
+        .is_err());
+    db.close().await;
+    Ok(())
+}

@@ -31,11 +31,13 @@ fn capability_urls_are_absent_from_process_logs_on_success_and_errors() {
         db.close().await;
         std::str::from_utf8(token.expose()).unwrap().to_owned()
     });
+    let deployment = dir.path().join("deployment.json");
+    std::fs::write(&deployment, r#"{"bind":"127.0.0.1:0"}"#).unwrap();
     let stdout = dir.path().join("stdout");
     let mut process = Process(
         Command::new(env!("CARGO_BIN_EXE_calendar-server"))
             .env_clear()
-            .env("CALRELAY_BIND", "127.0.0.1:0")
+            .args(["--deployment-config", deployment.to_str().unwrap()])
             .env("CALRELAY_DATABASE", &database)
             .stdout(std::fs::File::create(&stdout).unwrap())
             .stderr(Stdio::piped())

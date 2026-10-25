@@ -4,6 +4,7 @@ mod config;
 mod feed;
 mod http;
 mod ingest;
+mod source_configuration;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;

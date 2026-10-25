@@ -498,4 +498,75 @@ fn openapi_describes_feed_capability_without_management_security_and_preserves_o
     assert!(path["head"]["responses"]["200"]["content"].is_null());
     assert!(document["paths"]["/api/admin/v1/session"].is_object());
     assert!(document["paths"]["/api/ingest/v1/sources/{source_id}/events/{uid}"].is_object());
+    for path in ["/api/admin/v1/sources", "/api/admin/v1/sources/{source_id}"] {
+        assert!(document["paths"][path].is_object());
+    }
+}
+
+#[tokio::test]
+async fn managed_source_configuration_revision_and_retirement_fence_warm_feed_cache() {
+    use calendar_application::configuration::{ConfigurationCondition, SourceConfigurationV1};
+    let (_dir, server, _) = fixture().await;
+    let db = &server.services.storage;
+    let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))
+    .unwrap();
+    config.calendars[0].id = "managed-calendar".into();
+    db.put_source_configuration(
+        "managed",
+        ConfigurationCondition::Absent,
+        config.clone(),
+        "synthetic-admin",
+        100,
+    )
+    .await
+    .unwrap();
+    config.enabled = true;
+    db.put_source_configuration(
+        "managed",
+        ConfigurationCondition::Revision(1),
+        config.clone(),
+        "synthetic-admin",
+        101,
+    )
+    .await
+    .unwrap();
+    let token = db
+        .issue_feed_token("managed-feed", "managed-public", "managed", None)
+        .await
+        .unwrap();
+    let url = format!(
+        "/feeds/managed-public/{}.ics",
+        std::str::from_utf8(token.expose()).unwrap()
+    );
+    let app = server.router();
+    let first = request(app.clone(), &url, None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let tag = first.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(
+        request(app.clone(), &url, Some(&tag)).await.status(),
+        StatusCode::NOT_MODIFIED
+    );
+    config.name = "Renamed managed source".into();
+    db.put_source_configuration(
+        "managed",
+        ConfigurationCondition::Revision(2),
+        config,
+        "synthetic-admin",
+        102,
+    )
+    .await
+    .unwrap();
+    let updated = request(app.clone(), &url, Some(&tag)).await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let new_tag = updated.headers()["etag"].to_str().unwrap().to_owned();
+    assert_ne!(tag, new_tag);
+    db.retire_source_configuration("managed", 3, "synthetic-admin", 103)
+        .await
+        .unwrap();
+    let denied = request(app, &url, Some(&new_tag)).await;
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+    assert!(!denied.headers().contains_key("etag"));
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM feed_subscriptions WHERE id='managed-feed' AND revoked_at IS NOT NULL").fetch_one(db.pool()).await.unwrap(),1);
 }

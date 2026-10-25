@@ -36,6 +36,8 @@
 
 成功/304 返回 `Content-Type: text/calendar; charset=utf-8`、`Cache-Control: private, no-cache` 和 ETag；支持强/弱 If-None-Match、列表和 `*`，304 无正文。拒绝返回固定错误 envelope，不带旧 ETag 或事件正文；已匹配 feed 路由的错误标记 `private, no-store`。不存在、错误、过期、撤销、未知 scope 都返回 404，存储/预算故障为 503，无法渲染为 422。通用服务边界仍负责请求标识、超时与响应预算。
 
+与来源配置 #82 的组合回归确认：配置 PUT 推进 source revision 后旧 ETag 失效；退休会禁用来源并撤销单源订阅，即使暖缓存和旧 ETag 仍存在也拒绝。进程测试与前端 harness 使用临时部署 JSON 的 `--deployment-config`，不恢复旧监听环境变量。
+
 迁移 `0008_feed_configuration_revision.sql` 只添加触发器：public_id/source_id/scope_json/expires_at 实际改变且调用方未递增 revision 时，自动递增配置 revision；显式 CAS 或轮换不重复计数。无新权限列、不修改旧迁移或 checksum。集成回归从已应用 0009 且未应用 0008 的真实历史升级，检查旧备份和升级后备份均可恢复；未知或改变 checksum 的历史仍由既有备份校验拒绝。
 
 ## 日志与部署边界
@@ -51,7 +53,7 @@
 | AC1 | storage/feed：摘要、用途隔离、到期等号、撤销回跳不复活、重开、并发轮换唯一赢家；server/feed：缓存填充后撤销/禁用/过期/轮换与旧 ETag 均拒绝 |
 | AC2 | HTTP：200/HEAD/304、private no-cache、稳定 ETag、配置/数据 revision 分别失效；prepared response fence：独立任务提交 policy/data/expiry/rotation/revoke/disable 后拒绝旧表示 |
 | AC3 | application/feed_contract：逐字段及 override 独立投影、严格 schema 负例；storage：跨 source 拒绝、calendar 过滤、一致旧/新快照、缺 metadata 故障；HTTP：缩权后旧 ETag 得到新正文或空日历、renderer 边界；合并 #30 后验证 feed token 不能调用 ingest、有效 API delete 使 feed 缓存失效且保留 ingest OpenAPI；启用 management 后仍允许无 Access/Turnstile 的 feed GET/304，模拟管理 transport 调用计数为零，admin/ingest OpenAPI 路径均保留；feed_process：真实日志无 URL/token |
-| 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007、已有 0007+0009 和已有 0007+0009+0010 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
+| 兼容/迁移 | 已应用 0009 后补 0008，分别覆盖既有 0009 无 0007、已有 0007+0009 和已有 0007+0009+0010、已有 0007+0009+0010+0011 的历史，升级前后备份/恢复，旧 `{}` 行为及 source-only helper 不扩大授权 |
 
 有效 Red：首次两个 HTTP 测试观察到 404 而预期 200；scope 接入前修正为 renderer 支持的取消例外后观察到 v1 请求 404 而预期 200。超出 renderer 支持边界的 override 夹具 422 及编译/工具错误不计 Red。严格 schema 回归检出了 serde 将 `[]` 接受为空 struct 的问题，现显式要求 JSON 对象。受控移除最终 fence 的完整键比较后，回归实际得到 304 而预期 503（scope 变更），确认测试能检出权限缩小后的错误 304；随后恢复正确实现。补充 OpenAPI 契约回归：最初因缺少 feed GET 描述而失败，新增 GET/HEAD 契约并由真实服务重新生成 TypeScript 后通过；文档增大导致生命周期夹具预算不足的 500 不计需求 Red，生产响应限制未改变。最终完整验证和已有审核状态见 PR。
 
