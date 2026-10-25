@@ -24,13 +24,13 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
         self.leaf = {'number': 86, 'state': 'open',
                      'sub_issues_summary': {'total': 0}}
 
-    def run_main(self, pr=None, parent=None, leaf=None):
+    def run_main(self, pr=None, parent=None, leaf=None, pr_number=71):
         records = [self.pr if pr is None else pr,
                    self.parent if parent is None else parent,
                    self.leaf if leaf is None else leaf]
         with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as event:
             # The event body is intentionally obsolete; only current API metadata counts.
-            json.dump({'number': 71, 'pull_request': {'body': 'Closes #36'}}, event)
+            json.dump({'number': pr_number, 'pull_request': {'body': 'Closes #36'}}, event)
             event.flush()
             with patch.dict(os.environ, GITHUB_EVENT_PATH=event.name,
                             GITHUB_REPOSITORY='owner/repo'):
@@ -45,6 +45,18 @@ class PartialDeliveryPolicyTests(unittest.TestCase):
             call('repos/owner/repo/pulls/71'),
             call('repos/owner/repo/issues/36'),
             call('repos/owner/repo/issues/86'),
+        ])
+
+    def test_different_pr_branch_and_leaf_ids_are_not_hard_coded(self):
+        self.pr['head']['ref'] = 'feat/75-due-delivery-foundation'
+        self.pr['body'] = self.pr['body'].replace('#36', '#75').replace('#86', '#90')
+        self.parent['number'] = 75
+        self.leaf['number'] = 90
+        self.assertEqual(validate_metadata(self.pr), ([], 75))
+        self.assertEqual(self.run_main(pr_number=88), [
+            call('repos/owner/repo/pulls/88'),
+            call('repos/owner/repo/issues/75'),
+            call('repos/owner/repo/issues/90'),
         ])
 
     def test_keyword_colon_and_qualified_closing_cannot_close_parent(self):
