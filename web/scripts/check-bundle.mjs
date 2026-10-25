@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 const markers = [
   "CALRELAY_PRIVATE_CANARY_79cc3812",
   "CALRELAY_PUBLIC_CANARY_10b72dfe",
+  "synthetic_browser_test_challenge",
 ];
 await promisify(execFile)(
   process.execPath,
@@ -31,16 +32,24 @@ async function inspect(directory) {
   }
 }
 await inspect("dist");
-for (const path of ["src/main.ts", "src/api.ts"]) {
-  const source = await readFile(path, "utf8");
-  if (
-    /innerHTML|outerHTML|insertAdjacentHTML|document\.write|localStorage|sessionStorage|console\.|import\.meta\.env|process\.env/.test(
-      source,
-    )
-  ) {
-    throw new Error(`Unsafe DOM/storage/log/env surface in ${path}`);
+async function inspectSource(directory) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.name === "generated") continue;
+    if (entry.isDirectory()) await inspectSource(path);
+    else if (entry.name.endsWith(".ts")) {
+      const source = await readFile(path, "utf8");
+      if (
+        /innerHTML|outerHTML|insertAdjacentHTML|document\.write|localStorage|sessionStorage|console\.|import\.meta\.env|process\.env/.test(
+          source,
+        )
+      )
+        throw new Error(`Unsafe DOM/storage/log/env surface in ${path}`);
+    }
   }
 }
+await inspectSource("src");
+
 console.log(
   "Bundle env canaries absent; no source maps or credential persistence/logging/unsafe HTML sinks in app source.",
 );

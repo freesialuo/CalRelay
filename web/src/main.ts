@@ -1,4 +1,11 @@
+import { adminSession } from "./admin-session";
 import { readProbe } from "./api";
+import { SourcesAPI } from "./sources-api";
+import { mountSources } from "./sources-page";
+
+let sourcesView: ReturnType<typeof mountSources> | undefined;
+let renderedHash = location.hash;
+
 import "./style.css";
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -76,6 +83,17 @@ function probe(
 }
 
 function render(): void {
+  if (
+    sourcesView &&
+    location.hash !== renderedHash &&
+    !sourcesView.canLeave()
+  ) {
+    history.replaceState(null, "", renderedHash || "#sources");
+    return;
+  }
+  sourcesView?.dispose();
+  sourcesView = undefined;
+  renderedHash = location.hash;
   for (const controller of active) controller.abort();
   active.clear();
   const root = document.querySelector<HTMLDivElement>("#app");
@@ -99,37 +117,18 @@ function render(): void {
   const main = element("main");
   const notice = element(
     "p",
-    "前端基础阶段：配置 API 尚未接通，无法创建、修改或删除业务配置。",
+    "来源配置已接入条件请求；写入需真实管理登录。规则、输出与订阅尚未接通。",
     "notice",
   );
   main.append(notice);
   if (page === "sources") {
-    main.append(
-      element("h1", "从来源开始"),
-      element(
-        "p",
-        "先接入日历与事件，再选择提醒规则和输出。ICS 是输入协议之一。",
-        "intro",
-      ),
-      panel(
-        "来源配置尚未接通",
-        "暂时无法读取实例的来源列表；这不表示实例为空。持久配置接口可用后，才能创建、修改、禁用或删除来源。",
-      ),
-      panel(
-        "ICS URL 或文件",
-        "修改 ICS 表示修改来源 URL 或上传替换，不会双向编辑远端日历事件。",
-      ),
-      panel(
-        "协议接入器与外部 producer",
-        "外部 producer 通过限定来源的机器接口提交标准事件。来源 token 与订阅 token 均不是管理权限；不要在此粘贴密钥。",
-      ),
-    );
+    sourcesView = mountSources(main, new SourcesAPI(adminSession));
   } else if (page === "capabilities") {
     main.append(
       element("h1", "能力与周期"),
       panel(
-        "等待来源能力契约",
-        "周期设置尚未接通。支持 pull 的来源才能配置自动刷新；不推断接入器能力。",
+        "来源能力与周期",
+        "请在来源页面编辑声明的能力与周期。支持 pull 的来源才能配置自动刷新；保存配置不等于工作器已经运行。",
         "静态 / 手动来源不自动轮询",
         "push-only 来源仅在明确 SLA 时判断 freshness。接入器离线不等于核心服务故障。",
       ),
@@ -184,6 +183,8 @@ function render(): void {
 window.addEventListener("hashchange", render);
 window.addEventListener("pagehide", () => {
   for (const controller of active) controller.abort();
+  sourcesView?.dispose();
+  adminSession.clear();
 });
 render();
 window.addEventListener("pageshow", (event) => {

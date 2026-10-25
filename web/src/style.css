@@ -140,3 +140,51 @@ footer {
     padding: 18px;
   }
 }
+.source-form {
+  display: grid;
+  gap: 14px;
+}
+.source-form fieldset {
+  border: 1px solid #cfdbd4;
+  border-radius: 6px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.source-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.95rem;
+}
+.source-form input,
+.source-form select {
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #869e91;
+  border-radius: 4px;
+  width: 100%;
+  min-width: 0;
+  background: white;
+  color: #17322e;
+}
+.source-form input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+.source-form input:read-only {
+  background: #edf2ee;
+}
+.calendar-row {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #dae3dc;
+  padding-top: 16px;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+[hidden],
+.source-form [hidden] {
+  display: none;
+}

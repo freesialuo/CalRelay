@@ -5,7 +5,9 @@ test("configuration journey honestly marks disconnected writes", async ({
 }) => {
   await page.goto("/admin/");
   await expect(page.getByRole("heading", { name: "从来源开始" })).toBeVisible();
-  await expect(page.getByText("来源配置尚未接通")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "创建来源", exact: true }),
+  ).toBeDisabled();
   await expect(page.getByRole("button", { name: "保存" })).toHaveCount(0);
   await page.getByRole("link", { name: "能力与周期" }).click();
   await expect(page.getByText("静态 / 手动来源不自动轮询")).toBeVisible();

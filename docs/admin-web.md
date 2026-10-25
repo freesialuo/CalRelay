@@ -59,3 +59,5 @@ Vite + TypeScript，无运行时 UI 框架；固定 npm lockfile，所有工具�
 TDD：可运行占位入口下，浏览器在找不到“从来源开始”旅程标题处失败；补页面与导航后通过。网络、重定向、HTML 登录页、格式错误、超大响应、401/403/404/409/429/503 使用仅测试 route fixtures。实际版本/健康与 session 未装配用临时库真实服务，不能以 fixture 通过声称业务持久化完成。
 
 依据：[Vite env 暴露边界](https://vite.dev/guide/env-and-mode)、[openapi-typescript Node API](https://openapi-ts.dev/node)、[Playwright 浏览器](https://playwright.dev/docs/browsers)与[测试配置](https://playwright.dev/docs/test-configuration)。setup-node v6 的完整 SHA 从官方仓库 tag 解析固定；不改变现有 Action 或权限。
+
+后续来源 CRUD 页面与内存 nonce 状态见[来源管理前端](source-web.md)；真实认证/SQLite浏览器验收依赖与未完成范围另行记录，原阶段验证不代表完整写入旅程。
