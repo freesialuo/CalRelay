@@ -5,7 +5,8 @@
 - Keep changes within the Issue's acceptance criteria; update contracts and documentation when behavior changes.
 - For complex implementations, use Context7 or Exa to consult official documentation and public code; retain the references actually used.
 - Select testing, proof and quality tools by Issue risk and TDD needs using [the verification toolkit](docs/verification-toolkit.md); listed capabilities do not imply installation or mandatory CI.
-- Run applicable checks before requesting review. Do not represent skipped or unavailable tests as passing.
+- Run applicable checks before handing off a PR. Do not represent skipped or unavailable tests as passing.
+- Use the repository's existing automatic review: if triggered, read its result and address findings; if not triggered, do not wait for a review. Do not proactively request code/security review or re-review. No new AI receipt or fixed polling period is required; preserve actual required checks/reviews and fix known findings.
 - Do not push directly to `main`, force-push shared history, self-approve PRs, bypass repository rules, or enable automatic merging.
 - This is a solo-maintainer project: do not require independent reviewers or GitHub approving reviews. Merge only after required CI, resolved discussions, review of the final diff, and explicit maintainer authorization for that PR. Changing the reviewed diff requires renewed authorization.
 - Use `find … -delete` to delete files; do not use `rm`.
