@@ -1,6 +1,7 @@
 //! Service assembly and lifecycle. Business routes and production outputs are intentionally absent.
 pub mod admin;
 mod config;
+mod feed;
 mod http;
 mod ingest;
 mod source_configuration;
