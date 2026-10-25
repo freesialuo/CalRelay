@@ -370,3 +370,82 @@ test("cancel and return asks before discarding unsaved inputs", async ({
   await expect(page.getByLabel("名称", { exact: true })).toHaveCount(0);
   expect(api.requests).toHaveLength(0);
 });
+
+test("late detail response cannot replace the source selected afterwards", async ({
+  page,
+}) => {
+  await backend(page).install();
+  const a = {
+    source_id: "source_a",
+    config_revision: 1,
+    source_revision: 1,
+    retired_at: null,
+    configuration: config(),
+  };
+  const b = {
+    ...a,
+    source_id: "source_b",
+    configuration: { ...config(), name: "第二来源" },
+  };
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/admin/v1/sources**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/sources"))
+      return route.fulfill({
+        json: {
+          items: [a, b].map((record) => ({
+            source_id: record.source_id,
+            name: record.configuration.name,
+            config_revision: 1,
+            source_revision: 1,
+            enabled: false,
+            retired_at: null,
+          })),
+          next_after: null,
+        },
+      });
+    const record = url.pathname.endsWith("source_a") ? a : b;
+    if (record === a) await held;
+    return route.fulfill({ json: record, headers: { etag: '"1"' } });
+  });
+  await page.goto(fixture);
+  await page
+    .locator("section")
+    .filter({
+      has: page.getByRole("heading", { name: "测试来源", exact: true }),
+    })
+    .getByRole("button", { name: "查看 / 编辑", exact: true })
+    .click();
+  await page
+    .locator("section")
+    .filter({
+      has: page.getByRole("heading", { name: "第二来源", exact: true }),
+    })
+    .getByRole("button", { name: "查看 / 编辑", exact: true })
+    .click();
+  await expect(page.getByLabel("稳定来源 ID")).toHaveValue("source_b");
+  release?.();
+  await expect(page.getByLabel("名称", { exact: true })).toHaveValue(
+    "第二来源",
+  );
+});
+
+test("mobile source form fits the viewport", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const api = backend(page);
+  await api.install();
+  await page.goto(fixture);
+  await createDraft(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("source-form.png"),
+    fullPage: true,
+  });
+});
