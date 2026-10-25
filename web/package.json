@@ -14,11 +14,12 @@
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "test": "npm run test:smoke && npm run test:components && npm run test:integration",
+    "test": "npm run test:fixtures && npm run test:smoke && npm run test:components && npm run test:integration",
     "check:bundle": "node scripts/check-bundle.mjs",
     "test:smoke": "playwright test",
     "test:components": "playwright test -c tests/component.config.ts",
-    "test:integration": "node tests/support/build-harness.mjs && playwright test -c tests/integration.config.ts"
+    "test:integration": "node tests/support/build-harness.mjs && playwright test -c tests/integration.config.ts",
+    "test:fixtures": "node --test tests/system/fixtures.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
