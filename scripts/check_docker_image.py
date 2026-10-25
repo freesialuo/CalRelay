@@ -49,7 +49,11 @@ def snapshot(directory, name):
     docker("cp", CONTAINER + ":/data/calrelay.db", str(target))
     with sqlite3.connect(target) as database:
         require(database.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "SQLite integrity")
-        return database.execute("SELECT version, installed_on FROM _sqlx_migrations ORDER BY version").fetchall()
+        require(MARKER not in target.read_bytes(), "Bark secret must not be stored as plaintext")
+        return (
+            database.execute("SELECT version, installed_on FROM _sqlx_migrations ORDER BY version").fetchall(),
+            database.execute("SELECT id, kind, key_version, revision FROM credentials WHERE id='packaging-bark'").fetchone(),
+        )
 
 
 try:
@@ -68,11 +72,17 @@ try:
     with tempfile.TemporaryDirectory(prefix=PREFIX) as temporary:
         directory = Path(temporary)
         deployment = directory / "deployment.json"
-        deployment.write_text('{"bind":"0.0.0.0:3000"}\n')
+        deployment.write_text(json.dumps({
+            "bind": "0.0.0.0:3000",
+            "credentials": {"current_key_version": 1, "key_files": {"1": "/run/secrets/calrelay-master-v1"}},
+        }))
+        master = directory / "master"
+        master.write_bytes(bytes(range(32)))  # Synthetic CI material, never copied into the image.
         secret = directory / "canary"
         secret.write_bytes(MARKER)
         docker("cp", str(deployment), SEED + ":/run/calrelay/deployment.json")
         docker("cp", str(secret), SEED + ":/run/secrets/canary")
+        docker("cp", str(master), SEED + ":/run/secrets/calrelay-master-v1")
         docker("run", "--detach", "--name", CONTAINER, "--read-only",
                "--user", "65532:65532", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--pids-limit", "128",
@@ -117,6 +127,10 @@ try:
             require(time.monotonic() < deadline, "Docker live health deadline")
             time.sleep(0.2)
         require(inspect()["RestartCount"] == 0, "ready=false must not cause restart")
+        receipt = json.loads(docker("exec", CONTAINER, "/usr/local/bin/calrelay", "credential", "provision-bark",
+                                    "--deployment-config", "/run/calrelay/deployment.json",
+                                    "--credential-id", "packaging-bark", "--secret-file", "/run/secrets/canary"))
+        require(receipt == {"credential_id": "packaging-bark", "revision": 0}, "real create-only credential CLI")
         denied = subprocess.run(["docker", "exec", "-e", "CALRELAY_DATABASE=/run/calrelay/blocked.db",
                                  CONTAINER, "/usr/local/bin/calrelay", "--deployment-config",
                                  "/run/calrelay/deployment.json"], capture_output=True, timeout=10)
@@ -127,7 +141,8 @@ try:
         require(state["State"]["ExitCode"] == 0 and not state["State"]["OOMKilled"], "SIGTERM clean exit")
         require(time.monotonic() - start < 30, "stop budget")
         before = snapshot(directory, "before.db")
-        require(before and before[-1][0] >= 13, "real migrations persisted")
+        require(before[0] and before[0][-1][0] >= 13, "real migrations persisted")
+        require(before[1] == ("packaging-bark", "bark", 1, 0), "encrypted CLI credential persisted")
         docker("start", CONTAINER)
         port = inspect()["NetworkSettings"]["Ports"]["3000/tcp"][0]["HostPort"]
         base = "http://127.0.0.1:" + port
@@ -140,8 +155,13 @@ try:
                 pass
             require(time.monotonic() < deadline, "persistent restart deadline")
             time.sleep(0.1)
+        rotated = json.loads(docker("exec", CONTAINER, "/usr/local/bin/calrelay", "credential", "rotate-bark",
+                                    "--deployment-config", "/run/calrelay/deployment.json",
+                                    "--credential-id", "packaging-bark", "--expected-revision", "0"))
+        require(rotated == {"credential_id": "packaging-bark", "revision": 1}, "real decrypt/rotate after reopen")
         docker("stop", "--time", "30", CONTAINER)
-        require(snapshot(directory, "after.db") == before, "migration history must survive reopen")
+        after = snapshot(directory, "after.db")
+        require(after[0] == before[0] and after[1] == ("packaging-bark", "bark", 1, 1), "migration and credential history survive reopen")
         archive = docker("export", CONTAINER)
         require(MARKER not in archive, "runtime secret must not enter exported root filesystem")
         with tarfile.open(fileobj=io.BytesIO(archive)) as filesystem:
