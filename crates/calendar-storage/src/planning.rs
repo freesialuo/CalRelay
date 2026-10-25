@@ -124,7 +124,7 @@ impl ReminderPlanner for Storage {
         }
 
         let bound: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM rule_outputs WHERE rule_id = ? AND output_id = ?)",
+            "SELECT EXISTS(SELECT 1 FROM rule_outputs WHERE rule_id = ? AND output_id = ? AND enabled=1)",
         )
         .bind(&request.rule_id)
         .bind(&request.output_id)

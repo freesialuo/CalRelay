@@ -261,11 +261,13 @@ pub fn router(state: AdminState) -> Router {
             .with_state(state.clone())
             .layer(DefaultBodyLimit::max(65_536)),
     );
+    let reminders = crate::reminder_configuration::router(state.clone());
     Router::new()
         .route("/api/admin/v1/session", post(login))
         .with_state(state)
         .merge(protected)
         .merge(sources)
+        .merge(reminders)
         .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
