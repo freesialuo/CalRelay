@@ -630,3 +630,72 @@ async fn ac2_v5_upgrade_preserves_data_but_requires_fresh_snapshot_proof() -> Re
     db.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn redirected_resources_do_not_reuse_a_different_targets_equal_etag() -> Result {
+    use calendar_adapters::{
+        ingestion::{HttpSource, SourceFormat},
+        IcsLimits,
+    };
+    use std::sync::Arc;
+    struct MovingRedirect {
+        calls: AtomicUsize,
+    }
+    impl RemoteFetcher for MovingRedirect {
+        async fn fetch(
+            &self,
+            req: RemoteFetchRequest,
+        ) -> std::result::Result<RemoteFetchOutcome, RemoteFetchError> {
+            let index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if index > 0 && req.validators.etag.is_some() {
+                return Ok(RemoteFetchOutcome::NotModified(RemoteValidators::default()));
+            }
+            let uid = if index == 0 { "a" } else { "b" };
+            Ok(RemoteFetchOutcome::Modified(RemoteDocument{
+    final_url:format!("https://calendar.example/feeds/{uid}"),
+    body:format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261022T000000Z\r\nDTSTART:20261102T170000Z\r\nSUMMARY:Imported\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").into_bytes(),
+    validators:RemoteValidators{etag:Some("\"1\"".into()),last_modified:None}
+   }))
+        }
+    }
+    let dir = tempdir()?;
+    let db = Storage::open(dir.path().join("db")).await?;
+    seed(&db).await?;
+    let adapter = HttpSource {
+        fetcher: Arc::new(MovingRedirect {
+            calls: AtomicUsize::new(0),
+        }),
+        url: "https://calendar.example/calendar".into(),
+        authentication: RemoteAuthentication::None,
+        calendar_id: "c".into(),
+        format: SourceFormat::Ics(IcsLimits::default()),
+    };
+    synchronize(
+        &db,
+        &adapter,
+        "s",
+        10,
+        DeletionPolicy::Limit(1),
+        SyncLimits::default(),
+    )
+    .await?;
+    assert!(matches!(
+        synchronize(
+            &db,
+            &adapter,
+            "s",
+            20,
+            DeletionPolicy::Limit(1),
+            SyncLimits::default()
+        )
+        .await?,
+        SyncOutcome::Committed(_)
+    ));
+    let live: Vec<String> =
+        sqlx::query_scalar("SELECT external_uid FROM events WHERE deleted_at IS NULL")
+            .fetch_all(db.pool())
+            .await?;
+    assert_eq!(live, vec!["b"]);
+    db.close().await;
+    Ok(())
+}

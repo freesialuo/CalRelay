@@ -71,7 +71,7 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
             "{:x}",
             Sha256::digest(
                 serde_json::to_vec(&(
-                    "http-source-v1",
+                    "http-source-v2",
                     base.as_str(),
                     &self.calendar_id,
                     auth,
@@ -211,7 +211,7 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
             }
         };
         // A first-page validator cannot validate a whole paginated collection.
-        let checkpoint = if next.is_some() {
+        let checkpoint = if next.is_some() || page_url != url {
             Checkpoint {
                 binding,
                 ..Checkpoint::default()

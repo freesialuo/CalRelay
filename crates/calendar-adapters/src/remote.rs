@@ -168,6 +168,7 @@ impl<P: CredentialProvider> HttpFetcher<P> {
         if let Some(modified) = request.validators.last_modified {
             conditional.insert(IF_MODIFIED_SINCE, validator_header(&modified)?);
         }
+        let mut can_not_modified = request.has_committed_snapshot;
         for hop in 0..=self.limits.max_redirects {
             let builder = reqwest::Client::builder()
                 .https_only(true)
@@ -225,12 +226,15 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 if next.origin() != url.origin() {
                     return Err(E::Redirect);
                 }
+                // Validators describe the requested resource, not a redirect target.
+                conditional.clear();
+                can_not_modified = false;
                 addresses = self.pinned_addresses(&next).await?;
                 url = next;
                 continue;
             }
             let retry = retry_after(response.headers(), request.now_ms);
-            classify_status(status, retry, request.has_committed_snapshot)?;
+            classify_status(status, retry, can_not_modified)?;
             let validators = RemoteValidators {
                 etag: response_validator(response.headers(), ETAG)?,
                 last_modified: response_validator(response.headers(), LAST_MODIFIED)?,
@@ -735,15 +739,15 @@ mod network_tests {
     }
     #[tokio::test]
     async fn ac2_connection_uses_checked_dns_once_and_checks_every_redirect() {
-        let server = service(vec![
+        let mut server = service(vec![
             (response(302, "Location: /next\r\n", ""), false),
             (response(200, "", "ok"), false),
         ])
         .await;
         let (client, dns) = fetcher(&server, local(), 64);
-        let RemoteFetchOutcome::Modified(doc) =
-            client.fetch(request(server.url.clone())).await.unwrap()
-        else {
+        let mut req = request(server.url.clone());
+        req.validators.etag = Some("\"cached\"".into());
+        let RemoteFetchOutcome::Modified(doc) = client.fetch(req).await.unwrap() else {
             panic!("expected modified")
         };
         assert_eq!(
@@ -755,6 +759,10 @@ mod network_tests {
                 .to_string()
         );
         assert_eq!(dns.calls.load(Ordering::SeqCst), 2);
+        let initial = server.received.recv().await.unwrap().to_lowercase();
+        let redirected = server.received.recv().await.unwrap().to_lowercase();
+        assert!(initial.contains("if-none-match: \"cached\""));
+        assert!(!redirected.contains("if-none-match:"));
         // A second resolver lookup within the first connection would rebind to private IP.
         let server = service(vec![(response(200, "", "ok"), false)]).await;
         let (client, dns) = fetcher(
@@ -857,6 +865,22 @@ mod network_tests {
             Some(E::Redirect)
         );
         assert_eq!(dns.calls.load(Ordering::SeqCst), 3);
+    }
+    #[tokio::test]
+    async fn redirected_304_cannot_verify_the_initial_resources_snapshot() {
+        let server = service(vec![
+            (response(302, "Location: /other\r\n", ""), false),
+            (response(304, "ETag: \"1\"\r\n", ""), false),
+        ])
+        .await;
+        let (client, _) = fetcher(&server, local(), 64);
+        let mut req = request(server.url.clone());
+        req.has_committed_snapshot = true;
+        req.validators.etag = Some("\"1\"".into());
+        assert_eq!(
+            client.fetch(req).await.err(),
+            Some(E::UnexpectedNotModified)
+        );
     }
 }
 

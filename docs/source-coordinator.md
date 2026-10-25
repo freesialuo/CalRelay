@@ -17,7 +17,7 @@ Stack 合并顺序：[#55 / #26](https://github.com/freesialuo/CalRelay/pull/55)
 
 304 只允许第一页且已有完整快照；`verify_unchanged` 条件更新核对 revision、enabled 和 snapshot_revision，只提高 last_verified_at，不改事件、日志、checkpoint 或 revision，较晚到达的旧核验时间不会降低水位。每次完整提交仍推进 CAS revision，即使内容未变也会使旧批次失效，但不重复生成事件历史。
 
-HTTP 适配器将 URL、calendar_id、鉴权句柄/类型和映射配置摘要绑定到验证器 checkpoint，配置改变后不复用旧验证器。JSON 分页的首页 ETag 不能证明整份集合未变，所以只在单页完整文档上保留验证器；分页首页清除 ETag/Last-Modified，后续页不发条件请求。无可用验证器时不允许远端返回 304。这样牺牲分页条件请求优化，避免后续页变化被首页 304 隐藏。
+HTTP 适配器将 URL、calendar_id、鉴权句柄/类型和映射配置摘要绑定到验证器 checkpoint，配置改变后不复用旧验证器。JSON 分页的首页 ETag 不能证明整份集合未变，所以只在单页完整文档上保留验证器；分页首页清除 ETag/Last-Modified，后续页不发条件请求。重定向响应不缓存条件验证器，传输层在每次重定向时清除条件头并拒绝目标的 304；避免不同目标合法复用同一 ETag 时误验旧数据。验证器绑定版本升级为 v2，使旧版可能错误关联重定向目标的缓存一次失效。无可用验证器时不允许远端返回 304。这样牺牲分页条件请求优化，避免后续页变化被首页 304 隐藏。
 
 ## ICS 与受限 JSON 映射
 
@@ -53,11 +53,13 @@ SourceState::push_ready 提供 enabled/last_verified_at 的保守诊断；实际
 | AC3 | 禁用拒绝启动同步；新鲜度边界和陈旧诊断；实际派发的禁用/陈旧复核复用 #24 既有回归 | 规则/已有投递集成 |
 | AC4 | 模拟 RemoteFetcher → 真实 ICS/JSON 解码 → 协调器 → 原子文件库；跨配置验证器不复用，分页验证器不发送到后续页 | 集成；#28 另提供真实 TLS 传输模拟 |
 
-Red：SourceRepository 占位实现下，两个协调验收测试分别以 Unavailable 与预期 304 分类不符失败；实现后通过，扩充至 7 项协调集成测试。受控把缺失分页结束标记改成 None，端到端测试捕获 `Ok(Committed(...changed_events:2))` 而预期 InvalidSnapshot 的误删除；恢复生产实现。未运行长时 fuzz/模型检查或真实外部来源。
+Red：SourceRepository 占位实现下，两个协调验收测试分别以 Unavailable 与预期 304 分类不符失败；实现后通过，扩充至 7 项协调集成测试；审核修复后为 8 项。受控把缺失分页结束标记改成 None，端到端测试捕获 `Ok(Committed(...changed_events:2))` 而预期 InvalidSnapshot 的误删除；恢复生产实现。未运行长时 fuzz/模型检查或真实外部来源。
 
 PR #57 review 回归：三页链 `/api/events` → `/v2/pages/2` → `3` 在旧实现中实际请求 `/api/3`，与预期 `/v2/pages/3` 的 URL 断言失败；修复为当前页相对解析后通过。另验证跨源、HTTP 降级、userinfo 和 fragment 下一页均在提交前拒绝且保留来源状态。
 
 第二轮 review 补充重定向路径变化回归：请求 `/v2/pages/2` 最终响应位于 `/redirected/pages/2`，其 `next: "3"` 应访问 `/redirected/pages/3`。旧实现请求 `/v2/pages/3` 的断言失败后，RemoteDocument 增加 final_url，真实 TLS 重定向测试验证该字段，适配器校验最终 URL 并以它解析下一页。
+
+第三轮 review 增补资源切换回归：同一来源从 `/feeds/a` 重定向到 `/feeds/b`，两者均有合法 ETag `"1"`。旧实现误接受 304、保留 a；修复后第二次完整导入 b。真实 TLS 回归也先复现条件头被发送给重定向目标，再验证修复后的头清除，另验证重定向目标的 304 不能核验初始资源快照。
 
 ## 实现参考
 
