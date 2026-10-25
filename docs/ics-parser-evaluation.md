@@ -1,6 +1,6 @@
 # ICS 解析库评估（#18）
 
-本次只评估解析后的数据保留，不实现生产接入器或扩大领域支持范围。候选仅作为 `calendar-domain` 的开发依赖：`ical = 0.11.0`（`ical` feature）、`icalendar = 0.17.6`（`parser` feature），均固定版本并纳入 `Cargo.lock`。
+本次只评估解析后的数据保留，不实现生产接入器或扩大领域支持范围。候选仅作为 `calendar-domain` 的开发依赖：`ical = 0.11.0`（`ical` feature）、`icalendar = 0.17.15`（`parser` feature），均固定版本并纳入 `Cargo.lock`。
 
 ## 样例与验收
 
@@ -17,7 +17,9 @@
 
 选定 `ical 0.11.0` 作为后续接入器的低层解析候选：本矩阵中的时间字面值、参数、重复属性和时区子组件均保留，TEXT 值保持原始转义，后续需按属性类型正确解码。它按组件种类分组，不能依赖跨种类的原始顺序；解析成功也不代表字段语义有效。
 
-`icalendar 0.17.6` 在本矩阵中同样保留时间、重复属性与子组件，TEXT 则在解析时解码。但其连续替换会将编码为两个反斜杠再加 `n` 的字面反斜杠加 `n` 误解为换行；`ac3_literal_backslash_n_exposes_icalendar_text_decoding_loss` 固定该反例，测试断言实际损失，不在 helper 中修补后宣称兼容。因此未选为首版输入解析库。
+`icalendar 0.17.6` 在本矩阵中同样保留时间、重复属性与子组件，TEXT 则在解析时解码。但其连续替换会将编码为两个反斜杠再加 `n` 的字面反斜杠加 `n` 误解为换行；`ac3_literal_backslash_n_exposes_icalendar_text_decoding_loss` 固定该反例，测试断言实际损失，不在 helper 中修补后宣称兼容。因此在最初评估时未选为首版输入解析库。
+
+依赖更新 #61：`icalendar 0.17.15` 已修复上述解码问题。`ac3_literal_backslash_n_preserves_rfc_text` 分别断言 `ical` 的原始双反斜杠与 `icalendar` 的语义反斜杠加 n，并拒绝误转成换行；不再要求候选保留旧缺陷。云端重跑旧断言实际失败（6 通过、1 失败），与 CI 一致。生产解析器仍为 `ical 0.11.0`，此次不重新选型或扩大支持范围。
 
 解析器保留 `RRULE`、`RDATE`、`VTIMEZONE` 或 `THISANDFUTURE` 不代表能够执行其语义。现有领域层对自定义 VTIMEZONE 和 THISANDFUTURE 的明确拒绝保持不变，见 [领域能力](domain-capabilities.md)。TEXT 解码、事件归一化、语义校验和资源限制由 [#25](https://github.com/freesialuo/CalRelay/issues/25) 实现（见 [ICS 归一化](ics-normalization.md)），不仅凭本样例矩阵接收任意 ICS。
 
