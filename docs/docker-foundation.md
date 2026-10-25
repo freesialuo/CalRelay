@@ -46,9 +46,13 @@ python3 scripts/check_docker_image.py calrelay:local
 
 镜像 build/publish workflow 由独立 CD owner 统一维护，本叶子不再另加镜像 job 或重复 gate wiring。CD owner 可在隔离 runner 构建 runtime target 后执行同一脚本，且 PR 不 push、不注入生产 secrets。实际 build/run 与当前 head 检查以统一 workflow 的真实结果为准；本地常规多阶段 Dockerfile 网络构建尚未完成，arm64 亦未验证，index 存在 arm64 不等于已验收。
 
-本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据，不能声称本地镜像运行通过；真实受控 CI 结果以当前 PR head Checks 为准。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。
+本地 Cloud 环境已读取 Engine 28.4.0、Compose 2.40.3、buildx 0.31.0。2026-10-25 首次 build 在 npm ci 阶段受 BuildKit 容器 DNS 限制；独立 5 秒 registry 请求报告 EAI_AGAIN，构建已取消。没有修改 daemon/DNS/网络或凭据；这次常规网络构建未完成，不能当作完整构建成功。后续离线镜像运行与标准 runner 的成功证据分别见下。buildx 默认 home cache 只读时可使用工作区专用空配置路径，不复制或修改任何账号凭据。
 
 
-离线实际镜像验证：在相同固定 Node/Rust 基础镜像中，以禁网容器和只读挂载的专用公开依赖缓存执行 `npm ci --offline --ignore-scripts`、真实 typecheck/build/bundle canary，以及 `cargo build --release --offline --locked -p calendar-server --bin calendar-server --no-default-features --features production-web`。缓存只挂 npm `_cacache` 和 Cargo `registry`，不挂用户凭据或工具配置。将该实际编译 payload 交给 Dockerfile 未改动的最终 `runtime` 阶段，本地镜像 `sha256:2cd06b1baa28387a05dc902e5a45f709751ac3f9ffcca201fbad07ffc1e0e119` 通过完整脚本：真实 HTTP/管理拒绝/健康、非 root/只读挂载、30秒内 SIGTERM、SQLite/正式凭据 CLI 重开旋转、CA/时区与镜像内容。实际 ready=503，符合本批尚未装配生产 worker 的 main；这不代表三 worker/完整产品已验收。
+历史离线验证（#112 合并前的未装配 worker 基线）：在相同固定 Node/Rust 基础镜像中，以禁网容器和只读挂载的专用公开依赖缓存执行 `npm ci --offline --ignore-scripts`、真实 typecheck/build/bundle canary，以及 `cargo build --release --offline --locked -p calendar-server --bin calendar-server --no-default-features --features production-web`。缓存只挂 npm `_cacache` 和 Cargo `registry`，不挂用户凭据或工具配置。将该实际编译 payload 交给 Dockerfile 未改动的最终 `runtime` 阶段，本地镜像 `sha256:2cd06b1baa28387a05dc902e5a45f709751ac3f9ffcca201fbad07ffc1e0e119` 通过当时版本的 smoke：真实 HTTP/管理拒绝/健康、非 root/只读挂载、30秒内 SIGTERM、SQLite/正式凭据 CLI 重开旋转、CA/时区与镜像内容。当时实际 ready=503，只反映该旧基线没有装配生产 worker；保留这个真实历史结果，不作为当前正常服务的通过条件。
+
+当前生产基线（#112 合并后，`main@0067635`）已注册真实 source/planner/delivery 三工作器。新建、非恢复暂停的数据卷和正常持久重开必须达到 ready=200；本地正式三工作器镜像 `sha256:4b12e1495f388b9788d9382533eeba898aaf7a46102ec43dc364c3a3c742f655` 已通过收紧后的 smoke：启动/重开 ready=200、live/ready CLI、缺少 admin/credentials 时在创建 DB 前拒绝、只读挂载、SIGTERM 及凭据/SQLite 持久化。统一 CD 的[标准多阶段构建与实际镜像 smoke（run 40189519609）](https://github.com/freesialuo/CalRelay/actions/runs/40189519609)亦成功，publish 跳过；此处仅记录已确认结果，纯文档修订不使这些对应代码/构建输入的证据失效。
+
+恢复暂停是独立状态：可以 ready=false，但 live 应保持健康，不能自动 resume 或改变 cutoff。当前 smoke 使用新建且非暂停的数据卷；显式备份恢复后的 image pause 演练尚未执行，不能用上述 fresh-start 成功替代它，也不能把历史未装配 worker 的 503 当作当前正常启动预期。
 
 这项证据验证真实编译与 runtime 容器，**不把离线分步构建称为常规多阶段 Dockerfile 已在本地完整通过**。后者的标准网络构建/运行由统一 CD runner 验证，结果以对应提交的实际检查为准。首轮本地 smoke 还检出了测试输入默认0600、docker cp后root所有导致非root不可读的问题；仅合成测试文件显式0444，生产权限和鉴权保持严格，失败时输出有界脱敏诊断。
