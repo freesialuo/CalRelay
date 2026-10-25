@@ -67,7 +67,7 @@ PushOutput.deliver(delivery_envelope, credential_handle) -> DeliveryOutcome
 | HTTP JSON | 按明示映射生成标准事件；支持分页和增量游标 | Basic、Bearer、OAuth2 |
 | 标准事件 API | 按来源 upsert/delete，不信任正文的来源归属 | 限定来源作用域的 API token |
 
-安全远程获取库见 [#28 实现与边界](remote-fetch.md)，来源协调和提交仍由 #29 交付。
+安全远程获取库见 [#28 实现与边界](remote-fetch.md)，来源协调、分页完整性和 304 快照证明见 [#29 实现](source-coordinator.md)。
 
 网络传输和事件编码分离：ICS 也可通过鉴权 HTTP 获取。HTTP JSON 映射限声明式字段映射，不允许在服务内执行任意脚本。复杂源用外部进程提交标准事件。
 

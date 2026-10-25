@@ -2,6 +2,8 @@
 
 pub mod security;
 
+mod ingestion;
+
 mod delivery;
 mod planning;
 mod sync;

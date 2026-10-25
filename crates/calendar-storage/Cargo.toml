@@ -16,5 +16,6 @@ sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-toki
 thiserror = "2"
 
 [dev-dependencies]
+calendar-adapters = { path = "../calendar-adapters" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

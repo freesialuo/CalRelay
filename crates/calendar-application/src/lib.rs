@@ -1,5 +1,8 @@
 //! Application contracts. No database or network dependencies.
 
+mod ingestion;
+pub use ingestion::*;
+
 mod remote;
 pub use remote::*;
 

@@ -99,8 +99,11 @@ impl<P: CredentialProvider> HttpFetcher<P> {
             .map(|a| SocketAddr::new(a.ip(), port))
             .collect())
     }
-    async fn authorization(&self, auth: &RemoteAuthentication) -> Result<Option<HeaderValue>, E> {
-        let mut value = match auth {
+    async fn authorization(
+        &self,
+        auth: &RemoteAuthentication,
+    ) -> Result<Option<(HeaderValue, Option<u64>)>, E> {
+        let (mut value, revision) = match auth {
             RemoteAuthentication::None => return Ok(None),
             RemoteAuthentication::Bearer { credential_id } => {
                 let secret = self
@@ -116,7 +119,10 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 }
                 let mut bytes = Zeroizing::new(b"Bearer ".to_vec());
                 bytes.extend_from_slice(secret.expose());
-                HeaderValue::from_bytes(&bytes).map_err(|_| E::Credential)?
+                (
+                    HeaderValue::from_bytes(&bytes).map_err(|_| E::Credential)?,
+                    secret.revision(),
+                )
             }
             RemoteAuthentication::Basic { credential_id } => {
                 #[derive(serde::Deserialize)]
@@ -150,11 +156,14 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 let encoded = Zeroizing::new(STANDARD.encode(&raw));
                 let mut value = Zeroizing::new(b"Basic ".to_vec());
                 value.extend_from_slice(encoded.as_bytes());
-                HeaderValue::from_bytes(&value).map_err(|_| E::Credential)?
+                (
+                    HeaderValue::from_bytes(&value).map_err(|_| E::Credential)?,
+                    secret.revision(),
+                )
             }
         };
         value.set_sensitive(true);
-        Ok(Some(value))
+        Ok(Some((value, revision)))
     }
     async fn fetch_inner(&self, request: RemoteFetchRequest) -> Result<RemoteFetchOutcome, E> {
         let mut url = parse_url(&request.url)?;
@@ -167,6 +176,15 @@ impl<P: CredentialProvider> HttpFetcher<P> {
         }
         if let Some(modified) = request.validators.last_modified {
             conditional.insert(IF_MODIFIED_SINCE, validator_header(&modified)?);
+        }
+        let credential_revision = auth.as_ref().and_then(|(_, revision)| *revision);
+        let mut can_not_modified = request.has_committed_snapshot;
+        if auth.is_some()
+            && (credential_revision.is_none()
+                || credential_revision != request.cached_credential_revision)
+        {
+            conditional.clear();
+            can_not_modified = false;
         }
         for hop in 0..=self.limits.max_redirects {
             let builder = reqwest::Client::builder()
@@ -197,7 +215,7 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 .get(url.clone())
                 .headers(conditional.clone())
                 .header("Accept-Encoding", "identity");
-            if let Some(auth) = &auth {
+            if let Some((auth, _)) = &auth {
                 builder = builder.header(AUTHORIZATION, auth.clone());
             }
             let mut response = builder.send().await.map_err(transport_error)?;
@@ -225,12 +243,15 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 if next.origin() != url.origin() {
                     return Err(E::Redirect);
                 }
+                // Validators describe the requested resource, not a redirect target.
+                conditional.clear();
+                can_not_modified = false;
                 addresses = self.pinned_addresses(&next).await?;
                 url = next;
                 continue;
             }
             let retry = retry_after(response.headers(), request.now_ms);
-            classify_status(status, retry, request.has_committed_snapshot)?;
+            classify_status(status, retry, can_not_modified)?;
             let validators = RemoteValidators {
                 etag: response_validator(response.headers(), ETAG)?,
                 last_modified: response_validator(response.headers(), LAST_MODIFIED)?,
@@ -259,6 +280,8 @@ impl<P: CredentialProvider> HttpFetcher<P> {
                 body.extend_from_slice(&chunk);
             }
             return Ok(RemoteFetchOutcome::Modified(RemoteDocument {
+                credential_revision,
+                final_url: url.to_string(),
                 body,
                 validators,
             }));
@@ -470,10 +493,14 @@ mod network_tests {
     impl CredentialProvider for TestCredentials {
         async fn credential(&self, id: &str, kind: &str) -> Result<SecretBytes, SecurityError> {
             match (id, kind) {
-                ("b", "bearer") => Ok(SecretBytes::new(b"synthetic-bearer".to_vec())),
+                ("unknown", "bearer") => Ok(SecretBytes::new(b"synthetic-unversioned".to_vec())),
+                ("b", "bearer") => {
+                    Ok(SecretBytes::new(b"synthetic-bearer".to_vec()).with_revision(0))
+                }
                 ("u", "basic") => Ok(SecretBytes::new(
                     br#"{"username":"user","password":"p\"ass"}"#.to_vec(),
-                )),
+                )
+                .with_revision(0)),
                 _ => Err(SecurityError::Denied),
             }
         }
@@ -499,6 +526,7 @@ mod network_tests {
         RemoteFetchRequest {
             url,
             authentication: RemoteAuthentication::None,
+            cached_credential_revision: None,
             validators: RemoteValidators::default(),
             has_committed_snapshot: false,
             now_ms: 0,
@@ -632,6 +660,7 @@ mod network_tests {
         ] {
             let mut req = request(server.url.clone());
             req.authentication = auth;
+            req.cached_credential_revision = Some(0);
             req.validators.etag = Some("\"old\"".into());
             req.validators.last_modified = Some("Wed, 14 Oct 2026 00:00:00 GMT".into());
             let outcome = client.fetch(req).await.unwrap();
@@ -734,17 +763,30 @@ mod network_tests {
     }
     #[tokio::test]
     async fn ac2_connection_uses_checked_dns_once_and_checks_every_redirect() {
-        let server = service(vec![
+        let mut server = service(vec![
             (response(302, "Location: /next\r\n", ""), false),
             (response(200, "", "ok"), false),
         ])
         .await;
         let (client, dns) = fetcher(&server, local(), 64);
-        assert!(matches!(
-            client.fetch(request(server.url.clone())).await,
-            Ok(RemoteFetchOutcome::Modified(_))
-        ));
+        let mut req = request(server.url.clone());
+        req.validators.etag = Some("\"cached\"".into());
+        let RemoteFetchOutcome::Modified(doc) = client.fetch(req).await.unwrap() else {
+            panic!("expected modified")
+        };
+        assert_eq!(
+            doc.final_url,
+            reqwest::Url::parse(&server.url)
+                .unwrap()
+                .join("/next")
+                .unwrap()
+                .to_string()
+        );
         assert_eq!(dns.calls.load(Ordering::SeqCst), 2);
+        let initial = server.received.recv().await.unwrap().to_lowercase();
+        let redirected = server.received.recv().await.unwrap().to_lowercase();
+        assert!(initial.contains("if-none-match: \"cached\""));
+        assert!(!redirected.contains("if-none-match:"));
         // A second resolver lookup within the first connection would rebind to private IP.
         let server = service(vec![(response(200, "", "ok"), false)]).await;
         let (client, dns) = fetcher(
@@ -847,6 +889,68 @@ mod network_tests {
             Some(E::Redirect)
         );
         assert_eq!(dns.calls.load(Ordering::SeqCst), 3);
+    }
+    #[tokio::test]
+    async fn redirected_304_cannot_verify_the_initial_resources_snapshot() {
+        let server = service(vec![
+            (response(302, "Location: /other\r\n", ""), false),
+            (response(304, "ETag: \"1\"\r\n", ""), false),
+        ])
+        .await;
+        let (client, _) = fetcher(&server, local(), 64);
+        let mut req = request(server.url.clone());
+        req.has_committed_snapshot = true;
+        req.validators.etag = Some("\"1\"".into());
+        assert_eq!(
+            client.fetch(req).await.err(),
+            Some(E::UnexpectedNotModified)
+        );
+    }
+    #[tokio::test]
+    async fn authenticated_validators_require_the_revision_used_for_authorization() {
+        for (id, cached, expected) in [
+            ("b", Some(0), true),
+            ("b", Some(1), false),
+            ("b", None, false),
+            ("unknown", None, false),
+            ("unknown", Some(0), false),
+        ] {
+            let mut server =
+                service(vec![(response(200, "ETag: \"same\"\r\n", "ok"), false)]).await;
+            let (client, _) = fetcher(&server, local(), 64);
+            let mut req = request(server.url.clone());
+            req.authentication = RemoteAuthentication::Bearer {
+                credential_id: id.into(),
+            };
+            req.has_committed_snapshot = true;
+            req.cached_credential_revision = cached;
+            req.validators.etag = Some("\"same\"".into());
+            req.validators.last_modified = Some("Wed, 21 Oct 2026 00:00:00 GMT".into());
+            let RemoteFetchOutcome::Modified(doc) = client.fetch(req).await.unwrap() else {
+                panic!("expected modified")
+            };
+            assert_eq!(
+                doc.credential_revision,
+                if id == "b" { Some(0) } else { None }
+            );
+            let wire = server.received.recv().await.unwrap().to_lowercase();
+            assert_eq!(wire.contains("if-none-match:"), expected);
+            assert_eq!(wire.contains("if-modified-since:"), expected);
+            assert!(wire.contains("authorization: bearer"));
+        }
+        let server = service(vec![(response(304, "", ""), false)]).await;
+        let (client, _) = fetcher(&server, local(), 64);
+        let mut req = request(server.url.clone());
+        req.authentication = RemoteAuthentication::Bearer {
+            credential_id: "b".into(),
+        };
+        req.has_committed_snapshot = true;
+        req.validators.etag = Some("\"same\"".into());
+        req.cached_credential_revision = Some(1);
+        assert_eq!(
+            client.fetch(req).await.err(),
+            Some(E::UnexpectedNotModified)
+        );
     }
 }
 

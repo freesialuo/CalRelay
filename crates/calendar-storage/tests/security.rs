@@ -321,6 +321,7 @@ async fn ac1_replacement_conflict_failure_rollback_and_reference_constraints() -
         .execute(db.pool())
         .await?;
     store.replace_credential("c", 0, &replacement, 20).await?;
+    assert_eq!(store.credential("c", "bearer").await?.revision(), Some(1));
     assert_eq!(
         store.replace_credential("c", 0, &initial, 21).await,
         Err(SecurityError::Conflict)
