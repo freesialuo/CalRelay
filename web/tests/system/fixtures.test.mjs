@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { connect } from "node:net";
+import { performance } from "node:perf_hooks";
 import { test as nodeTest } from "node:test";
 
 const test = (name, run) => nodeTest(name, { timeout: 10000 }, run);
@@ -201,3 +203,68 @@ test("invalid test controls and non-synthetic secrets fail closed", async () => 
     held.release();
   });
 });
+
+async function slowClient(url, headersOnly) {
+  const target = new URL(url);
+  const socket = connect({ host: target.hostname, port: Number(target.port) });
+  const started = performance.now();
+  let trickle;
+  let fail;
+  const closed = new Promise((resolve, reject) => {
+    socket.on("error", () => {});
+    socket.once("close", () => resolve(performance.now() - started));
+    fail = setTimeout(
+      () => reject(new Error("slow request exceeded its absolute deadline")),
+      4500,
+    );
+    socket.once("connect", () => {
+      socket.write(
+        headersOnly
+          ? "POST /bark HTTP/1.1\r\nHost: localhost\r\nX-Slow: "
+          : "POST /bark HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n",
+      );
+      trickle = setInterval(() => socket.write("x"), 200);
+    });
+    socket.resume();
+  });
+  try {
+    const elapsed = await closed;
+    assert.ok(
+      elapsed >= 2500,
+      "request closed before the deadline was exercised",
+    );
+    assert.ok(
+      elapsed < 4500,
+      "request was not bounded independently of incoming bytes",
+    );
+  } finally {
+    clearTimeout(fail);
+    clearInterval(trickle);
+    socket.destroy();
+  }
+}
+for (const headersOnly of [false, true])
+  test(`absolute ${headersOnly ? "headers" : "body"} deadline rejects a continuously trickling client`, () =>
+    fixture(async (f) => {
+      await slowClient(f.targets.bark, headersOnly);
+      assert.deepEqual(f.snapshot(), { requests: [], overflow: 0 });
+      const healthy = await fetch(f.targets.a);
+      assert.equal(healthy.status, 200);
+      await healthy.text();
+    }));
+test("present undefined controls are rejected without corrupting the next ICS response", () =>
+  fixture(async (f) => {
+    const original = await fetch(f.targets.a);
+    const body = await original.text();
+    const tag = original.headers.get("etag");
+    for (const field of ["shift", "status", "cancelled"]) {
+      assert.throws(
+        () => f.source("a", { [field]: undefined }),
+        /Invalid fixture/,
+      );
+      const response = await fetch(f.targets.a);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("etag"), tag);
+      assert.equal(await response.text(), body);
+    }
+  }));
