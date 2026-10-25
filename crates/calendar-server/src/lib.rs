@@ -4,6 +4,7 @@ mod config;
 mod feed;
 mod http;
 mod ingest;
+mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
 use calendar_adapters::IcsLimits;

@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "name": "My output",
+  "enabled": false,
+  "kind": "bark",
+  "origin": "https://bark.example.test",
+  "credential_id": "bark-credential",
+  "request_timeout_ms": 30000
+}

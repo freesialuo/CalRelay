@@ -154,6 +154,7 @@ pub fn openapi() -> Value {
     crate::ingest::describe(&mut document);
     crate::feed::describe(&mut document);
     crate::source_configuration::describe(&mut document);
+    crate::reminder_configuration::describe(&mut document);
     document
 }
 

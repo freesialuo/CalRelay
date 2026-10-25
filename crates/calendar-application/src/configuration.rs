@@ -87,6 +87,19 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
 impl SourceConfigurationV1 {
+    /// Freshness is independent of enabled/retired and core liveness.
+    pub fn freshness_satisfied(&self, last_verified_at: Option<i64>, now: i64) -> bool {
+        if self.mode == SourceMode::ManualStatic
+            || (self.mode == SourceMode::PushOnly && self.freshness_sla_ms.is_none())
+        {
+            return true;
+        }
+        self.freshness_sla_ms
+            .and_then(|age| i64::try_from(age).ok())
+            .is_some_and(|age| {
+                last_verified_at.is_some_and(|time| time <= now && time >= now.saturating_sub(age))
+            })
+    }
     pub fn validate(&self) -> Result<(), ConfigurationError> {
         let c = &self.capabilities;
         let invalid = || ConfigurationError::Invalid;
@@ -187,4 +200,139 @@ pub struct SourceConfigurationSummary {
 pub struct SourceConfigurationPage {
     pub items: Vec<SourceConfigurationSummary>,
     pub next_after: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleConfigurationV1 {
+    pub version: ConfigurationVersion,
+    pub name: String,
+    pub enabled: bool,
+    pub policy: crate::RulePolicy,
+    pub output_ids: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BarkKind {
+    #[serde(rename = "bark")]
+    Bark,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BarkOutputConfigurationV1 {
+    pub version: ConfigurationVersion,
+    pub name: String,
+    pub enabled: bool,
+    pub kind: BarkKind,
+    pub origin: String,
+    pub credential_id: String,
+    pub request_timeout_ms: u64,
+}
+fn valid_name(name: &str) -> bool {
+    !name.trim().is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)
+}
+fn valid_ids(ids: &[String], max: usize) -> bool {
+    !ids.is_empty()
+        && ids.len() <= max
+        && ids.iter().all(|id| valid_id(id))
+        && ids.iter().collect::<HashSet<_>>().len() == ids.len()
+}
+impl RuleConfigurationV1 {
+    pub fn validate(&self) -> Result<(), ConfigurationError> {
+        if !valid_name(&self.name)
+            || !valid_ids(&self.policy.calendar_ids, 256)
+            || !valid_ids(&self.output_ids, 32)
+            || !(0..=604_800_000).contains(&self.policy.lead_ms)
+            || crate::normalize_all_day_time(&self.policy.all_day_time).is_err()
+        {
+            return Err(ConfigurationError::Invalid);
+        }
+        Ok(())
+    }
+}
+impl BarkOutputConfigurationV1 {
+    pub fn validate(&self) -> Result<(), ConfigurationError> {
+        if !valid_name(&self.name)
+            || !valid_id(&self.credential_id)
+            || self.origin.len() > 8192
+            || !(1..=120_000).contains(&self.request_timeout_ms)
+        {
+            return Err(ConfigurationError::Invalid);
+        }
+        let origin = url::Url::parse(&self.origin).map_err(|_| ConfigurationError::Invalid)?;
+        if origin.scheme() != "https"
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+            || !matches!(origin.path(), "/" | "/push")
+        {
+            return Err(ConfigurationError::Invalid);
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleConfigurationRecord {
+    pub rule_id: String,
+    pub generation: i64,
+    pub retired_at: Option<i64>,
+    pub configuration: RuleConfigurationV1,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BarkOutputConfigurationRecord {
+    pub output_id: String,
+    pub generation: i64,
+    pub retired_at: Option<i64>,
+    pub configuration: BarkOutputConfigurationV1,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReminderConfigurationSummary {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub generation: i64,
+    pub retired_at: Option<i64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReminderConfigurationPage {
+    pub items: Vec<ReminderConfigurationSummary>,
+    pub next_after: Option<String>,
+}
+/// A single committed configuration snapshot; existing reconcile rechecks these fences.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanningConfiguration {
+    pub source_id: String,
+    pub source_revision: i64,
+    pub source_config_revision: i64,
+    pub source_mode: SourceMode,
+    pub freshness_sla_ms: Option<i64>,
+    pub rule_id: String,
+    pub rule_generation: i64,
+    pub output_id: String,
+    pub output_generation: i64,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanningConfigurationPage {
+    pub items: Vec<PlanningConfiguration>,
+    pub next_after: Option<String>,
+}
+pub trait ReminderConfigurationRepository: Send + Sync {
+    /// At most 100 active source/rule/output combinations. Cursor is an opaque continuation.
+    fn planning_configurations(
+        &self,
+        after: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<PlanningConfigurationPage, ConfigurationError>> + Send;
+    /// Read immediately before constructing a dispatch adapter. A cached output is not a fence.
+    fn output_for_delivery(
+        &self,
+        job_id: &str,
+        output_id: &str,
+    ) -> impl std::future::Future<
+        Output = Result<Option<BarkOutputConfigurationRecord>, ConfigurationError>,
+    > + Send;
 }

@@ -57,7 +57,7 @@ async fn seed(db: &Storage) -> Result {
       VALUES ('e','s','c','a',1,'{"schema_version":"1.0","external_uid":"a","title":"Test","status":"confirmed","start":{"kind":"utc","value":"2026-11-02T17:00:00Z"},"duration":"PT1H"}','h');
     INSERT INTO outputs(id,kind) VALUES ('o','test');
     INSERT INTO reminder_rules(id,policy_json) VALUES ('r','{"calendar_ids":["c"]}');
-    INSERT INTO rule_outputs VALUES ('r','o');
+    INSERT INTO rule_outputs(rule_id,output_id) VALUES ('r','o');
     INSERT INTO logical_deliveries(id,event_id,original_key,rule_id,output_id) VALUES ('l','e','single','r','o');
     INSERT INTO delivery_jobs(id,logical_delivery_id,generation,event_revision,rule_revision,output_revision,due_at,state,next_attempt_at,planning_context)
       VALUES ('j','l',1,1,1,1,1000,'pending',1000,'[null,"2025b"]');
