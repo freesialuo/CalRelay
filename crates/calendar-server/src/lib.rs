@@ -8,6 +8,8 @@ mod ingest;
 mod reminder_configuration;
 mod source_configuration;
 pub mod source_worker;
+#[cfg(feature = "production-web")]
+mod web;
 use calendar_adapters::IcsLimits;
 use calendar_application::DeliveryPolicy;
 use calendar_storage::Storage;
