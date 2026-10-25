@@ -15,7 +15,7 @@
 | --- | --- |
 | 时间 | DATE（排他 DTEND）、UTC DATE-TIME、floating DATE-TIME、带 TZID 的本地 DATE-TIME；不转换为 UTC。年份 0001–9999，秒精度。DTEND / DURATION 保留互斥及日历 duration 语义 |
 | 正文 | SUMMARY、DESCRIPTION、LOCATION、URL、CATEGORIES、STATUS、CLASS、TRANSP；可选空数组与缺省视为相同日历语义 |
-| 重复集合 | 已通过领域校验的 RRULE 原样保留；RDATE（含 DATE-TIME PERIOD 的独立 end / duration；DATE PERIOD 或结束端点不同类型/不同 TZID 显式拒绝）、EXDATE；无无限展开 |
+| 重复集合 | 已通过领域校验的 RRULE 原样保留；RDATE（含 DATE-TIME PERIOD 的独立 end / duration；DATE PERIOD、零时长、结束端点不同类型/不同 TZID 或同绑定结束坐标不严格晚于开始坐标时显式拒绝）、EXDATE；无无限展开 |
 | 例外 | range=single 且 change=cancelled，输出同 UID、同修订、原始 RECURRENCE-ID 与 STATUS:CANCELLED 的 VEVENT。override 与 THISANDFUTURE 均显式拒绝，不能降为单次或丢失 patch |
 | 时区 | zoned 值须提供与 TZID 匹配的源 VTIMEZONE。用既有受限 ICS 归一化器验证组件，再输出规范组件；相同定义去重，同名不同定义整份 feed 拒绝。无定义的 IANA TZID 同样拒绝，不伪造无限历史/未来规则，不静默降为 floating。自定义 VTIMEZONE 保留不等于可执行其规划规则 |
 | 尚未支持 | organizer、非空 attendees / alarms / attachments / extensions 整个事件显式拒绝；不静默丢弃。不能编码的 TZID 参数、控制字符、无效事件或元数据也拒绝 |
@@ -32,8 +32,8 @@
 | AC2 | 重复集合 / PERIOD / 单次取消 golden 及归一化 round-trip；缺时区、冲突定义、组件注入、override / ranged exception 拒绝 |
 | AC3 | 多字节 Unicode 长行、标点/反斜线/换行转义、75 octets 断言；经生产 `normalize_ics` 还原语义，再渲染一致；只规范化导出 UID 与 SEQUENCE 这两项受控映射后比较事件正文 |
 
-归一化基线 6/6 通过。首轮专项测试 4/6 通过、2/6 失败：有效源 VTIMEZONE 被拒绝。原因是验证探针使用 UTC DTSTART，归一化器按实际引用筛去未用时区；改为绑定待验证 TZID 的探针后 6/6 通过，并校对原组件与规范组件展开后的行，阻止额外组件注入。追加同名自定义时区跨事件误绑定回归，先观察 1/1 失败，再以每个 document 独立校验绑定修复；专项测试最终 7/7 通过。Codex 随后发现 DATE PERIOD 与跨类型/跨时区 PERIOD 端点错误；两项均先观察有效回归失败，再显式拒绝不可编码的 PERIOD，增加同绑定端点的正向 round-trip。这是实际需求失败与修复，不把工具安装或编译错误当作 Red。
+归一化基线 6/6 通过。首轮专项测试 4/6 通过、2/6 失败：有效源 VTIMEZONE 被拒绝。原因是验证探针使用 UTC DTSTART，归一化器按实际引用筛去未用时区；改为绑定待验证 TZID 的探针后 6/6 通过，并校对原组件与规范组件展开后的行，阻止额外组件注入。追加同名自定义时区跨事件误绑定回归，先观察 1/1 失败，再以每个 document 独立校验绑定修复；专项测试最终 7/7 通过。Codex 随后发现 DATE PERIOD 与跨类型/跨时区 PERIOD 端点错误；两项均先观察有效回归失败，再显式拒绝不可编码的 PERIOD，增加同绑定端点的正向 round-trip。同步 main 的 SQLx 0.9 升级后，Codex 又发现领域校验放行零长 PERIOD；先分别复现 PT0S 与相同起止值的失败回归，再在 renderer 拒绝零组件时长和不严格递增的同绑定起止坐标（包含源时区本地坐标）。测试覆盖所有零单位表示、三类 DATE-TIME 相同端点与正时长 round-trip，不改变普通 VEVENT 的零 duration。这是实际需求失败与修复，不把工具安装或编译错误当作 Red。
 
 使用既有锁定的 `ical = 0.11.0` 与 `sha2 = 0.10`，无新增/升级依赖。适用的完整检查与远端审核结果记在 PR，未运行 fuzz、形式证明或真实客户端互操作测试；黄金与生产归一化器 round-trip 不声称全 RFC 或所有客户端兼容。
 
-参考：通过 Exa 查阅 [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) §3.1（CRLF、75 octets 折叠）、§3.3.11（TEXT）、§3.6.5 / §3.2.19（VTIMEZONE / TZID）、§3.8.4.4 / §3.8.7.2 / §3.8.7.4（UID / DTSTAMP / SEQUENCE）、§3.8.4.2（RECURRENCE-ID）。使用仓库 #18 的解析选型和 #25 的受限生产归一化器作为语义回读边界。
+参考：通过 Exa 查阅 [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) §3.1（CRLF、75 octets 折叠）、§3.3.11（TEXT）、§3.3.9（PERIOD 必须为正时长）、§3.6.5 / §3.2.19（VTIMEZONE / TZID）、§3.8.4.4 / §3.8.7.2 / §3.8.7.4（UID / DTSTAMP / SEQUENCE）、§3.8.4.2（RECURRENCE-ID）。使用仓库 #18 的解析选型和 #25 的受限生产归一化器作为语义回读边界。

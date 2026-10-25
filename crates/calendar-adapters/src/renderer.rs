@@ -149,6 +149,16 @@ fn check_profile(event: &EventV1) -> Result<(), RenderError> {
                 if matches!(period.start, Temporal::Date { .. }) {
                     return Err(RenderError::Unsupported("DATE-valued RDATE PERIOD"));
                 }
+                // Domain validation has already checked the duration grammar and sign. A
+                // positive component must contain a nonzero decimal digit; avoid arithmetic
+                // or converting calendar days/weeks to seconds just to detect zero.
+                if period
+                    .duration
+                    .as_ref()
+                    .is_some_and(|duration| !duration.bytes().any(|b| matches!(b, b'1'..=b'9')))
+                {
+                    return Err(RenderError::Unsupported("zero-length RDATE PERIOD"));
+                }
                 if let Some(end) = &period.end {
                     let compatible = match (&period.start, end) {
                         (Temporal::Utc { .. }, Temporal::Utc { .. })
@@ -162,6 +172,28 @@ fn check_profile(event: &EventV1) -> Result<(), RenderError> {
                     if !compatible {
                         return Err(RenderError::Unsupported(
                             "RDATE PERIOD endpoint timezone bindings",
+                        ));
+                    }
+                    // Same-binding temporal strings are validated fixed-width calendar
+                    // coordinates. Require strict order, including for retained source zones
+                    // whose transition rules the domain does not evaluate.
+                    let ordered = match (&period.start, end) {
+                        (Temporal::Utc { value: start }, Temporal::Utc { value: end }) => {
+                            start < end
+                        }
+                        (
+                            Temporal::Floating { local: start },
+                            Temporal::Floating { local: end },
+                        )
+                        | (
+                            Temporal::Zoned { local: start, .. },
+                            Temporal::Zoned { local: end, .. },
+                        ) => start < end,
+                        _ => false,
+                    };
+                    if !ordered {
+                        return Err(RenderError::Unsupported(
+                            "non-positive RDATE PERIOD endpoints",
                         ));
                     }
                 }

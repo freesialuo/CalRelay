@@ -305,3 +305,49 @@ fn ac2_period_endpoints_with_same_binding_round_trip() {
         assert_eq!(parse(&output)[0].recurrence, original.recurrence);
     }
 }
+
+#[test]
+fn ac2_zero_duration_periods_are_rejected_without_restricting_event_duration() {
+    for duration in ["PT0S", "+PT00H0M00S", "P0D", "P000W", "P0DT0H0M0S"] {
+        let mut value = serde_json::to_value(event()).unwrap();
+        value["recurrence"] = json!({"rdates":[{"kind":"period","start":{"kind":"utc","value":"2026-11-09T09:00:00Z"},"duration":duration}]});
+        let original: EventV1 = serde_json::from_value(value).unwrap();
+        calendar_domain::validate_event(&original).unwrap();
+        assert!(
+            render_ics(&[entry(&original)]).is_err(),
+            "zero PERIOD {duration} must reject"
+        );
+    }
+    let mut original = event();
+    original.duration = Some("PT0S".into());
+    assert!(render_ics(&[entry(&original)]).is_ok());
+    for duration in ["PT0H0M1S", "P0001D"] {
+        let mut value = serde_json::to_value(event()).unwrap();
+        value["recurrence"] = json!({"rdates":[{"kind":"period","start":{"kind":"utc","value":"2026-11-09T09:00:00Z"},"duration":duration}]});
+        let original: EventV1 = serde_json::from_value(value).unwrap();
+        let output = render_ics(&[entry(&original)]).unwrap();
+        assert_eq!(parse(&output)[0].recurrence, original.recurrence);
+    }
+}
+
+#[test]
+fn ac2_equal_period_endpoints_are_rejected_in_each_supported_time_family() {
+    for start in [
+        json!({"kind":"utc","value":"2026-11-09T09:00:00Z"}),
+        json!({"kind":"floating","local":"2026-11-09T09:00:00"}),
+        json!({"kind":"zoned","local":"2026-11-09T09:00:00","tzid":"Custom/Source"}),
+    ] {
+        let mut value = serde_json::to_value(event()).unwrap();
+        value["start"] = start.clone();
+        if start["kind"] == "zoned" {
+            value["timezones"] = json!([{"tzid":"Custom/Source","vtimezone":include_str!("fixtures/render/source.vtimezone")}]);
+        }
+        value["recurrence"] = json!({"rdates":[{"kind":"period","start":start,"end":start}]});
+        let original: EventV1 = serde_json::from_value(value).unwrap();
+        calendar_domain::validate_event(&original).unwrap();
+        assert!(
+            render_ics(&[entry(&original)]).is_err(),
+            "equal PERIOD endpoints must reject"
+        );
+    }
+}
