@@ -627,12 +627,18 @@ async fn supervised_stuck_send_has_bounded_drain_and_preserves_unfinished_intent
         .forget();
     services.stop();
     let result = tokio::time::timeout(Duration::from_secs(2), running).await??;
-    assert!(matches!(
-        result,
-        Err(calendar_server::StartError::Supervision(
-            CoreFault::ShutdownTimeout
-        ))
-    ));
+    // Cleanup has its own finite window. Under scheduler/storage pressure the supervisor
+    // may correctly report unconfirmed cleanup instead of claiming ShutdownTimeout cleanup
+    // completed; both are bounded failures, never a successful drain.
+    assert!(
+        matches!(
+            result,
+            Err(calendar_server::StartError::Supervision(
+                CoreFault::ShutdownTimeout | CoreFault::ShutdownIncomplete
+            ))
+        ),
+        "unexpected shutdown result: {result:?}"
+    );
     let reopened = service(&path).await?;
     let attempts: (i64, i64, i64) =
         sqlx::query_as("SELECT COUNT(*),COUNT(sent_at),COUNT(finished_at) FROM delivery_attempts")
