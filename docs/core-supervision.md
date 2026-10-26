@@ -66,6 +66,6 @@
 - `tests/process.rs`：真实标准 server 子进程遇到合成 SQL 故障后持续提供 live 503，不退出、不删除/修复故障对象；独立测试子进程通过公共装配 API 注入停滞工作器，观察 live 503、进程继续运行，直到实际 SIGTERM 正常退出，已提交数据和完整性保留。生产二进制没有测试故障开关。正常 SIGTERM 与数据库重开继续通过。
 - `tests/recovery_lifecycle.rs`：真实备份恢复、历史任务、pause/cutoff、两次 server 启停，现已运行真实 HTTP/DB probe；显式 resume 后仅 cutoff 当时/之后任务能领取。CLI 的路径/失败状态/协议/超时使用临时 loopback peer。
 
-仍未验收：生产接入协调/规划/投递装配下的完整 live/ready/功能降级，以及真实生产循环下的最终 CLI/端到端集成。#82 已合并，健康 CLI 的部署 JSON 迁移在本批完成。本 PR 仅交付健康基础，不把合成 worker 测试或当前独立监督框架当作端到端生产提醒服务。未运行生产外部服务、真实账号、远端部署、长时 fuzz 或形式证明。
+后续 #112 已装配生产接入/规划/投递与真实进度，#117/#118 已接通受控系统成功链；不再以缺少生产注册或 CLI 装配作为阻塞。完整停滞/故障/恢复矩阵仍须逐项验收，见[首版对账](roadmap.md#首个-alpha-对账2026-10-26)。#82 已合并，健康 CLI 的部署 JSON 迁移在本批完成。本 PR 仅交付健康基础，不把合成 worker 测试或当前独立监督框架当作端到端生产提醒服务。未运行生产外部服务、真实账号、远端部署、长时 fuzz 或形式证明。
 
 参考：通过 Exa 查阅 Tokio 官方 [Instant 单调时间](https://docs.rs/tokio/latest/tokio/time/struct.Instant.html)、[pause/advance](https://docs.rs/tokio/latest/tokio/time/fn.pause.html)、[JoinSet 完成/取消](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html)。生产单调状态机采用显式 Instant 注入测试，不依赖 SQL I/O 的暂停时钟自动推进；SQLx API 同时核对本仓库锁定源码的 begin_with/Transaction rollback。

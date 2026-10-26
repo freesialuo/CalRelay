@@ -1,6 +1,6 @@
 # 首版系统验收计划与外部夹具（#113 / #78）
 
-本页是可执行夹具与待接通验收契约，不是 #78 完成证明。基线 main `e5c5ac3` 已含 #109 的真实配置 UI；#107 runtime 分支参考 `f734f5e`，尚未作为已合并依赖使用。#110/#111 镜像与 CD 的最终提交/镜像 digest 由父任务提供。#78 AC1–AC7、#35/#77/#76 残余 AC 全部保留。
+当前基线 main `55bfd041` 已含 #112/#117/#118：下表第1/2步的最小成功链已接通，详见本页 #116 结果；其余系统矩阵仍未全部验收，不是 #78 完成证明。生产镜像固定于更早的 `acdc38e`，精确 digest 与当前剩余 AC 见[首版对账](roadmap.md#首个-alpha-对账2026-10-26)。
 
 ## 最小系统路径
 
@@ -8,8 +8,8 @@
 
 | 步骤 | 真实动作及必须观察的证据 | #78映射 | 当前证据 |
 | --- | --- | --- | --- |
-| 1 | 空临时DB、正式CLI从合成secret文件初始化handle；真实HTTPS浏览器登录，配置两个ICS来源、稳定日历、输出、规则、聚合订阅并显式启用。A支持条件读取、B不用条件读取，均支持snapshot；周期遵守真实schema下限，不缩短持久配置伪造快速刷新 | AC1/6 | 单资源/跨页配置已由#109验证；串联双源runtime未接通 |
-| 2 | 实际周期scanner获取两份同裸UID的ICS，持久原子revision；实际planner创建水位/jobs；实际delivery经当前output/generation与加密provider构造请求，模拟Bark返回accepted，attempt实际入库。聚合GET得到两条不同稳定导出UID，条件GET得304 | AC1/4 | UNVERIFIED，等正式runtime测试装配 |
+| 1 | 空临时DB、正式CLI从合成secret文件初始化handle；真实HTTPS浏览器登录，配置两个ICS来源、稳定日历、输出、规则、聚合订阅并显式启用。A支持条件读取、B不用条件读取，均支持snapshot；周期遵守真实schema下限，不缩短持久配置伪造快速刷新 | AC1/6 | #109/#118 已验证浏览器串联双源 pull 配置，合成身份和隔离 transport，非真实账号 |
+| 2 | 实际周期scanner获取两份同裸UID的ICS，持久原子revision；实际planner创建水位/jobs；实际delivery经当前output/generation与加密provider构造请求，模拟Bark返回accepted，attempt实际入库。聚合GET得到两条不同稳定导出UID，条件GET得304 | AC1/4 | #118 已验证真实三循环、2个event/watermark/accepted、两条独立UID及304；其余矩阵不随之通过 |
 | 3 | A返回503，B仍更新，核心live正常且无来源失败引起的核心故障；A恢复后304保持可信snapshot。改期后UID不变、取消状态保留，记录source revision和规划水位 | AC2/3/4 | 夹具具备条件/故障/改期/取消协议，系统结果UNVERIFIED |
 | 4 | 屏障持有旧fetch响应，浏览器修改来源配置或永久退休，再释放：旧配置结果不能提交/复活任务。持有Bark响应时停用输出/规则再接受：保存真实accepted与竞争disposition，不声称撤回已发出的外部效果 | AC2 | 夹具具备屏障；系统generation/fence未接通 |
 | 5 | 普通订阅编辑保留token、改变字段/选择使旧ETag失效；轮换/退休及来源失权时，旧token/ETag不能得到200/304或旧payload。URL只在内存/测试请求中，不写报告/日志 | AC2/4 | #109已有真实guard/SQLite配置/轮换/退休；带事件和缓存竞争UNVERIFIED |
@@ -17,7 +17,9 @@
 
 AC3 的DST、UTC前后跳、强杀与完整追赶窗口，AC5 的producer负例矩阵，AC7 的全部核心停滞/故障，及真实日历客户端更新/删除互操作不被上述最小路径豁免；先引用已有有效模块证据，剩余系统场景继续由#78跟踪，不用本夹具数量代替集成验收。
 
-## runtime owner需要冻结的测试语义（待协调，不是新生产接口）
+## runtime 测试语义（#113 形成时的约束，已由 #112/#117 接通）
+
+以下保留测试隔离要求；当时入口缺失的描述已被本页 #116 结果替代，不再是当前阻塞。
 
 现有 `calendar-admin-harness` 仅装配真实guard/静态API，未注册三工作器且拒绝已有DB；不修改它的安全限制来冒充生产装配。#107 的 `with_production_runtime` 固定构造生产时钟/HttpFetcher/BarkOutput，网络模拟与可控时钟目前仅在模块内部 `cfg(test)` 测试中，外部浏览器程序不能调用。需要 owner 给出确切feature、binary/库入口和提交，再接系统测试：
 
@@ -29,7 +31,7 @@ AC3 的DST、UTC前后跳、强杀与完整追赶窗口，AC5 的producer负例�
 - 测试父进程管理同一新建目录内的停止/重开，复用既有备份/恢复API产生pause/cutoff。不得放宽admin harness的任意既存DB拒绝，不新增生产HTTP pause/resume或控制时钟路由。Node对DB只读观察，运维变更由既有可信Rust用例完成。
 - 启动/控制/退出回执只含版本、loopback地址和状态；合成AccessJWT仅代理内存。stderr不含原始URL、secret、事件正文。所有子进程和屏障有清理期限，提供SIGTERM与强制清理的实际状态。
 
-以上是请求的能力边界，没有在本叶子自行冻结参数/DTO或实现runtime hook。当前完整串联动作处于**待依赖/契约，不是权限拒绝，也未执行**。
+以上是请求的能力边界，没有在本叶子自行冻结参数/DTO或实现runtime hook。该约束提出时串联尚未执行；当前第1/2步已执行，实际结果与未验证范围见下文 #116。
 
 ## 生产镜像和harness的证据分界
 
@@ -39,7 +41,7 @@ AC3 的DST、UTC前后跳、强杀与完整追赶窗口，AC5 的producer负例�
 | 显式测试feature独立harness + 真实Rust静态HTTP/guard/SQLite + 受控网络/时钟 | 浏览器配置、真实条件写/nonce、实际周期/规划/持久投递状态、同UID多源、fetch/send/cache竞争、accepted去重、受控重开/恢复pause；每个实际场景独立记录 | 生产镜像具有测试控制入口、生产SSRF/TLS已被成功网络替身覆盖、真实Cloudflare账号可用、真实设备显示、真实客户端自动刷新、Docker恢复策略已验证 |
 | 当前Node夹具协议测试 | 真实loopback HTTP的ICS/ETag/304/503、改期/取消/屏障、Bark JSON响应/预算、脱敏journal/清理 | 服务实际运行了scanner/planner/delivery或完成#78 |
 
-镜像#110现有smoke与CD#111已有结果只归属它们的精确head/image，不能替代包含#107/#109的最终组合。无正式digest时不写“生产镜像验收通过”；不为本叶子连接生产或发布registry。
+镜像 #110 与 CD #111 的证据只归属其精确 source/image；首个 alpha 的正式 digest 已由只读诊断确认，见 roadmap。harness 成功链不冒充生产镜像的正向远端全旅程。
 
 ## 当前可执行夹具
 
