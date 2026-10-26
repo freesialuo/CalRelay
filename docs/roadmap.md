@@ -2,13 +2,13 @@
 
 ## 首个 alpha 对账（2026-10-26）
 
-本节覆盖下文早期规划中的实现状态，核对基线为 main `55bfd041`（已合并 #117/#118）；原 Issue AC 不删减，开放不等于没有交付。当前只建议 #2 在维护者确认后关闭，其余保留剩余验收。
+本节覆盖下文早期规划中的实现状态，核对基线为 main `55bfd041`（已合并 #117/#118）；原 Issue AC 不删减，开放不等于没有交付。维护者已核实 #2 AC1–5、六个已完成子项及主线 CI，并于 2026-10-26 06:17 UTC 关闭 #2；其余保留剩余验收。
 
 已发布的 `ghcr.io/freesialuo/calrelay:v0.1.0-alpha.1` 固定源提交 `acdc38e286eb141eab017174840c7c993899cd56`，digest `sha256:478d9ef2d2f87993e8babeee286fa0a8ef0abf681f6ee5bb1a8a884a52d902be`；[只读诊断](https://github.com/freesialuo/CalRelay/actions/runs/40244469650)证实包为 private、关联本仓库，config 与原测试镜像匹配。main 新增的 #117/#118 验收代码不在该旧镜像内。本轮不重发、覆盖、更新 latest 或部署服务器。
 
 | Issue / 范围 | 已交付证据（均为已合并 PR） | 剩余原 AC / 结案状态 |
 | --- | --- | --- |
-| [#2 领域与时间语义](https://github.com/freesialuo/CalRelay/issues/2) | AC1–5：#17/#41/#42/#51；四类时间、语义拒绝、黄金样例与 schema 契约 | 建议父任务确认后关闭；本轮尚未关闭。高级未支持语义仍显式拒绝，不等于全部 RFC 能力。 |
+| [#2 领域与时间语义](https://github.com/freesialuo/CalRelay/issues/2) | AC1–5：#17/#41/#42/#51；四类时间、语义拒绝、黄金样例与 schema 契约 | 已于 2026-10-26 06:17 UTC 验收关闭（AC1–5、六个子项及主线 CI 已核实）。高级未支持语义仍显式拒绝，不等于全部 RFC 能力。 |
 | [#3 标准源与接入](https://github.com/freesialuo/CalRelay/issues/3) | ICS 适配/安全获取/原子协调 #54/#56/#57；机器事件 API #68；周期扫描 #98 | 保留开放：标准源 envelope 的完整执行入口、更多协议/分页增量组合及外部 producer 系统负例，见 #73/#74/#78。 |
 | [#5 ICS / Bark 输出](https://github.com/freesialuo/CalRelay/issues/5) | renderer #64、Bark #66、单源 feed #70、多源 feed #101；auth-before-cache、mock 响应与 round-trip 测试 | 保留开放：AC1 的时间/例外能力须按 renderer 明示支持矩阵核对；真实客户端互操作和系统取消竞争未由成功链证明，不宣称设备已显示。 |
 | [#6 管理与安全](https://github.com/freesialuo/CalRelay/issues/6) | 鉴权 #69、安全 bootstrap #96、凭据 CLI #104、配置 UI #94/#109、编译静态资产 #103 | AC1 的诊断/审计管理闭环仍待验收；诊断 UI/API 由并行 owner 推进，当前不算完成；完整绕过/失败系统矩阵仍见 #78。 |
@@ -42,7 +42,7 @@
 
 ## 可独立验收的后续工作
 
-父项保留整体目标，子项通过 GitHub 原生层级关联，具体依赖及验收标准以各 Issue 为准。#11–#14、#16 已由 #17 合并；#15 兼容性评估与 #4 仓储/调度基础已验收关闭，保持成果不重开。#2 父项仍 open，不在本设计未经整体验收关闭。
+父项保留整体目标，子项通过 GitHub 原生层级关联，具体依赖及验收标准以各 Issue 为准。#11–#14、#16 已由 #17 合并；#15 兼容性评估与 #4 仓储/调度基础已验收关闭，保持成果不重开。#2 已完成整体验收并关闭，证据见本页首个 alpha 对账。
 
 | 父项 | 子项与交付结果 |
 | --- | --- |
