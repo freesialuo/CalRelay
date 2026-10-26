@@ -2,9 +2,7 @@
 
 本轮设计叶子 [#72](https://github.com/freesialuo/CalRelay/issues/72)，基线 `main@5456565`（2026-10-25）。以下图是目标设计，不能据此认定实现完成。Rust 模块化单体、TypeScript 管理 UI、单实例 SQLite 与 Docker 交付保持不变；Docker 最终包含实际服务和构建前端。首版不做双向远端日历写回、跨源智能合并或任意进程内插件。
 
-已实现基础：EventV1 领域校验/兼容性评估、SQLite 原子同步/规划水位/租约恢复、受限 ICS 与 HTTPS adapter、标准机器写入 API、ICS renderer、Bark adapter、凭据、备份恢复、管理鉴权模块。标准 binary 可启动基础 HTTP，但 `Server::initialize` 的 `admin=None`，尚未装配管理 verifier/secret provider、生产来源扫描/规划/投递循环；无实际 TS 管理闭环。模块/API/CLI 测试不等于产品验收。
-
-未合并工作独立保留：#70 只读单源 feed 仍待 review/合并；#71 draft head `9a3cbf3` 的 CLI/监督契约已停更，其 CI/review 结果不代表 #36 完成。typed supervisor、真实 HTTP/DB probe、结束/panic/停滞检测另有云端未提交成果（父任务核实 256 Rust、17 Python 测试），本设计不修改或收录其代码/文档，真实生产工作器仍未装配。共享 runtime 注册接口由 #75 与 #36 协调冻结。
+当前状态（2026-10-26）：#70 单源 feed、#71 真实监督基础、#96 安全 bootstrap、#112 三工作器生产装配及 #94/#109 管理 UI 均已合并；标准 binary 已要求 admin 与 credential provider，不再采用本设计形成时的 admin=None 基线。#117/#118 已提供受控运行时与浏览器成功链，完整产品验收仍未完成。实现/剩余 AC 和旧 alpha 镜像的精确边界见[首版对账](roadmap.md#首个-alpha-对账2026-10-26)。下图继续表示目标设计，不能代替验收。
 
 ## DFD Level 0：系统上下文
 

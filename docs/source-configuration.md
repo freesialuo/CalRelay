@@ -1,6 +1,6 @@
 # 来源配置契约与分阶段交付
 
-[#80](https://github.com/freesialuo/CalRelay/issues/80) 是 [#73](https://github.com/freesialuo/CalRelay/issues/73) 第一批；保留 #73 AC1–AC6、#35 全部 AC，父 Issue 不能因本批合并关闭。唯一契约 owner 维护 application DTO、schema、管理 OpenAPI 与迁移，后续 UI/runtime/aggregation 复用这些类型。没有前端、周期工作器、插件执行、生产 Docker 管理或真实账号操作；默认 binary 仍 `admin=None`，只有显式 `Server::with_admin` / `AdminState` 装配才挂载管理路由。
+[#80](https://github.com/freesialuo/CalRelay/issues/80) 是 [#73](https://github.com/freesialuo/CalRelay/issues/73) 第一批；保留 #73 AC1–AC6、#35 全部 AC，父 Issue 不能因本批合并关闭。唯一契约 owner 维护 application DTO、schema、管理 OpenAPI 与迁移，后续 UI/runtime/aggregation 复用这些类型。本页描述 #80 当批范围；后续 #96/#112 已装配安全 admin/provider 与真实周期工作器，#94/#109 已提供 UI，#110 已提供镜像。当前状态见[首版对账](roadmap.md#首个-alpha-对账2026-10-26)；插件执行与真实账号操作不属于本页交付。
 
 ## 可实现的最小配置 API
 
@@ -27,13 +27,13 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 ## 持久化与在途 fence
 
-唯一新增迁移 `0011_source_configuration.sql`；main 0010，未合并 #70 保留 0008，不复制它的 schema。旧来源保留 config_json/事件/启用状态与 config_revision=0；GET 返回 404，不猜测转换未知旧配置，PUT 不允许覆盖。后续明确导入迁移需单独验收。
+唯一新增迁移 `0011_source_configuration.sql`；当批 main 为 0010，#70 使用 0008（现已合并），不复制它的 schema。旧来源保留 config_json/事件/启用状态与 config_revision=0；GET 返回 404，不猜测转换未知旧配置，PUT 不允许覆盖。后续明确导入迁移需单独验收。
 
-首次托管来源 config/source revision 均为 1。BEGIN IMMEDIATE 短事务校验 CAS、凭据引用、稳定日历身份，写配置/日历与摘要审计；任一步失败整体回滚。无网络或 secret provider 调用。每次 PUT（包括同值写）config_revision 与 source revision 均 +1，清除 checkpoint/snapshot proof/last_verified，强制新拉取而不将旧内容当作新配置的可信基线；事件本体仍保留。重命名也保守推进 fence；#75 必须扫描当前 source revision 与 planning_watermarks 的差异，按新 revision 调用 #23 reconcile；它会为 superseded 的未 accepted 提醒建立新 generation，已 accepted 不重发。pull 重新核验后再发送，manual/push 的无 SLA 策略由 #74/#75 使用 DTO 装配；当前无生产循环，不能把本库 API 的作废当作完整产品重规划已交付。#29 commit_sync/verify_unchanged、#23 reconcile 现有 source revision 比较拒绝旧请求；配置 ETag 独立于事件 ingest 的数据 revision。
+首次托管来源 config/source revision 均为 1。BEGIN IMMEDIATE 短事务校验 CAS、凭据引用、稳定日历身份，写配置/日历与摘要审计；任一步失败整体回滚。无网络或 secret provider 调用。每次 PUT（包括同值写）config_revision 与 source revision 均 +1，清除 checkpoint/snapshot proof/last_verified，强制新拉取而不将旧内容当作新配置的可信基线；事件本体仍保留。重命名也保守推进 fence；#75 必须扫描当前 source revision 与 planning_watermarks 的差异，按新 revision 调用 #23 reconcile；它会为 superseded 的未 accepted 提醒建立新 generation，已 accepted 不重发。pull 重新核验后再发送，manual/push 的无 SLA 策略由 #74/#75 使用 DTO 装配；生产循环现由 #112 装配；本批库测试本身仍不代表完整变更竞争系统验收。#29 commit_sync/verify_unchanged、#23 reconcile 现有 source revision 比较拒绝旧请求；配置 ETag 独立于事件 ingest 的数据 revision。
 
 每次修改把该源 pending/retry_wait/leased jobs 标 superseded；退休标 cancelled、禁用 source、撤销 producer token 与单源 feed_subscriptions 并增加其 revision。保留 lease 与 attempt：已 prepare/send 的旧请求可能仍 accepted，#24 finish 记录实际 accepted outcome + superseded/cancelled disposition，并保留 logical_deliveries.accepted_at，不能谎称外部撤回。已 accepted jobs、event tombstone、logical dedup、attempt/audit/history 不物理删除；本批无自动清理，未来保留期策略不得让 accepted 重放。
 
-日历 selected 参与现有 planner 输入筛选，更新 source revision 先使旧水位和任务不可用。未来 #76 多源 feed 必须将 config_revision/selected/retired 和 source revision 向量纳入鉴权前后 fence/ETag；本批未引入多源订阅或缓存。#70 仍未合并，不以本批测试冒充它的缓存验收。
+日历 selected 参与现有 planner 输入筛选，更新 source revision 先使旧水位和任务不可用。后续 #76/#101 多源 feed 已将 config_revision/selected/retired 和 source revision 向量纳入鉴权前后 fence/ETag；这是后续已合并能力，不以本批测试冒充其缓存验收。
 
 ## 标准源 envelope v1 冻结边界
 
