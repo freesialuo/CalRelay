@@ -184,7 +184,7 @@ export class AdminSession extends EventTarget {
     unsafe: boolean,
   ): Promise<Response> {
     if (
-      !/^\/api\/admin\/v1\/(?:bootstrap|session|(?:(?:sources|rules|outputs|subscriptions)(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?|subscriptions\/[A-Za-z0-9_-]{1,128}\/token))$/.test(
+      !/^\/api\/admin\/v1\/(?:bootstrap|session|(?:(?:sources|rules|outputs|subscriptions)(?:\?[A-Za-z0-9_=%-]+|\/[A-Za-z0-9_-]{1,128})?|subscriptions\/[A-Za-z0-9_-]{1,128}\/token|sources\/[A-Za-z0-9_-]{1,128}\/diagnostics))$/.test(
         path,
       )
     )
