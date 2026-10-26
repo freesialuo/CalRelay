@@ -1530,6 +1530,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources/{source_id}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read source snapshot/freshness and latest 20 created jobs; sync error reasons are not persisted */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Read-only snapshot; accepted is upstream receipt, not device display */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceDiagnostic"];
+                    };
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Configured source not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid source ID */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping or unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/subscriptions": {
         parameters: {
             query?: never;
@@ -3162,6 +3239,25 @@ export interface components {
             /** @constant */
             version: "v1";
         };
+        DeliveryDiagnostic: {
+            /** @description Unix milliseconds */
+            accepted_at: number | null;
+            due_at: number;
+            /** @description Unix milliseconds */
+            finished_at: number | null;
+            job_id: string;
+            /** @enum {string|null} */
+            last_outcome: null | "accepted" | "permanent_failure" | "retryable" | "unknown" | "not_sent";
+            next_attempt_at: number;
+            output_id: string;
+            rule_id: string;
+            /** @description Unix milliseconds */
+            sent_at: number | null;
+            /** @description Unix milliseconds */
+            started_at: number | null;
+            /** @enum {string} */
+            state: "pending" | "leased" | "accepted" | "retry_wait" | "failed_permanent" | "expired" | "superseded" | "cancelled";
+        };
         Error: {
             error: {
                 code: string;
@@ -3257,6 +3353,22 @@ export interface components {
             refresh_interval_ms?: number | null;
             /** @constant */
             version: "v1";
+        };
+        SourceDiagnostic: {
+            deliveries: components["schemas"]["DeliveryDiagnostic"][];
+            enabled: boolean;
+            /** @enum {string} */
+            freshness: "not_applicable" | "never_verified" | "future_timestamp" | "fresh" | "stale";
+            /** @description Unix milliseconds */
+            last_verified_at: number | null;
+            /** @enum {string} */
+            mode: "pull" | "manual-static" | "push-only";
+            more_deliveries: boolean;
+            observed_at: number;
+            /** @description Unix milliseconds */
+            retired_at: number | null;
+            snapshot_revision: number | null;
+            source_id: string;
         };
     };
     responses: never;

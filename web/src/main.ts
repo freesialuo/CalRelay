@@ -3,6 +3,7 @@ import { adminSession } from "./admin-session";
 import { readProbe } from "./api";
 import { ConfigurationAPI } from "./configuration-api";
 import { mountConfiguration } from "./configuration-page";
+import { mountDiagnostics } from "./diagnostics-page";
 import { SourcesAPI } from "./sources-api";
 import { mountSources } from "./sources-page";
 
@@ -162,12 +163,8 @@ function render(): void {
       probe("HTTP 存活探针", "/health/live"),
       probe("HTTP 就绪探针", "/health/ready"),
       probe("管理会话", "/api/admin/v1/session"),
-      panel(
-        "来源、规划、投递与审计",
-        "本页面尚未接入业务诊断查询。HTTP 成功不证明工作器已装配；来源陈旧、外部失败和核心健康需要分别读取。",
-        "页面返回或刷新会取消当前检查并清除检查结果。管理会话依赖安全 Cookie 与服务端身份校验，前端不保存 token。",
-      ),
     );
+    sourcesView = mountDiagnostics(main, adminSession);
   }
   const footer = element(
     "footer",

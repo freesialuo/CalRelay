@@ -258,6 +258,7 @@ pub fn router(state: AdminState) -> Router {
     let sources = protect(
         state.clone(),
         crate::source_configuration::routes()
+            .merge(crate::diagnostics::routes())
             .with_state(state.clone())
             .layer(DefaultBodyLimit::max(65_536)),
     );

@@ -4,6 +4,7 @@ pub mod admin_sessions;
 pub mod aggregate;
 pub mod backup;
 pub mod configuration;
+pub mod diagnostics;
 pub mod feed;
 pub mod ingest;
 pub mod reminder_configuration;
