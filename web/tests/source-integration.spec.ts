@@ -156,6 +156,45 @@ test("real guard and SQLite source lifecycle survives browser refresh", async ({
   ).toEqual([0, 0]);
 });
 
+test("source retirement discards invalid unsaved fields while saving still validates them", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await create(page);
+  const savedName = await page.getByLabel("名称", { exact: true }).inputValue();
+  const writes: { method: string; headers: Record<string, string> }[] = [];
+  page.on("request", (request) => {
+    if (["PUT", "DELETE"].includes(request.method()))
+      writes.push({ method: request.method(), headers: request.headers() });
+  });
+  await page.getByLabel("名称", { exact: true }).fill("");
+  await page.getByLabel("ICS HTTPS 地址", { exact: false }).fill("invalid-url");
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  expect(
+    await page
+      .locator("main form")
+      .evaluate((form) => (form as HTMLFormElement).checkValidity()),
+  ).toBe(false);
+  expect(writes).toHaveLength(0);
+  expect(persisted(id)).toMatchObject({ revision: 1, retired: false });
+  await page.getByRole("button", { name: "退休来源", exact: true }).click();
+  await page.getByRole("button", { name: "确认永久退休", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("服务端已确认永久退休");
+  expect(writes).toHaveLength(1);
+  expect(writes[0].method).toBe("DELETE");
+  expect(writes[0].headers["if-match"]).toBe('"1"');
+  expect(writes[0].headers["x-csrf-token"]).toBeTruthy();
+  expect(writes[0].headers["x-admin-write-nonce"]).toBeTruthy();
+  expect(persisted(id)).toMatchObject({ revision: 2, retired: true });
+  const record = await (
+    await page.request.get(`/api/admin/v1/sources/${id}`)
+  ).json();
+  expect(record.configuration.name).toBe(savedName);
+  expect(record.configuration.endpoint).toBe(
+    "https://calendar.example/events.ics",
+  );
+});
+
 test("real CAS rejects a stale independent browser without overwriting its draft", async ({
   page,
   browser,

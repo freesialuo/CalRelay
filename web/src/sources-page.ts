@@ -271,8 +271,14 @@ export function mountSources(
     });
     const write = async (
       operation: (sourceId: string, signal: AbortSignal) => Promise<void>,
+      needsValidity = true,
     ) => {
-      if (writing || blocked || !form.reportValidity() || !validId(id.value))
+      if (
+        writing ||
+        blocked ||
+        (needsValidity && !form.reportValidity()) ||
+        !validId(id.value)
+      )
         return;
       if (!api.session.writable) {
         api.session.clear();
@@ -391,7 +397,7 @@ export function mountSources(
       confirmation.append(
         node(
           "p",
-          "永久退休会撤销关联机器 token / 单源订阅并作废未来任务，保留历史；同一 ID 不可复活。已发往外部的请求不能原子撤回。",
+          "永久退休会撤销关联机器 token / 单源订阅并作废未来任务，保留历史；同一 ID 不可复活。未保存输入将放弃；已发往外部的请求不能原子撤回。",
         ),
         confirm,
         back,
@@ -412,7 +418,7 @@ export function mountSources(
               "success",
             );
           }
-        });
+        }, false);
       });
       form.append(retire, confirmation);
     }

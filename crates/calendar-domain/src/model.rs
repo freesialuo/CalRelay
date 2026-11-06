@@ -428,6 +428,34 @@ pub struct EventV1 {
 }
 
 impl EventV1 {
+    /// Project notification text for a known occurrence of a validated event. Only the
+    /// supported single-instance override is applied; time, identity and cancellation are
+    /// unchanged. Callers must fence the current revision and occurrence before delivery.
+    pub fn apply_occurrence_text(&mut self, original_key: &str) {
+        let exception = self
+            .recurrence
+            .as_ref()
+            .and_then(|r| r.exceptions.as_ref())
+            .and_then(|exceptions| {
+                exceptions.iter().find(|exception| {
+                    exception.range == RecurrenceRange::Single
+                        && exception.recurrence_id.recurrence_key() == original_key
+                })
+            });
+        if let Some(RecurrenceException {
+            change: Change::Override { patch },
+            ..
+        }) = exception
+        {
+            if let Some(title) = &patch.title {
+                self.title.clone_from(title);
+            }
+            if let Some(description) = &patch.description {
+                self.description.clone_from(description);
+            }
+        }
+    }
+
     /// Resolve a temporal value to a UTC instant using this event's source `timezones` context.
     pub fn resolve_utc(&self, temporal: &Temporal) -> Result<Option<DateTime<Utc>>, Code> {
         temporal.to_utc_with_timezones(self.timezones.as_deref().unwrap_or(&[]))
