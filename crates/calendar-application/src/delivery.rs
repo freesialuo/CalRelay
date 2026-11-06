@@ -90,6 +90,8 @@ pub struct DeliveryEnvelope {
     pub job_id: String,
     pub request_id: String,
     pub output_id: String,
+    /// Title/description are the selected occurrence's notification text. Time and recurrence
+    /// retain the source event; this is not a fully expanded occurrence document.
     pub event: EventV1,
     pub original_key: String,
     pub due_at: i64,
