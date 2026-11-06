@@ -129,7 +129,7 @@ impl PushOutput for ConfiguredBark {
     }
 }
 
-fn request(scope: PlanningConfiguration) -> PlanningRequest {
+fn request(scope: PlanningConfiguration, catch_up_ms: i64) -> PlanningRequest {
     PlanningRequest {
         source_id: scope.source_id,
         base_revision: scope.source_revision,
@@ -140,6 +140,7 @@ fn request(scope: PlanningConfiguration) -> PlanningRequest {
         horizon_ms: HORIZON_MS,
         max_lead_ms: MAX_LEAD_MS,
         extension_interval_ms: EXTENSION_MS,
+        catch_up_ms,
         tzdata_version: calendar_domain::TZDB_VERSION.into(),
         limits: PlanningLimits {
             max_occurrences: 10_000,
@@ -184,7 +185,7 @@ impl Planner {
             let Some(scope) = self.pending.pop_front() else {
                 break;
             };
-            let request = request(scope.clone());
+            let request = request(scope.clone(), services.delivery_policy.catch_up_ms);
             let result = services
                 .run_task(async |storage| {
                     if !storage
