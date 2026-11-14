@@ -250,7 +250,8 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
       states[id] = next;
     },
     bark(status) {
-      if (![200, 503].includes(status))
+      // 599 is a test-only sentinel that makes the harness delivery worker panic.
+      if (![200, 503, 599].includes(status))
         throw new Error("Invalid fixture Bark status");
       barkStatus = status;
     },

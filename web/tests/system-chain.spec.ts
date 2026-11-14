@@ -445,4 +445,60 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   for (const path of ["/health/live", "/health/ready"])
     expect((await request.get(path)).status(), path).toBe(200);
   await control({ action: "release" });
+
+  // A panicking delivery worker is a core fault: live reports it while the management API
+  // keeps serving; nothing exits or restarts by itself. A forced restart recovers.
+  await control({ action: "bark", status: 599 });
+  const panicking = await (
+    await request.get(`${ingest}/state`, { headers: bearer })
+  ).json();
+  const panicAt = clock.clock_file
+    ? JSON.parse(readFileSync(clock.clock_file, "utf8")).utc_now_ms
+    : Date.now() + 3000;
+  expect(
+    (
+      await request.post(`${ingest}/batches`, {
+        headers: { ...bearer, "idempotency-key": "system-push-3" },
+        data: {
+          protocol_version: "standard-calendar-source/v1",
+          batch_id: "system-push-3",
+          mode: "snapshot",
+          base_source_revision: panicking.source_revision,
+          base_config_revision: panicking.config_revision,
+          base_checkpoint: null,
+          proposed_checkpoint: null,
+          complete: true,
+          pages: 1,
+          collection_tag: null,
+          operations: [
+            event("pushed", due),
+            event("pushed-late", businessNow),
+            event("pushed-panic", panicAt),
+          ],
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(async () => (await request.get("/health/live")).status(), {
+      timeout: 45000,
+      intervals: [250, 500, 1000],
+    })
+    .toBe(503);
+  const panicked = await (await request.get(state().fixture_status)).json();
+  expect(
+    panicked.requests.some(
+      (r: { kind: string; status: number }) =>
+        r.kind === "bark" && r.status === 599,
+    ),
+  ).toBe(true);
+  expect((await page.request.get("/api/admin/v1/sources")).status()).toBe(200);
+  await control({ action: "bark", status: 200 });
+  await control({ action: "restart" });
+  await expect
+    .poll(async () => (await request.get("/health/ready")).status(), {
+      timeout: 20000,
+    })
+    .toBe(200);
+  expect((await request.get("/health/live")).status()).toBe(200);
 });
