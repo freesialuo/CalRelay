@@ -317,7 +317,21 @@ test("ICS upload replaces a manual-static snapshot and is not offered for pull s
   expect(events(id)).toHaveLength(102);
   await upload.click();
   await expect(sourceStatus(page)).toContainText("需要确认");
+  // Once approval is submitted the prompt disappears, so "keep" cannot claim nothing changed.
+  let finish = () => {};
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/snapshot?approve_deletions=true", async (route) => {
+    await pending;
+    await route.fallback();
+  });
   await approve.click();
+  await expect(
+    page.getByRole("button", { name: "保留既有事件", exact: true }),
+  ).toBeHidden();
+  await expect(approve).toBeHidden();
+  finish();
   await expect(sourceStatus(page)).toContainText("变更 103 个事件");
   await expect(approve).toBeHidden();
   expect(events(id)).toEqual(["only"]);

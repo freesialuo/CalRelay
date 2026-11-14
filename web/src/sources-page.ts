@@ -548,12 +548,16 @@ export function mountSources(
         settle();
       });
       keep.addEventListener("click", () => {
+        if (writing) return;
         settle();
         display("已取消；既有事件未改变。", "success");
       });
       approve.addEventListener("click", () => {
         const ics = awaitingApproval;
-        if (ics !== undefined) void send(async () => ics, true);
+        if (ics === undefined || writing) return;
+        // Once submitted the prompt is gone: nothing may claim the events are unchanged.
+        settle();
+        void send(async () => ics, true);
       });
       upload.addEventListener("click", () => {
         const chosen = file.files?.[0];
