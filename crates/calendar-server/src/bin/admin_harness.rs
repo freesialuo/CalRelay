@@ -67,7 +67,12 @@ async fn main() -> std::process::ExitCode {
     }
 }
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let mut args: Vec<_> = std::env::args().skip(1).collect();
+    // A system test's forced restart reopens the existing database instead of creating one.
+    let reopen = args.last().is_some_and(|a| a == "--reopen-database");
+    if reopen {
+        args.pop();
+    }
     let Some([db_flag, path, origin_flag, origin]) = args.get(..4) else {
         return Err("expected harness arguments".into());
     };
@@ -93,6 +98,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => return Err("invalid offline harness arguments".into()),
     };
+    if reopen && runtime.is_none() {
+        return Err("only the system runtime harness can reopen a database".into());
+    }
     let uri: axum::http::Uri = origin.parse()?;
     if uri.scheme_str() != Some("https") || !matches!(uri.host(), Some("127.0.0.1" | "localhost")) {
         return Err("harness origin must be HTTPS loopback".into());
@@ -156,7 +164,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .initialize(
                 std::path::Path::new(path),
                 std::path::Path::new(deployment),
-                DatabaseMode::Fresh,
+                if reopen {
+                    DatabaseMode::Reopen
+                } else {
+                    DatabaseMode::Fresh
+                },
             )
             .await?
     } else {

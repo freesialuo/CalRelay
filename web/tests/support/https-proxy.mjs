@@ -8,11 +8,12 @@ import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 
+const isolated = (upstream, syntheticJWT) =>
+  /^http:\/\/127\.0\.0\.1:\d+$/.test(upstream) &&
+  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(syntheticJWT);
+
 export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
-  if (
-    !/^http:\/\/127\.0\.0\.1:\d+$/.test(upstream) ||
-    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(syntheticJWT)
-  )
+  if (!isolated(upstream, syntheticJWT))
     throw new Error(
       "Expected isolated loopback harness and synthetic identity",
     );
@@ -129,6 +130,13 @@ export async function startHTTPSProxy(upstream, syntheticJWT, port = 4175) {
     });
     return {
       origin: `https://127.0.0.1:${port}`,
+      // A restarted isolated harness listens elsewhere with a fresh synthetic identity.
+      retarget: (nextUpstream, nextJWT) => {
+        if (!isolated(nextUpstream, nextJWT))
+          throw new Error("Expected isolated loopback harness");
+        upstream = nextUpstream;
+        syntheticJWT = nextJWT;
+      },
       close: async () => {
         server.closeAllConnections();
         await new Promise((done) => server.close(done));
