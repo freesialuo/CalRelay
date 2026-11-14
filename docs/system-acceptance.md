@@ -76,7 +76,7 @@ npm run test:system:clock
 
 npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
 
-仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`（可选尾部 `--business-clock FILE`），不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式也只能创建新DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用#117正式HarnessRoot::initialize(Fresh)、KeyRing与CLI，系统目录为私有canonical calrelay-system-*，不增加Reopen/Restored参数；fixture与Clock控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
+仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`（可选尾部 `--business-clock FILE`），不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式启动时只能创建新DB，只有夹具请求的强杀重启以 `--reopen-database` 重新打开同一DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用#117正式HarnessRoot::initialize(Fresh)、KeyRing与CLI，系统目录为私有canonical calrelay-system-*，不增加Reopen/Restored参数；fixture与Clock控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
 
 共享Rust所有权：#116只维护 `src/bin/admin_harness.rs` 的显式system模式/原认证复用及新 `src/bin/admin_harness/runtime_ports.rs` 网络替身；#115维护shared runtime Clock与fresh/reopen/restored typed接口。#116不改production_runtime.rs、不复制loops、不接reopen/restore控制。夹具新增只读/status返回脱敏journal，不提供远程控制操作。
 
@@ -84,4 +84,6 @@ npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，�
 
 #117已合入main 7e0f5b2。显式测试进程环境 `CALRELAY_TEST_CONTROLLED_CLOCK=1` 选择同一浏览器场景的受控版本：启动时UTC冻结在真实当前时刻，同一Clock注入三worker与feed；先断言事件开始前无accepted，再用同目录临时文件+rename原子推进61秒，观察双源真实处理/accepted与聚合200/304。随后只回拨UTC、保持monotonic offset，条件读取因未来verified_at返回503，既有管理会话仍200；恢复UTC后feed重新200。无freshness豁免，真实鉴权与监督时钟不变。测试不声称覆盖任意时钟跳变或重启去重。
 
-受控重开/restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。
+强杀重启（#202）：系统链路在四个来源的提醒全部 accepted 后，经夹具控制文件请求强制重启；`admin-preview.mjs` 以 SIGKILL 终止服务进程，再以 `--reopen-database`（仅系统模式可用，选择既有 `DatabaseMode::Reopen`）在同一数据库、部署配置、模拟网络与时钟上启动，HTTPS 代理改指新实例。随后断言 live/ready 恢复、重新登录后四个来源配置保留、聚合订阅仍为 200，且再经若干工作器周期后 accepted 与模拟 Bark 成功请求仍各为 4（无重复投递）。受控与真实时钟两种模式均覆盖。
+
+restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。

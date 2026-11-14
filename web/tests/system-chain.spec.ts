@@ -18,6 +18,8 @@ function state(): {
   fixture_status: string;
   clock_file?: string;
   initial_utc?: number;
+  restart_request?: string;
+  restart_done?: string;
 } {
   return JSON.parse(
     readFileSync(
@@ -246,4 +248,51 @@ test("browser configuration drives actual scanner planner delivery and distinct 
     ).toBeGreaterThanOrEqual(1);
   expect((await request.get("/health/live")).status()).toBe(200);
   expect((await request.get("/health/ready")).status()).toBe(200);
+
+  // Forced restart: SIGKILL the service and start it again on the same database and clock.
+  const control = state();
+  if (!control.restart_request || !control.restart_done)
+    throw new Error("Missing restart control");
+  const sources = [a, b, c, d].map((s) => s.id);
+  writeFileSync(control.restart_request, "kill", { flag: "wx", mode: 0o600 });
+  await expect
+    .poll(
+      () => {
+        try {
+          return readFileSync(control.restart_done ?? "", "utf8");
+        } catch {
+          return "";
+        }
+      },
+      { timeout: 30000, intervals: [100, 250, 500] },
+    )
+    .toBe("1");
+  await expect
+    .poll(async () => (await request.get("/health/ready")).status(), {
+      timeout: 20000,
+    })
+    .toBe(200);
+  expect((await request.get("/health/live")).status()).toBe(200);
+  // Configuration survives; a new browser login reads it back.
+  await login(page);
+  const listed = await (await page.request.get("/api/admin/v1/sources")).json();
+  for (const id of sources)
+    expect(
+      listed.items.some((item: { source_id: string }) => item.source_id === id),
+    ).toBe(true);
+  expect((await request.get(capability)).status()).toBe(200);
+  // Already accepted reminders stay delivered exactly once across further worker rounds.
+  await page.waitForTimeout(5000);
+  expect(observed()).toMatchObject({
+    events: 4,
+    accepted: 4,
+    accepted_logical: 4,
+  });
+  const after = await (await request.get(state().fixture_status)).json();
+  expect(
+    after.requests.filter(
+      (r: { kind: string; status: number }) =>
+        r.kind === "bark" && r.status === 200,
+    ),
+  ).toHaveLength(4);
 });

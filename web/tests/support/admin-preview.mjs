@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,63 +91,69 @@ try {
       mode: 0o600,
     });
   }
-  child = spawn(
-    binary,
-    [
-      "--database",
-      database,
-      "--browser-origin",
-      origin,
-      ...(systemMode
-        ? [
-            "--system-fixtures",
-            fixtureFile,
-            "--deployment-config",
-            deploymentPath,
-            ...(controlledClock ? ["--business-clock", clockFile] : []),
-          ]
-        : []),
-    ],
-    { stdio: ["ignore", "pipe", "ignore"] },
-  );
-  const configuration = await new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("Offline harness startup timed out")),
-      15000,
+  // Start the isolated harness on the same database, fixtures and clock; resolves with its
+  // readiness contract. Used once at startup and again for each requested forced restart.
+  const launch = async (reopen = false) => {
+    child = spawn(
+      binary,
+      [
+        "--database",
+        database,
+        "--browser-origin",
+        origin,
+        ...(systemMode
+          ? [
+              "--system-fixtures",
+              fixtureFile,
+              "--deployment-config",
+              deploymentPath,
+              ...(controlledClock ? ["--business-clock", clockFile] : []),
+              ...(reopen ? ["--reopen-database"] : []),
+            ]
+          : []),
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
     );
-    let buffer = "";
-    child.stdout.on("data", (chunk) => {
-      buffer += chunk.toString();
-      if (buffer.length > 32768) {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Offline harness startup timed out")),
+        15000,
+      );
+      let buffer = "";
+      child.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        if (buffer.length > 32768) {
+          clearTimeout(timer);
+          reject(new Error("Invalid harness startup"));
+          return;
+        }
+        const line = buffer.split("\n")[0];
+        if (!buffer.includes("\n")) return;
         clearTimeout(timer);
-        reject(new Error("Invalid harness startup"));
-        return;
-      }
-      const line = buffer.split("\n")[0];
-      if (!buffer.includes("\n")) return;
-      clearTimeout(timer);
-      try {
-        const data = JSON.parse(line);
-        if (
-          data.synthetic_only !== true ||
-          data.browser_origin !== origin ||
-          data.challenge_prefix !== "synthetic-challenge:"
-        )
-          throw new Error();
-        resolve(data);
-      } catch {
-        reject(new Error("Invalid offline harness contract"));
-      }
+        try {
+          const data = JSON.parse(line);
+          if (
+            data.synthetic_only !== true ||
+            data.browser_origin !== origin ||
+            data.challenge_prefix !== "synthetic-challenge:"
+          )
+            throw new Error();
+          resolve(data);
+        } catch {
+          reject(new Error("Invalid offline harness contract"));
+        }
+      });
+      child.once("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Build the explicit test-harness binary first"));
+      });
+      child.once("exit", () => {
+        clearTimeout(timer);
+        reject(new Error("Offline harness exited before readiness"));
+      });
     });
-    child.once("error", () => {
-      clearTimeout(timer);
-      reject(new Error("Build the explicit test-harness binary first"));
-    });
-    child.once("exit", () => {
-      clearTimeout(timer);
-      reject(new Error("Offline harness exited before readiness"));
-    });
-  });
+  };
+  let configuration = await launch();
   const credentialBinary = fileURLToPath(
     new URL("../../../target/debug/calendar-server", import.meta.url),
   );
@@ -185,10 +192,43 @@ try {
       ...(controlledClock
         ? { clock_file: clockFile, initial_utc: initialUtc }
         : {}),
+      ...(systemMode
+        ? {
+            restart_request: join(directory, "restart-request"),
+            restart_done: join(directory, "restart-done"),
+          }
+        : {}),
     }),
     { flag: "wx" },
   );
   stateCreated = true;
+  if (systemMode) {
+    // A system test asks for a forced restart by creating the request file; the harness
+    // SIGKILLs the service, starts it again on the same state and acknowledges it.
+    let restarts = 0;
+    let restarting = false;
+    const request = join(directory, "restart-request");
+    const done = join(directory, "restart-done");
+    setInterval(async () => {
+      if (restarting || closing || !existsSync(request)) return;
+      restarting = true;
+      try {
+        await execute("find", [request, "-delete"]);
+        const exited = new Promise((resolve) => child.once("exit", resolve));
+        child.kill("SIGKILL");
+        await exited;
+        configuration = await launch(true);
+        proxy.retarget(configuration.upstream, configuration.access_jwt);
+        restarts++;
+        await writeFile(done, String(restarts));
+      } catch {
+        await close();
+        process.exitCode = 1;
+      } finally {
+        restarting = false;
+      }
+    }, 100).unref();
+  }
   process.once("SIGTERM", close);
   process.once("SIGINT", close);
   console.log(`Isolated HTTPS admin browser tests: ${origin}/admin/`);
