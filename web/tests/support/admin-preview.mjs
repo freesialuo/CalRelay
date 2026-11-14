@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +12,12 @@ const execute = promisify(execFile);
 const systemMode = process.argv[2] === "--system-runtime";
 const controlledClock =
   systemMode && process.env.CALRELAY_TEST_CONTROLLED_CLOCK === "1";
+// The controlled runtime only accepts a canonical root; macOS tmpdir is behind a symlink.
 const directory = await mkdtemp(
-  join(tmpdir(), systemMode ? "calrelay-system-" : "calrelay-admin-browser-"),
+  join(
+    await realpath(tmpdir()),
+    systemMode ? "calrelay-system-" : "calrelay-admin-browser-",
+  ),
 );
 const database = join(directory, "test.sqlite");
 const statePath = fileURLToPath(

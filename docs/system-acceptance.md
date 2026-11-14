@@ -41,6 +41,8 @@ AC3 的DST、UTC前后跳、强杀与完整追赶窗口，AC5 的producer负例�
 | 显式测试feature独立harness + 真实Rust静态HTTP/guard/SQLite + 受控网络/时钟 | 浏览器配置、真实条件写/nonce、实际周期/规划/持久投递状态、同UID多源、fetch/send/cache竞争、accepted去重、受控重开/恢复pause；每个实际场景独立记录 | 生产镜像具有测试控制入口、生产SSRF/TLS已被成功网络替身覆盖、真实Cloudflare账号可用、真实设备显示、真实客户端自动刷新、Docker恢复策略已验证 |
 | 当前Node夹具协议测试 | 真实loopback HTTP的ICS/ETag/304/503、改期/取消/屏障、Bark JSON响应/预算、脱敏journal/清理 | 服务实际运行了scanner/planner/delivery或完成#78 |
 
+#158 起，同一链路增加第三个 manual-static 来源：其唯一事件由浏览器上传 ICS 提交，与两个 pull 来源一起被规划并投递到模拟 Bark（3 个事件、3 个水位、3 次 accepted）；汇总订阅仍只选择两个 pull 来源。真实时钟与受控时钟两种模式均覆盖。
+
 镜像 #110 与 CD #111 的证据只归属其精确 source/image；首个 alpha 的正式 digest 已由只读诊断确认，见 roadmap。harness 成功链不冒充生产镜像的正向远端全旅程。
 
 ## 当前可执行夹具

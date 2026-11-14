@@ -597,6 +597,7 @@ async fn sync_plan_deliver_and_replan_keep_real_logical_dedup() -> Result {
         horizon_ms: 86_400_000,
         max_lead_ms: 0,
         extension_interval_ms: 1000,
+        catch_up_ms: 900_000,
         tzdata_version: "2025b".into(),
         limits: PlanningLimits {
             max_occurrences: 10,

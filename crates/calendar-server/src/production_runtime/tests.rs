@@ -240,7 +240,10 @@ async fn planning_persists_window_restart_threshold_revisions_and_bark_generatio
         .planning_configurations(None)
         .await
         .unwrap();
-    let req = request(scopes.items[0].clone());
+    let req = request(
+        scopes.items[0].clone(),
+        services.delivery_policy.catch_up_ms,
+    );
     assert!(!services.storage.planning_required(&req, NOW).await.unwrap());
     assert!(services
         .storage

@@ -1,6 +1,11 @@
 import { AdminFailure } from "./admin-session";
 import { node, sourceForm } from "./source-form";
-import { type SourceRecord, type SourcesAPI, validId } from "./sources-api";
+import {
+  MAX_ICS_BYTES,
+  type SourceRecord,
+  type SourcesAPI,
+  validId,
+} from "./sources-api";
 
 export function mountSources(
   root: HTMLElement,
@@ -422,6 +427,28 @@ export function mountSources(
       });
       form.append(retire, confirmation);
     }
+    if (
+      record &&
+      !retired &&
+      record.configuration.enabled &&
+      record.configuration.mode === "pull"
+    ) {
+      const refreshNow = node("button", "请求立即刷新");
+      refreshNow.type = "button";
+      writes.add(refreshNow);
+      localWrites.add(refreshNow);
+      refreshNow.addEventListener("click", () => {
+        void write(async (sourceId, signal) => {
+          await api.refresh(sourceId, signal);
+          if (!disposed && !signal.aborted)
+            display(
+              "服务端已记录刷新请求，按已保存的配置在下一轮扫描执行；这不代表同步已执行或成功，结果请在诊断中查看。",
+              "success",
+            );
+        }, false);
+      });
+      form.append(refreshNow);
+    }
     if (retired)
       editor.append(
         node(
@@ -430,6 +457,74 @@ export function mountSources(
         ),
       );
     editor.append(form);
+    if (
+      record &&
+      !retired &&
+      record.configuration.enabled &&
+      record.configuration.mode === "manual-static" &&
+      record.configuration.adapter === "ics" &&
+      record.configuration.calendars.length === 1
+    ) {
+      // Outside the form: choosing a file is not an unsaved configuration edit.
+      const file = node("input");
+      file.type = "file";
+      file.accept = ".ics,text/calendar";
+      const fileLabel = node("label", "ICS 文件（替换此来源的全部事件）");
+      fileLabel.append(file);
+      const upload = node("button", "上传并替换快照");
+      upload.type = "button";
+      writes.add(upload);
+      localWrites.add(upload);
+      upload.addEventListener("click", () => {
+        const chosen = file.files?.[0];
+        if (!chosen || chosen.size > MAX_ICS_BYTES) {
+          display(
+            chosen ? "ICS 文件超过 1 MiB，未上传。" : "请先选择 ICS 文件。",
+            "error",
+          );
+          return;
+        }
+        void write(async (sourceId, signal) => {
+          // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
+          let ics: string;
+          try {
+            ics = new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: true,
+            }).decode(await chosen.arrayBuffer());
+          } catch {
+            throw new AdminFailure(
+              "invalid",
+              "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
+            );
+          }
+          const receipt = await api.uploadSnapshot(
+            sourceId,
+            record.config_revision,
+            ics,
+            signal,
+          );
+          if (!disposed && !signal.aborted) {
+            file.value = "";
+            display(
+              `服务端已确认替换快照：来源修订 ${receipt.source_revision}，变更 ${receipt.changed_events} 个事件；文件中没有的既有事件已删除。这不代表已规划或发送提醒。`,
+              "success",
+            );
+          }
+        }, false);
+      });
+      const section = node("section");
+      section.append(
+        node("h3", "上传 ICS 快照"),
+        node(
+          "p",
+          "按已保存的配置整体替换；无效文件整体拒绝，不保存原始文件，也不写回远端日历。",
+        ),
+        fileLabel,
+        upload,
+      );
+      editor.append(section);
+    }
     authorize();
     for (const button of localWrites) button.dataset.blocked = String(blocked);
     authorize();

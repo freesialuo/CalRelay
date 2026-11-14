@@ -40,6 +40,9 @@ pub enum IngestionError {
     Timeout,
     #[error("304 without committed snapshot")]
     UnexpectedNotModified,
+    /// The upstream asked for no further request before this many milliseconds have passed.
+    #[error("source asked to retry later")]
+    RetryAfter { retry_after_ms: u64 },
 }
 pub trait SourceRepository: EventRepository + Send + Sync {
     fn source_state(
