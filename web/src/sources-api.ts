@@ -10,6 +10,8 @@ export type SourceConfiguration =
 export type SourceRecord = components["schemas"]["SourceConfigurationRecord"];
 export type SourcePage = components["schemas"]["SourceConfigurationPage"];
 export type SourceSummary = components["schemas"]["SourceConfigurationSummary"];
+export type SnapshotReceipt = components["schemas"]["SourceSnapshotReceipt"];
+export const MAX_ICS_BYTES = 1_048_576;
 export const validId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const object = (v: unknown): v is Record<string, unknown> =>
@@ -225,6 +227,62 @@ export class SourcesAPI {
       throw new AdminFailure(
         "unknown",
         "响应不符合刷新回执契约。未确认请求已记录，请稍后在诊断中核实。",
+      );
+    }
+  }
+  /** Replaces the whole snapshot of a manual-static ICS source; all or nothing. */
+  async uploadSnapshot(
+    id: string,
+    revision: number,
+    ics: string,
+    signal: AbortSignal,
+  ): Promise<SnapshotReceipt> {
+    if (!positive(revision))
+      throw new AdminFailure("invalid", "配置版本无效，请重新读取。");
+    if (new TextEncoder().encode(ics).length > MAX_ICS_BYTES)
+      throw new AdminFailure("invalid", "ICS 文件超过 1 MiB，未上传。");
+    const response = await this.session.write(
+      `${path(id)}/snapshot`,
+      "PUT",
+      {
+        "content-type": "text/calendar; charset=utf-8",
+        "if-match": `"${revision}"`,
+      },
+      ics,
+      signal,
+    );
+    if (response.status === 409) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "conflict",
+        "来源不是已启用的 ICS 静态来源，或配置已变化；既有事件未改变。请重新读取来源核实。",
+      );
+    }
+    if ([413, 415, 422].includes(response.status)) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "invalid",
+        "ICS 无效、超出预算，或一次会删除超过 100 个既有事件；既有事件未改变。",
+      );
+    }
+    await requireStatus(response, [200]);
+    try {
+      const data = await boundedJSON(response);
+      if (
+        !object(data) ||
+        Object.keys(data).length !== 3 ||
+        data.source_id !== id ||
+        !positive(data.source_revision) ||
+        !Number.isSafeInteger(data.changed_events) ||
+        (data.changed_events as number) < 0
+      )
+        throw unknown();
+      return data as SnapshotReceipt;
+    } catch {
+      this.session.clear();
+      throw new AdminFailure(
+        "unknown",
+        "响应不符合快照回执契约。未确认是否已替换，请在诊断中核实，勿重复上传。",
       );
     }
   }
