@@ -32,10 +32,10 @@ pub struct IcsSourceRunner<F> {
     pub ics_limits: IcsLimits,
     pub sync_limits: SyncLimits,
 }
-struct Pinned<A> {
-    adapter: A,
-    revision: i64,
-    conditional: bool,
+pub(crate) struct Pinned<A> {
+    pub(crate) adapter: A,
+    pub(crate) revision: i64,
+    pub(crate) conditional: bool,
 }
 impl<A: SourceAdapter> SourceAdapter for Pinned<A> {
     async fn page(

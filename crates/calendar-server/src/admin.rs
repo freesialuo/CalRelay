@@ -263,6 +263,12 @@ pub fn router(state: AdminState) -> Router {
             .with_state(state.clone())
             .layer(DefaultBodyLimit::max(65_536)),
     );
+    let uploads = protect(
+        state.clone(),
+        crate::source_upload::routes()
+            .with_state(state.clone())
+            .layer(DefaultBodyLimit::max(state.services.ics_limits.max_bytes)),
+    );
     let reminders = crate::reminder_configuration::router(state.clone());
     Router::new()
         .route("/api/admin/v1/session", post(login))
@@ -270,6 +276,7 @@ pub fn router(state: AdminState) -> Router {
         .merge(protected)
         .merge(crate::aggregate_configuration::router(state.clone()))
         .merge(sources)
+        .merge(uploads)
         .merge(reminders)
         .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn(

@@ -28,6 +28,43 @@ pub struct HttpSource<F> {
     pub calendar_id: String,
     pub format: SourceFormat,
 }
+/// One administrator-supplied ICS document as a complete snapshot. Nothing is fetched and the
+/// document is not retained; it has no validators, so no checkpoint is proposed.
+pub struct IcsUpload<'a> {
+    pub text: &'a str,
+    pub calendar_id: String,
+    pub limits: IcsLimits,
+}
+impl SourceAdapter for IcsUpload<'_> {
+    async fn page(
+        &self,
+        _: &SourceState,
+        cursor: Option<&str>,
+        _: i64,
+    ) -> Result<SourcePageOutcome, E> {
+        if cursor.is_some() {
+            return Err(E::InvalidSnapshot);
+        }
+        let normalized = normalize_ics(self.text, &self.limits).map_err(|error| match error {
+            crate::ics::IcsError::BudgetExceeded { .. } => E::Budget,
+            _ => E::Adapter,
+        })?;
+        Ok(SourcePageOutcome::Modified(SourcePage {
+            snapshot_token: None,
+            records: normalized
+                .events
+                .into_iter()
+                .map(|event| SyncRecord::Upsert {
+                    calendar_id: self.calendar_id.clone(),
+                    event: Box::new(event),
+                })
+                .collect(),
+            next: None,
+            checkpoint: None,
+            bytes: self.text.len(),
+        }))
+    }
+}
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 struct Checkpoint {
     #[serde(default)]
