@@ -532,8 +532,20 @@ async fn manual_refresh_skips_the_period_but_not_retry_after_and_only_for_pull_s
     scanner.round(&services, &runner, &clock, |_| {}).await?;
     assert_eq!(count("a"), 3);
     assert!(db.source_refresh_request("a").await?.is_some());
+    let revision = db.source_configuration("a").await?.config_revision;
+    assert_eq!(
+        db.source_sync_status("a").await?,
+        Some(calendar_storage::SourceSyncStatus {
+            config_revision: revision,
+            attempted_at: 13000,
+            outcome: calendar_storage::SourceSyncOutcome::RetryAfter,
+            consecutive_failures: 1,
+            next_allowed_at: 113_000,
+        })
+    );
 
-    // The request survives a restart, where the fresh scanner serves it at once.
+    // The request and the upstream wait both survive a restart: a fresh scanner with a new
+    // monotonic origin still waits for the persisted boundary, then serves the request.
     drop(scanner);
     services.drain().await;
     let services = service(&path).await?;
@@ -541,9 +553,22 @@ async fn manual_refresh_skips_the_period_but_not_retry_after_and_only_for_pull_s
     assert!(db.source_refresh_request("a").await?.is_some());
     http.state.statuses.lock().unwrap().insert("a".into(), 200);
     let mut scanner = SourceScanner::new(limits);
+    clock.set(112_999, 0);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 3);
+    clock.set(113_000, 1);
     scanner.round(&services, &runner, &clock, |_| {}).await?;
     assert_eq!(count("a"), 4);
     assert_eq!(db.source_refresh_request("a").await?, None);
+    let status = db.source_sync_status("a").await?.unwrap();
+    assert_eq!(
+        (
+            status.outcome,
+            status.consecutive_failures,
+            status.next_allowed_at
+        ),
+        (calendar_storage::SourceSyncOutcome::NotModified, 0, 114_000)
+    );
 
     // A request made against a superseded configuration is dropped, not replayed later.
     db.request_source_refresh("a", 14).await?;
@@ -1140,6 +1165,132 @@ async fn schedule_revalidation_query_accepts_its_bound_and_rejects_excess() -> R
         services.storage.active_pull_source_ids(&ids).await,
         Err(IngestionError::Budget)
     ));
+    services.drain().await;
+    Ok(())
+}
+#[tokio::test]
+async fn restart_restores_persisted_waits_bounded_against_utc_jumps_and_ignores_old_revisions(
+) -> Result {
+    use calendar_storage::{SourceSyncOutcome, SourceSyncStatus};
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    let http = Http::new().await?;
+    let db = &services.storage;
+    // No source has a trusted verification, so without restored state each would sync at once.
+    const NOW: i64 = 1_000_000_000;
+    const DAY: i64 = 86_400_000;
+    for (id, revision_offset, attempted_at, outcome, failures, next_allowed_at) in [
+        // UTC moved back behind the attempt: wait the whole recorded span, no less.
+        (
+            "back",
+            0,
+            NOW + 1000,
+            SourceSyncOutcome::RetryAfter,
+            1,
+            NOW + 1000 + 3_600_000,
+        ),
+        // A corrupt or excessive span is capped at seven days, never a permanent stall.
+        (
+            "cap",
+            0,
+            NOW,
+            SourceSyncOutcome::RetryAfter,
+            1,
+            NOW + 30 * DAY,
+        ),
+        // Exponential local backoff continues from the persisted failure count (60 s * 2^2).
+        (
+            "fails",
+            0,
+            NOW,
+            SourceSyncOutcome::Unavailable,
+            3,
+            NOW + 60_000,
+        ),
+        // The wait has already elapsed.
+        (
+            "ahead",
+            0,
+            NOW - 10 * DAY,
+            SourceSyncOutcome::RetryAfter,
+            1,
+            NOW - 10 * DAY + 60_000,
+        ),
+        // A status of a superseded configuration revision never constrains the new one.
+        (
+            "stale",
+            -1,
+            NOW,
+            SourceSyncOutcome::RetryAfter,
+            1,
+            NOW + 3_600_000,
+        ),
+    ] {
+        let record = source(&services, id, SourceMode::Pull, true).await?;
+        db.record_source_sync_status(
+            id,
+            SourceSyncStatus {
+                config_revision: record.config_revision + revision_offset,
+                attempted_at,
+                outcome,
+                consecutive_failures: failures,
+                next_allowed_at,
+            },
+        )
+        .await?;
+    }
+    db.request_source_refresh("back", 1).await?;
+    http.state
+        .statuses
+        .lock()
+        .unwrap()
+        .insert("fails".into(), 503);
+    let clock = Time::new();
+    let runner = http.runner();
+    let mut scanner = SourceScanner::new(limits(8));
+    let count = |id: &str| http.requests().iter().filter(|(r, _)| r == id).count();
+    macro_rules! at {
+        ($mono:expr) => {{
+            clock.set(NOW, $mono);
+            scanner.round(&services, &runner, &clock, |_| {})
+        }};
+    }
+    at!(0).await?;
+    assert_eq!((count("ahead"), count("stale")), (1, 1));
+    assert_eq!((count("back"), count("cap"), count("fails")), (0, 0, 0));
+    at!(239_999).await?;
+    assert_eq!(count("fails"), 0);
+    at!(240_000).await?;
+    assert_eq!(count("fails"), 1);
+    let fails = db.source_sync_status("fails").await?.unwrap();
+    assert_eq!(
+        (
+            fails.outcome,
+            fails.consecutive_failures,
+            fails.attempted_at
+        ),
+        (SourceSyncOutcome::Adapter, 4, NOW)
+    );
+    assert_eq!(fails.next_allowed_at, NOW + 60_000);
+    at!(3_599_999).await?;
+    assert_eq!(count("back"), 0, "a manual refresh obeys the restored wait");
+    assert!(db.source_refresh_request("back").await?.is_some());
+    at!(3_600_000).await?;
+    assert_eq!(count("back"), 1);
+    assert_eq!(db.source_refresh_request("back").await?, None);
+    let back = db.source_sync_status("back").await?.unwrap();
+    assert_eq!(
+        (
+            back.outcome,
+            back.consecutive_failures,
+            back.next_allowed_at
+        ),
+        (SourceSyncOutcome::Success, 0, NOW + 60_000)
+    );
+    at!(604_799_999).await?;
+    assert_eq!(count("cap"), 0);
+    at!(604_800_000).await?;
+    assert_eq!(count("cap"), 1);
     services.drain().await;
     Ok(())
 }

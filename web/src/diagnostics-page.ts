@@ -33,6 +33,23 @@ const outcomes = {
   unknown: "结果未知（可能已经发送）",
   not_sent: "未发送",
 };
+const syncOutcomes: Record<
+  NonNullable<Diagnostic["sync_status"]>["outcome"],
+  string
+> = {
+  success: "同步成功并提交快照",
+  not_modified: "成功校验，上游未变化",
+  unsupported: "当前接入器不支持此配置",
+  unavailable: "来源不可用",
+  conflict: "来源修订冲突（并发变更）",
+  adapter: "接入器或上游错误",
+  invalid_snapshot: "快照不完整或无效",
+  budget: "超出同步预算",
+  timeout: "同步超时",
+  unexpected_not_modified: "上游返回未修改，但没有已提交快照",
+  retry_after: "上游要求稍后重试",
+  review_required: "删除数量超限，需要批准",
+};
 const object = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const time = (v: unknown) =>
@@ -55,6 +72,13 @@ function valid(value: unknown, id: string): value is Diagnostic {
       (Number.isSafeInteger(value.snapshot_revision) &&
         Number(value.snapshot_revision) >= 0)) &&
     member(value.freshness, freshness) &&
+    (value.sync_status === null ||
+      (object(value.sync_status) &&
+        time(value.sync_status.attempted_at) &&
+        member(value.sync_status.outcome, syncOutcomes) &&
+        Number.isSafeInteger(value.sync_status.consecutive_failures) &&
+        Number(value.sync_status.consecutive_failures) >= 0 &&
+        time(value.sync_status.next_allowed_at))) &&
     typeof value.more_deliveries === "boolean" &&
     Array.isArray(value.deliveries) &&
     value.deliveries.length <= 20 &&
@@ -194,7 +218,13 @@ export function mountDiagnostics(
         node("p", `来源时效：${freshness[value.freshness]}`),
         node(
           "p",
-          "最近同步错误原因：未持久化，当前不可查询。成功校验时间不证明最近一次尝试成功；无投递记录也不证明规则已完成规划。",
+          value.sync_status === null
+            ? "最近同步尝试：当前配置版本尚未记录同步尝试。"
+            : `最近同步尝试：${date(value.sync_status.attempted_at)} · 结果：${syncOutcomes[value.sync_status.outcome]} · 连续失败 ${value.sync_status.consecutive_failures} 次 · 最早下次请求：${date(value.sync_status.next_allowed_at)}`,
+        ),
+        node(
+          "p",
+          "同步尝试只保存结果分类，不保存错误正文；配置变更后旧尝试不再显示。成功校验时间不证明最近一次尝试成功；无投递记录也不证明规则已完成规划。",
         ),
         node("h3", "最近创建的投递任务（最多20条）"),
       );

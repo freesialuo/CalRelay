@@ -108,3 +108,105 @@ async fn read_projection_is_source_scoped_bounded_and_uses_latest_attempt() {
         .is_empty());
     db.close().await;
 }
+
+#[tokio::test]
+async fn sync_status_is_one_bounded_row_scoped_to_the_current_configuration_revision() {
+    use calendar_storage::{SourceSyncOutcome, SourceSyncStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let db = Storage::open(dir.path().join("db")).await.unwrap();
+    let config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+        "../../../examples/source-configuration-v1.json"
+    ))
+    .unwrap();
+    let record = db
+        .put_source_configuration("sync", ConfigurationCondition::Absent, config, "test", 1)
+        .await
+        .unwrap();
+    assert_eq!(db.source_sync_status("sync").await.unwrap(), None);
+    assert_eq!(
+        db.source_diagnostic("sync").await.unwrap().sync_status,
+        None
+    );
+
+    let failed = SourceSyncStatus {
+        config_revision: record.config_revision,
+        attempted_at: 10,
+        outcome: SourceSyncOutcome::RetryAfter,
+        consecutive_failures: 2,
+        next_allowed_at: 3_600_010,
+    };
+    db.record_source_sync_status("sync", failed).await.unwrap();
+    let recovered = SourceSyncStatus {
+        attempted_at: 20,
+        outcome: SourceSyncOutcome::NotModified,
+        consecutive_failures: 0,
+        next_allowed_at: 1020,
+        ..failed
+    };
+    db.record_source_sync_status("sync", recovered)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.source_sync_status("sync").await.unwrap(),
+        Some(recovered)
+    );
+    assert_eq!(
+        db.source_diagnostic("sync").await.unwrap().sync_status,
+        Some(recovered)
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM source_sync_status")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "an upsert, never a history table");
+
+    // Only the enumeration and times are storable; free text is rejected by the schema.
+    assert!(
+        sqlx::query("UPDATE source_sync_status SET outcome='HTTP 500: secret body'")
+            .execute(db.pool())
+            .await
+            .is_err()
+    );
+    for (outcome, name) in SourceSyncOutcome::ALL {
+        db.record_source_sync_status(
+            "sync",
+            SourceSyncStatus {
+                outcome,
+                ..recovered
+            },
+        )
+        .await
+        .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT outcome FROM source_sync_status")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(stored, name);
+        assert_eq!(
+            db.source_sync_status("sync")
+                .await
+                .unwrap()
+                .unwrap()
+                .outcome,
+            outcome
+        );
+    }
+
+    // A new configuration revision is not constrained or described by the old attempt.
+    let mut changed = record.configuration.clone();
+    changed.name = "renamed".into();
+    db.put_source_configuration(
+        "sync",
+        ConfigurationCondition::Revision(record.config_revision),
+        changed,
+        "test",
+        2,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.source_diagnostic("sync").await.unwrap().sync_status,
+        None
+    );
+    db.close().await;
+}

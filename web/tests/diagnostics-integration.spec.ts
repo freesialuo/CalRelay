@@ -134,6 +134,7 @@ test("real SQLite success, retry, unknown and failure are safe read-only project
       "last_verified_at",
       "snapshot_revision",
       "freshness",
+      "sync_status",
       "deliveries",
       "more_deliveries",
     ].sort(),
@@ -144,7 +145,7 @@ test("real SQLite success, retry, unknown and failure are safe read-only project
   await expect(card).toContainText("永久失败");
   await expect(card).toContainText("可重试失败");
   await expect(card).toContainText("已有发送意图，结果尚未确认");
-  await expect(card).toContainText("当前不可查询");
+  await expect(card).toContainText("同步尝试只保存结果分类，不保存错误正文");
   await expect(card).toContainText("不证明设备显示");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
@@ -227,4 +228,33 @@ test("static sources and untrusted names, cancellation and error responses are h
   await card.getByRole("button", { name: "读取来源诊断", exact: true }).click();
   await expect(card.getByRole("status")).toContainText("会话授权已变化");
   await expect(card.getByLabel("持久诊断结果")).toBeEmpty();
+});
+test("persisted sync status: never attempted, then a classified attempt with its wait", async ({
+  page,
+}) => {
+  await login(page);
+  // Static sources are never polled, so only the seeded row can describe an attempt.
+  const s = await source(page);
+  const path = `/api/admin/v1/sources/${s.id}/diagnostics`;
+  expect((await (await page.request.get(path)).json()).sync_status).toBeNull();
+  const card = await open(page, s.id);
+  await expect(card).toContainText("当前配置版本尚未记录同步尝试");
+  const attempted = 1_800_000_000_000;
+  execFileSync("python3", [
+    "-c",
+    "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"INSERT INTO source_sync_status(source_id,config_revision,attempted_at,outcome,consecutive_failures,next_allowed_at) SELECT id,config_revision,?,'retry_after',2,? FROM sources WHERE id=?\",(int(sys.argv[3]),int(sys.argv[3])+3600000,sys.argv[2])); c.commit()",
+    database(),
+    s.id,
+    String(attempted),
+  ]);
+  expect((await (await page.request.get(path)).json()).sync_status).toEqual({
+    attempted_at: attempted,
+    outcome: "retry_after",
+    consecutive_failures: 2,
+    next_allowed_at: attempted + 3_600_000,
+  });
+  await card.getByRole("button", { name: "读取来源诊断", exact: true }).click();
+  await expect(card).toContainText(
+    `最近同步尝试：${new Date(attempted).toISOString()} · 结果：上游要求稍后重试 · 连续失败 2 次 · 最早下次请求：${new Date(attempted + 3_600_000).toISOString()}`,
+  );
 });

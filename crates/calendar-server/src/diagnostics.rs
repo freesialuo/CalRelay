@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 use calendar_application::configuration::{valid_id, SourceMode};
+use calendar_storage::SourceSyncOutcome;
 use serde_json::{json, Value};
 
 pub(crate) fn routes() -> Router<AdminState> {
@@ -46,10 +47,15 @@ async fn read(
         "due_at":d.due_at,"next_attempt_at":d.next_attempt_at,"accepted_at":d.accepted_at,
         "last_outcome":d.last_outcome,"started_at":d.started_at,"sent_at":d.sent_at,"finished_at":d.finished_at
     })).collect();
+    // Last attempt under the current configuration revision: enumeration and times only.
+    let sync_status = row.sync_status.map(|s| {
+        json!({"attempted_at":s.attempted_at,"outcome":s.outcome.as_str(),
+        "consecutive_failures":s.consecutive_failures,"next_allowed_at":s.next_allowed_at})
+    });
     Ok(Json(
         json!({"source_id":id,"observed_at":now,"mode":config.mode,"enabled":config.enabled,
         "retired_at":row.retired_at,"last_verified_at":row.last_verified_at,"snapshot_revision":row.snapshot_revision,
-        "freshness":freshness,"deliveries":deliveries,"more_deliveries":row.more_deliveries}),
+        "freshness":freshness,"sync_status":sync_status,"deliveries":deliveries,"more_deliveries":row.more_deliveries}),
     ))
 }
 pub(crate) fn describe(document: &mut Value) {
@@ -67,11 +73,27 @@ pub(crate) fn describe(document: &mut Value) {
         .keys()
         .collect::<Vec<_>>());
     document["components"]["schemas"]["DeliveryDiagnostic"] = delivery;
+    let outcomes: Vec<_> = SourceSyncOutcome::ALL
+        .iter()
+        .map(|(_, name)| *name)
+        .collect();
+    document["components"]["schemas"]["SourceSyncStatus"] = json!({
+        "type":"object","additionalProperties":false,
+        "description":"Last sync attempt under the current configuration revision",
+        "required":["attempted_at","outcome","consecutive_failures","next_allowed_at"],
+        "properties":{
+            "attempted_at":{"type":"integer","description":"Unix milliseconds"},
+            "outcome":{"type":"string","enum":outcomes},
+            "consecutive_failures":{"type":"integer","minimum":0},
+            "next_allowed_at":{"type":"integer","description":"Unix milliseconds; no scheduled or manual request before it"}
+        }
+    });
     let mut source = json!({"type":"object","additionalProperties":false,"properties":{
         "source_id":{"type":"string"},"observed_at":{"type":"integer"},
         "mode":{"type":"string","enum":["pull","manual-static","push-only"]},"enabled":{"type":"boolean"},
         "retired_at":nullable_time,"last_verified_at":nullable_time,"snapshot_revision":{"type":["integer","null"]},
         "freshness":{"type":"string","enum":["not_applicable","never_verified","future_timestamp","fresh","stale"]},
+        "sync_status":{"description":"null when this configuration revision has no recorded attempt","oneOf":[{"$ref":"#/components/schemas/SourceSyncStatus"},{"type":"null"}]},
         "deliveries":{"type":"array","maxItems":20,"items":{"$ref":"#/components/schemas/DeliveryDiagnostic"}},"more_deliveries":{"type":"boolean"}
     }});
     source["required"] = json!(source["properties"]
@@ -81,7 +103,7 @@ pub(crate) fn describe(document: &mut Value) {
         .collect::<Vec<_>>());
     document["components"]["schemas"]["SourceDiagnostic"] = source;
     document["paths"]["/api/admin/v1/sources/{source_id}/diagnostics"] = json!({"get":{
-        "summary":"Read source snapshot/freshness and latest 20 created jobs; sync error reasons are not persisted",
+        "summary":"Read source snapshot/freshness, last classified sync attempt and latest 20 created jobs",
         "parameters":[{"name":"source_id","in":"path","required":true,"schema":{"type":"string"}},
             {"name":"Cf-Access-Jwt-Assertion","in":"header","required":true,"schema":{"type":"string"}},
             {"name":"__Host-calrelay_admin","in":"cookie","required":true,"schema":{"type":"string"}}],

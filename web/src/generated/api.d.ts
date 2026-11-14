@@ -1537,7 +1537,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read source snapshot/freshness and latest 20 created jobs; sync error reasons are not persisted */
+        /** Read source snapshot/freshness, last classified sync attempt and latest 20 created jobs */
         get: {
             parameters: {
                 query?: never;
@@ -3578,6 +3578,8 @@ export interface components {
             retired_at: number | null;
             snapshot_revision: number | null;
             source_id: string;
+            /** @description null when this configuration revision has no recorded attempt */
+            sync_status: components["schemas"]["SourceSyncStatus"] | null;
         };
         SourceRefreshReceipt: {
             /** @description Unix milliseconds */
@@ -3588,6 +3590,16 @@ export interface components {
             changed_events: number;
             source_id: string;
             source_revision: number;
+        };
+        /** @description Last sync attempt under the current configuration revision */
+        SourceSyncStatus: {
+            /** @description Unix milliseconds */
+            attempted_at: number;
+            consecutive_failures: number;
+            /** @description Unix milliseconds; no scheduled or manual request before it */
+            next_allowed_at: number;
+            /** @enum {string} */
+            outcome: "success" | "not_modified" | "unsupported" | "unavailable" | "conflict" | "adapter" | "invalid_snapshot" | "budget" | "timeout" | "unexpected_not_modified" | "retry_after" | "review_required";
         };
     };
     responses: never;

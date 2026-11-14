@@ -17,7 +17,115 @@ pub struct SourceRefreshRequest {
     pub requested_at: i64,
 }
 
+/// Classified result of one sync attempt. Names are the persisted and published enumeration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceSyncOutcome {
+    Success,
+    NotModified,
+    Unsupported,
+    Unavailable,
+    Conflict,
+    Adapter,
+    InvalidSnapshot,
+    Budget,
+    Timeout,
+    UnexpectedNotModified,
+    RetryAfter,
+    ReviewRequired,
+}
+impl SourceSyncOutcome {
+    pub const ALL: [(Self, &'static str); 12] = [
+        (Self::Success, "success"),
+        (Self::NotModified, "not_modified"),
+        (Self::Unsupported, "unsupported"),
+        (Self::Unavailable, "unavailable"),
+        (Self::Conflict, "conflict"),
+        (Self::Adapter, "adapter"),
+        (Self::InvalidSnapshot, "invalid_snapshot"),
+        (Self::Budget, "budget"),
+        (Self::Timeout, "timeout"),
+        (Self::UnexpectedNotModified, "unexpected_not_modified"),
+        (Self::RetryAfter, "retry_after"),
+        (Self::ReviewRequired, "review_required"),
+    ];
+    pub fn as_str(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(outcome, _)| *outcome == self)
+            .map_or("", |(_, name)| name)
+    }
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .find(|(_, known)| *known == name)
+            .map(|(outcome, _)| *outcome)
+    }
+}
+
+/// The last sync attempt of a source. Times are UTC milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceSyncStatus {
+    pub config_revision: i64,
+    pub attempted_at: i64,
+    pub outcome: SourceSyncOutcome,
+    pub consecutive_failures: u32,
+    /// No request, scheduled or manual, is allowed before this time.
+    pub next_allowed_at: i64,
+}
+pub(crate) type StoredSyncStatus = (i64, i64, String, i64, i64);
+impl SourceSyncStatus {
+    pub(crate) fn from_row(row: StoredSyncStatus) -> Option<Self> {
+        Some(Self {
+            config_revision: row.0,
+            attempted_at: row.1,
+            outcome: SourceSyncOutcome::parse(&row.2)?,
+            consecutive_failures: u32::try_from(row.3).ok()?,
+            next_allowed_at: row.4,
+        })
+    }
+}
+
 impl Storage {
+    /// Replace the single status row of a source with its latest attempt.
+    pub async fn record_source_sync_status(
+        &self,
+        id: &str,
+        status: SourceSyncStatus,
+    ) -> Result<(), IngestionError> {
+        sqlx::query(concat!(
+            "INSERT INTO source_sync_status(source_id,config_revision,attempted_at,outcome,",
+            "consecutive_failures,next_allowed_at) VALUES (?,?,?,?,?,?) ",
+            "ON CONFLICT(source_id) DO UPDATE SET config_revision=excluded.config_revision,",
+            "attempted_at=excluded.attempted_at,outcome=excluded.outcome,",
+            "consecutive_failures=excluded.consecutive_failures,",
+            "next_allowed_at=excluded.next_allowed_at"
+        ))
+        .bind(id)
+        .bind(status.config_revision)
+        .bind(status.attempted_at)
+        .bind(status.outcome.as_str())
+        .bind(status.consecutive_failures)
+        .bind(status.next_allowed_at)
+        .execute(self.pool())
+        .await
+        .map(|_| ())
+        .map_err(|_| IngestionError::Storage)
+    }
+    pub async fn source_sync_status(
+        &self,
+        id: &str,
+    ) -> Result<Option<SourceSyncStatus>, IngestionError> {
+        let row: Option<StoredSyncStatus> = sqlx::query_as(concat!(
+            "SELECT config_revision,attempted_at,outcome,consecutive_failures,next_allowed_at ",
+            "FROM source_sync_status WHERE source_id=?"
+        ))
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|_| IngestionError::Storage)?;
+        row.map(|row| SourceSyncStatus::from_row(row).ok_or(IngestionError::Storage))
+            .transpose()
+    }
     /// Record at most one pending manual refresh for an active pull source. Repeats merge into
     /// the same row; sources that are never polled are rejected instead of being fake-polled.
     pub async fn request_source_refresh(
