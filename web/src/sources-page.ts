@@ -485,10 +485,23 @@ export function mountSources(
           return;
         }
         void write(async (sourceId, signal) => {
+          // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
+          let ics: string;
+          try {
+            ics = new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: true,
+            }).decode(await chosen.arrayBuffer());
+          } catch {
+            throw new AdminFailure(
+              "invalid",
+              "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
+            );
+          }
           const receipt = await api.uploadSnapshot(
             sourceId,
             record.config_revision,
-            await chosen.text(),
+            ics,
             signal,
           );
           if (!disposed && !signal.aborted) {

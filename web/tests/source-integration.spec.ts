@@ -254,6 +254,25 @@ test("ICS upload replaces a manual-static snapshot and is not offered for pull s
   await upload.click();
   await expect(sourceStatus(page)).toContainText("既有事件未改变");
   expect(events(id)).toEqual(["one", "two"]);
+  // Invalid UTF-8 must be refused locally, not rewritten to U+FFFD and committed.
+  let uploads = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/snapshot")) uploads++;
+  });
+  const valid = ics(["two", "three"]);
+  const at = valid.indexOf("three");
+  await choose(
+    "invalid-utf8.ics",
+    Buffer.concat([
+      valid.subarray(0, at),
+      Buffer.from([0xff]),
+      valid.subarray(at),
+    ]),
+  );
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("不是有效的 UTF-8");
+  expect(uploads).toBe(0);
+  expect(events(id)).toEqual(["one", "two"]);
   await choose("second.ics", ics(["two", "three"]));
   await upload.click();
   await expect(sourceStatus(page)).toContainText("变更 2 个事件");
