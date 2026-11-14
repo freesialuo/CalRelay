@@ -620,6 +620,127 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
 }
 
 #[tokio::test]
+async fn manual_refresh_is_write_guarded_and_only_accepts_active_pull_sources() {
+    use calendar_application::configuration::{
+        ConfigurationCondition, SourceConfigurationV1, SourceMode,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::initialize(server_config(&dir.path().join("refresh.db")))
+        .await
+        .unwrap();
+    let db = &server.services.storage;
+    for (id, mode) in [
+        ("pull", SourceMode::Pull),
+        ("static", SourceMode::ManualStatic),
+    ] {
+        let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+            "../../../examples/source-configuration-v1.json"
+        ))
+        .unwrap();
+        config.name = id.into();
+        config.calendars[0].id = format!("c_{id}");
+        if mode == SourceMode::Pull {
+            config.endpoint = Some("https://source.example/pull".into());
+            config.refresh_interval_ms = Some(60000);
+            config.freshness_sla_ms = Some(60000);
+        }
+        config.mode = mode;
+        let record = db
+            .put_source_configuration(id, ConfigurationCondition::Absent, config, "test", 1000)
+            .await
+            .unwrap();
+        let mut config = record.configuration;
+        config.enabled = true;
+        let revision = ConfigurationCondition::Revision(record.config_revision);
+        db.put_source_configuration(id, revision, config, "test", 1000)
+            .await
+            .unwrap();
+    }
+    let state = AdminState::with_clock(
+        server.services.clone(),
+        verifier(Arc::new(Fake::default())),
+        Arc::new(|| NOW),
+    );
+    let app = admin::router(state);
+    let jwt = sign(claims());
+    let login = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            SESSION,
+            &jwt,
+            None,
+            None,
+            None,
+            Some(ORIGIN),
+            json!({"turnstile_token":"refresh"}),
+        ))
+        .await
+        .unwrap();
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let tokens: Value =
+        serde_json::from_slice(&to_bytes(login.into_body(), 4096).await.unwrap()).unwrap();
+    let csrf = tokens["csrf_token"].as_str().unwrap();
+    let mut nonce = tokens["write_nonce"].as_str().unwrap().to_owned();
+    let post = |id: &str, csrf: Option<&str>, nonce: &str, body: &'static str| {
+        let mut req = request(
+            "POST",
+            &format!("/api/admin/v1/sources/{id}/refresh"),
+            &jwt,
+            Some(&cookie),
+            csrf,
+            Some(nonce),
+            Some(ORIGIN),
+            Value::Null,
+        );
+        *req.body_mut() = Body::from(body);
+        req
+    };
+    let denied = app
+        .clone()
+        .oneshot(post("pull", None, &nonce, ""))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(db.source_refresh_request("pull").await.unwrap(), None);
+    for (id, body, expected) in [
+        ("pull", "", StatusCode::ACCEPTED),
+        ("pull", "", StatusCode::ACCEPTED),
+        ("pull", "{}", StatusCode::UNPROCESSABLE_ENTITY),
+        ("static", "", StatusCode::CONFLICT),
+        ("missing", "", StatusCode::NOT_FOUND),
+        ("bad.id", "", StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(post(id, Some(csrf), &nonce, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{id} {body:?}");
+        nonce = response.headers()["x-admin-write-nonce"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        if expected == StatusCode::ACCEPTED {
+            let receipt: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
+                    .unwrap();
+            assert_eq!(receipt["source_id"], "pull");
+            assert!(receipt["requested_at"].is_i64());
+            assert_eq!(receipt.as_object().unwrap().len(), 2);
+        }
+    }
+    let pending = db.source_refresh_request("pull").await.unwrap().unwrap();
+    assert_eq!(pending.sequence, 2, "repeated requests merge into one row");
+    assert_eq!(db.source_refresh_request("static").await.unwrap(), None);
+}
+#[tokio::test]
 async fn source_configuration_budget_does_not_expand_session_login_body_budget() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::initialize(server_config(&dir.path().join("db")))

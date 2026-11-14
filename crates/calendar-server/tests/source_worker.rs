@@ -458,6 +458,112 @@ async fn upstream_retry_after_outlasts_the_local_backoff_cap_without_blocking_an
     Ok(())
 }
 #[tokio::test]
+async fn manual_refresh_skips_the_period_but_not_retry_after_and_only_for_pull_sources() -> Result {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("db");
+    let services = service(&path).await?;
+    let http = Http::new().await?;
+    source(&services, "a", SourceMode::Pull, true).await?;
+    source(&services, "b", SourceMode::Pull, true).await?;
+    source(&services, "disabled", SourceMode::Pull, false).await?;
+    source(&services, "push", SourceMode::PushOnly, true).await?;
+    source(&services, "static", SourceMode::ManualStatic, true).await?;
+    let db = &services.storage;
+    for id in ["disabled", "push", "static"] {
+        assert!(matches!(
+            db.request_source_refresh(id, 1).await,
+            Err(ConfigurationError::Conflict)
+        ));
+    }
+    assert!(matches!(
+        db.request_source_refresh("missing", 1).await,
+        Err(ConfigurationError::NotFound)
+    ));
+    let clock = Time::new();
+    let runner = http.runner();
+    // One-second scan wait and local floor, 240 s backoff cap, one-minute configured period.
+    let second = Duration::from_secs(1);
+    let limits = SourceScanLimits::new(
+        1,
+        8,
+        1024,
+        Duration::from_secs(120),
+        second,
+        second,
+        Duration::from_secs(240),
+    )
+    .unwrap();
+    let mut scanner = SourceScanner::new(limits);
+    let count = |id: &str| http.requests().iter().filter(|(r, _)| r == id).count();
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!((count("a"), count("b")), (1, 1));
+
+    // Repeats merge; the local floor after the last sync holds the request, then it is served
+    // long before the period while the other source is left alone.
+    db.request_source_refresh("a", 10).await?;
+    db.request_source_refresh("a", 11).await?;
+    let pending = db.source_refresh_request("a").await?.unwrap();
+    assert_eq!((pending.sequence, pending.requested_at), (2, 11));
+    clock.set(1999, 999);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 1);
+    assert!(db.source_refresh_request("a").await?.is_some());
+    clock.set(2000, 1000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!((count("a"), count("b")), (2, 1));
+    assert_eq!(db.source_refresh_request("a").await?, None);
+    clock.set(12000, 11000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 2, "a served request does not repeat");
+
+    // Upstream Retry-After outranks a manual request, which stays pending until the boundary.
+    http.state.statuses.lock().unwrap().insert("a".into(), 429);
+    http.state
+        .retry_after_s
+        .lock()
+        .unwrap()
+        .insert("a".into(), 100);
+    db.request_source_refresh("a", 12).await?;
+    clock.set(13000, 12000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 3);
+    db.request_source_refresh("a", 13).await?;
+    clock.set(112_999, 111_999);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 3);
+    assert!(db.source_refresh_request("a").await?.is_some());
+
+    // The request survives a restart, where the fresh scanner serves it at once.
+    drop(scanner);
+    services.drain().await;
+    let services = service(&path).await?;
+    let db = &services.storage;
+    assert!(db.source_refresh_request("a").await?.is_some());
+    http.state.statuses.lock().unwrap().insert("a".into(), 200);
+    let mut scanner = SourceScanner::new(limits);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 4);
+    assert_eq!(db.source_refresh_request("a").await?, None);
+
+    // A request made against a superseded configuration is dropped, not replayed later.
+    db.request_source_refresh("a", 14).await?;
+    let record = db.source_configuration("a").await?;
+    let mut config = record.configuration;
+    config.name = "renamed".into();
+    db.put_source_configuration(
+        "a",
+        ConfigurationCondition::Revision(record.config_revision),
+        config,
+        "test",
+        1000,
+    )
+    .await?;
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(db.source_refresh_request("a").await?, None);
+    services.drain().await;
+    Ok(())
+}
+#[tokio::test]
 async fn restart_reconstructs_remaining_period_and_handles_future_verified_time() -> Result {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("db");
