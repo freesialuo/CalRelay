@@ -1707,11 +1707,14 @@ export interface paths {
         get?: never;
         /**
          * Replace the snapshot of an enabled manual-static ICS source with one uploaded ICS document
-         * @description If-Match is the quoted config_revision. The document is normalized to EventV1 and committed atomically as a complete snapshot or rejected as a whole; events absent from it are deleted, up to 100 per upload. The document itself is not stored and nothing is written to a remote calendar.
+         * @description If-Match is the quoted config_revision. The document is normalized to EventV1 and committed atomically as a complete snapshot or rejected as a whole; events absent from it are deleted. Deleting more than 100 existing events returns 428 and changes nothing unless the same upload is repeated with approve_deletions=true. The document itself is not stored and nothing is written to a remote calendar.
          */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Explicit approval to delete more than 100 existing events */
+                    approve_deletions?: boolean;
+                };
                 header: {
                     "If-Match": string;
                     "Cf-Access-Jwt-Assertion": string;
@@ -1776,8 +1779,15 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Invalid source ID, missing If-Match, invalid ICS, or more than 100 deletions */
+                /** @description Invalid source ID, missing If-Match, or invalid ICS */
                 422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description More than 100 existing events would be deleted; nothing changed, approval required */
+                428: {
                     headers: {
                         [name: string]: unknown;
                     };

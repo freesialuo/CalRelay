@@ -820,7 +820,11 @@ async fn ics_upload_replaces_only_manual_static_snapshots_atomically() {
     let put = |id: &str, csrf: Option<&str>, nonce: &str, media: &str, tag: &str, body: String| {
         let mut req = request(
             "PUT",
-            &format!("/api/admin/v1/sources/{id}/snapshot"),
+            &if id.contains("/snapshot") {
+                format!("/api/admin/v1/sources/{id}")
+            } else {
+                format!("/api/admin/v1/sources/{id}/snapshot")
+            },
             &jwt,
             Some(&cookie),
             csrf,
@@ -920,15 +924,47 @@ async fn ics_upload_replaces_only_manual_static_snapshots_atomically() {
             StatusCode::OK,
             2,
         ),
-        ("static", calendar, "\"2\"", ics(&many), StatusCode::OK, 104),
-        // Dropping 102 events at once exceeds the deletion limit and changes nothing.
         (
-            "static",
+            "static/snapshot",
+            calendar,
+            "\"2\"",
+            ics(&many),
+            StatusCode::OK,
+            104,
+        ),
+        // Dropping 102 events at once exceeds the deletion limit and changes nothing until the
+        // same upload is explicitly approved; other query values and unknown keys are rejected.
+        (
+            "static/snapshot",
             calendar,
             "\"2\"",
             ics(&["only"]),
-            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::PRECONDITION_REQUIRED,
             0,
+        ),
+        (
+            "static/snapshot?approve_deletions=false",
+            calendar,
+            "\"2\"",
+            ics(&["only"]),
+            StatusCode::PRECONDITION_REQUIRED,
+            0,
+        ),
+        (
+            "static/snapshot?approve=true",
+            calendar,
+            "\"2\"",
+            ics(&["only"]),
+            StatusCode::BAD_REQUEST,
+            0,
+        ),
+        (
+            "static/snapshot?approve_deletions=true",
+            calendar,
+            "\"2\"",
+            ics(&["only"]),
+            StatusCode::OK,
+            103,
         ),
     ] {
         let before = db.source_state("static").await.unwrap();

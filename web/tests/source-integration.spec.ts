@@ -277,6 +277,29 @@ test("ICS upload replaces a manual-static snapshot and is not offered for pull s
   await upload.click();
   await expect(sourceStatus(page)).toContainText("变更 2 个事件");
   expect(events(id)).toEqual(["three", "two"]);
+  // A replacement that drops more than 100 events needs an explicit second confirmation.
+  const bulk = Array.from({ length: 102 }, (_, n) => `bulk-${n}`);
+  await choose("bulk.ics", ics(bulk));
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("变更 104 个事件");
+  const approve = page.getByRole("button", {
+    name: "确认删除并替换",
+    exact: true,
+  });
+  await expect(approve).toBeHidden();
+  await choose("small.ics", ics(["only"]));
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("需要确认");
+  expect(events(id)).toHaveLength(102);
+  await page.getByRole("button", { name: "保留既有事件", exact: true }).click();
+  await expect(approve).toBeHidden();
+  expect(events(id)).toHaveLength(102);
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("需要确认");
+  await approve.click();
+  await expect(sourceStatus(page)).toContainText("变更 103 个事件");
+  await expect(approve).toBeHidden();
+  expect(events(id)).toEqual(["only"]);
   expect(events(pull)).toEqual([]);
 });
 

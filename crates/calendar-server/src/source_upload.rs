@@ -5,7 +5,7 @@ use crate::{
     source_worker::Pinned,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::put,
     Json, Router,
@@ -22,10 +22,18 @@ use serde_json::{json, Value};
 pub(crate) fn routes() -> Router<AdminState> {
     Router::new().route("/api/admin/v1/sources/{source_id}/snapshot", put(upload))
 }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Approval {
+    /// Explicit administrator approval to delete more existing events than the default limit.
+    #[serde(default)]
+    approve_deletions: bool,
+}
 /// The document is normalized and committed as one complete snapshot or rejected as a whole.
 async fn upload(
     State(state): State<AdminState>,
     Path(id): Path<String>,
+    Query(approval): Query<Approval>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, StatusCode> {
@@ -73,13 +81,18 @@ async fn upload(
                     limits,
                 },
             };
-            let policy = DeletionPolicy::Limit(100);
+            let policy = if approval.approve_deletions {
+                DeletionPolicy::Approved
+            } else {
+                DeletionPolicy::Limit(100)
+            };
             synchronize(db, &adapter, &id, now, policy, SyncLimits::default())
                 .await
                 .map_err(|error| match error {
                     IngestionError::Adapter | IngestionError::InvalidSnapshot => {
                         StatusCode::UNPROCESSABLE_ENTITY
                     }
+                    IngestionError::ReviewRequired { .. } => StatusCode::PRECONDITION_REQUIRED,
                     IngestionError::Budget => StatusCode::PAYLOAD_TOO_LARGE,
                     IngestionError::Conflict | IngestionError::Unavailable => StatusCode::CONFLICT,
                     IngestionError::Timeout => StatusCode::SERVICE_UNAVAILABLE,
@@ -104,8 +117,10 @@ pub(crate) fn describe(document: &mut Value) {
         "properties":{"source_id":{"type":"string"},"source_revision":{"type":"integer"},"changed_events":{"type":"integer","minimum":0}}});
     document["paths"]["/api/admin/v1/sources/{source_id}/snapshot"] = json!({"put":{
         "summary":"Replace the snapshot of an enabled manual-static ICS source with one uploaded ICS document",
-        "description":"If-Match is the quoted config_revision. The document is normalized to EventV1 and committed atomically as a complete snapshot or rejected as a whole; events absent from it are deleted, up to 100 per upload. The document itself is not stored and nothing is written to a remote calendar.",
-        "parameters":[parameter("source_id","path"),parameter("If-Match","header"),
+        "description":"If-Match is the quoted config_revision. The document is normalized to EventV1 and committed atomically as a complete snapshot or rejected as a whole; events absent from it are deleted. Deleting more than 100 existing events returns 428 and changes nothing unless the same upload is repeated with approve_deletions=true. The document itself is not stored and nothing is written to a remote calendar.",
+        "parameters":[parameter("source_id","path"),
+            {"name":"approve_deletions","in":"query","required":false,"schema":{"type":"boolean","default":false},"description":"Explicit approval to delete more than 100 existing events"},
+            parameter("If-Match","header"),
             parameter("Cf-Access-Jwt-Assertion","header"),parameter("__Host-calrelay_admin","cookie"),
             parameter("Origin","header"),parameter("X-CSRF-Token","header"),parameter("X-Admin-Write-Nonce","header")],
         "requestBody":{"required":true,"content":{"text/calendar":{"schema":{"type":"string"}}}},
@@ -114,7 +129,8 @@ pub(crate) fn describe(document: &mut Value) {
             "409":{"description":"Not an enabled, unretired, single-calendar manual-static ICS source, stale config_revision, or concurrent source change"},
             "413":{"description":"Document exceeds the ICS byte or event budget"},
             "415":{"description":"Content-Type is not text/calendar"},
-            "422":{"description":"Invalid source ID, missing If-Match, invalid ICS, or more than 100 deletions"},
+            "422":{"description":"Invalid source ID, missing If-Match, or invalid ICS"},
+            "428":{"description":"More than 100 existing events would be deleted; nothing changed, approval required"},
             "500":{"description":"Storage unavailable"},"503":{"description":"Service stopping or sync deadline exceeded"}}
     }});
 }

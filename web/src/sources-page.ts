@@ -475,6 +475,62 @@ export function mountSources(
       upload.type = "button";
       writes.add(upload);
       localWrites.add(upload);
+      // Held only while the administrator decides whether to approve a large deletion.
+      let awaitingApproval: string | undefined;
+      const approval = node("div");
+      approval.hidden = true;
+      const approve = node("button", "确认删除并替换");
+      approve.type = "button";
+      writes.add(approve);
+      localWrites.add(approve);
+      const keep = node("button", "保留既有事件");
+      keep.type = "button";
+      const settle = () => {
+        awaitingApproval = undefined;
+        approval.hidden = true;
+      };
+      approval.append(
+        node(
+          "p",
+          "此文件会删除超过 100 个既有事件，服务端尚未做任何改变。确认后将以同一文件整体替换，删除不可撤销。",
+        ),
+        approve,
+        keep,
+      );
+      const send = (ics: string, approved: boolean) =>
+        write(async (sourceId, signal) => {
+          const receipt = await api.uploadSnapshot(
+            sourceId,
+            record.config_revision,
+            ics,
+            signal,
+            approved,
+          );
+          if (disposed || signal.aborted) return;
+          if (receipt === "approval-required") {
+            awaitingApproval = ics;
+            approval.hidden = false;
+            display(
+              "需要确认：此文件会删除超过 100 个既有事件；既有事件未改变。",
+              "error",
+            );
+            return;
+          }
+          settle();
+          file.value = "";
+          display(
+            `服务端已确认替换快照：来源修订 ${receipt.source_revision}，变更 ${receipt.changed_events} 个事件；文件中没有的既有事件已删除。这不代表已规划或发送提醒。`,
+            "success",
+          );
+        }, false);
+      file.addEventListener("change", settle);
+      keep.addEventListener("click", () => {
+        settle();
+        display("已取消；既有事件未改变。", "success");
+      });
+      approve.addEventListener("click", () => {
+        if (awaitingApproval !== undefined) void send(awaitingApproval, true);
+      });
       upload.addEventListener("click", () => {
         const chosen = file.files?.[0];
         if (!chosen || chosen.size > MAX_ICS_BYTES) {
@@ -484,34 +540,27 @@ export function mountSources(
           );
           return;
         }
-        void write(async (sourceId, signal) => {
-          // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
-          let ics: string;
-          try {
-            ics = new TextDecoder("utf-8", {
-              fatal: true,
-              ignoreBOM: true,
-            }).decode(await chosen.arrayBuffer());
-          } catch {
-            throw new AdminFailure(
-              "invalid",
-              "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
-            );
-          }
-          const receipt = await api.uploadSnapshot(
-            sourceId,
-            record.config_revision,
-            ics,
-            signal,
-          );
-          if (!disposed && !signal.aborted) {
-            file.value = "";
-            display(
-              `服务端已确认替换快照：来源修订 ${receipt.source_revision}，变更 ${receipt.changed_events} 个事件；文件中没有的既有事件已删除。这不代表已规划或发送提醒。`,
-              "success",
-            );
-          }
-        }, false);
+        settle();
+        void chosen.arrayBuffer().then(
+          (bytes) => {
+            // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
+            let ics: string;
+            try {
+              ics = new TextDecoder("utf-8", {
+                fatal: true,
+                ignoreBOM: true,
+              }).decode(bytes);
+            } catch {
+              display(
+                "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
+                "error",
+              );
+              return;
+            }
+            if (!disposed) void send(ics, false);
+          },
+          () => display("无法读取所选文件，未上传。", "error"),
+        );
       });
       const section = node("section");
       section.append(
@@ -522,6 +571,7 @@ export function mountSources(
         ),
         fileLabel,
         upload,
+        approval,
       );
       editor.append(section);
     }

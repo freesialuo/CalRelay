@@ -7,10 +7,10 @@ fn map(error: SyncError) -> E {
     match error {
         SyncError::Conflict => E::Conflict,
         SyncError::SourceUnavailable => E::Unavailable,
-        SyncError::Invalid(_)
-        | SyncError::CalendarMismatch
-        | SyncError::StaleSequence
-        | SyncError::ReviewRequired { .. } => E::InvalidSnapshot,
+        SyncError::Invalid(_) | SyncError::CalendarMismatch | SyncError::StaleSequence => {
+            E::InvalidSnapshot
+        }
+        SyncError::ReviewRequired { deletions } => E::ReviewRequired { deletions },
         _ => E::Storage,
     }
 }
