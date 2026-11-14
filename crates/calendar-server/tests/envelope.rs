@@ -422,6 +422,22 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
             .unwrap()
             .replayed
     );
+    // The budget is shared: a single-event write (#30) cannot add a receipt past it either.
+    let event: calendar_application::EventV1 = serde_json::from_value(event("one", "One")).unwrap();
+    let single = calendar_application::IngestRequest {
+        source_id: "push".into(),
+        uid: "one".into(),
+        key: "single".into(),
+        condition: calendar_application::IngestCondition::Absent,
+        operation: calendar_application::IngestOperation::Upsert {
+            calendar_id: "calendar-a".into(),
+            event: Box::new(event),
+        },
+    };
+    assert!(matches!(
+        db.ingest(secret, single, policy, &At(12), "request").await,
+        Err(calendar_storage::ingest::IngestError::Capacity)
+    ));
     // After expiry the key executes again and the stale base revision is rejected.
     assert_eq!(
         db.ingest_snapshot_batch(secret, batch("a", 1, base), policy, &At(60_010))

@@ -41,7 +41,7 @@ SQLx 事务 drop 回滚，receipt 落盘失败不能留下事件改变。HTTP �
 | 环境变量 | 默认 | 有效范围 |
 | --- | --- | --- |
 | CALRELAY_INGEST_RETENTION_MS | 86400000（24 小时） | 60000–604800000（1 分钟–7 天） |
-| CALRELAY_INGEST_MAX_RECORDS | 100000 | 1–1000000（全库 receipt） |
+| CALRELAY_INGEST_MAX_RECORDS | 100000 | 1–1000000（全库 receipt，与 #174 快照批次回执合计） |
 
 过期等号起允许键重用，并重新执行当前 CAS；因此过期的初次创建重试通常返回 409，不再返回旧 201。
 不承诺永久幂等；客户端必须记录截止时间，超过期限按当前状态恢复流程。
