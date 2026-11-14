@@ -92,4 +92,6 @@ npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，�
 
 工作器 panic（#208）：测试专用 harness 的模拟输出在模拟 Bark 返回哨兵状态 599 时 panic（只在 feature-gated 测试二进制中，生产输出不变）。系统链路把 Bark 设为 599 并推送一个到期提醒：模拟网络记录到 599 后 `/health/live` 为 503（核心故障），管理接口仍返回 200，服务不自行退出或重启；恢复 Bark 并强杀重启后 live/ready 恢复 200。
 
+故障后的恢复（#210）：重启后，Bark 故障期间记为 retryable 的提醒被重试并 accepted。受控时钟下再两次把业务时间推进 61 秒：第一次越过 60 秒租约，panic 时在途的提醒记为 unknown 并排期重试；第二次越过有界重试退避，该提醒 accepted，全部 6 个逻辑投递 accepted。unknown 后重发可能重复通知，不承诺 exactly-once。真实时钟模式在 120 秒用例期限内只断言前者。
+
 restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。
