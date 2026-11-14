@@ -208,6 +208,8 @@ export function sourceForm(configuration?: SourceConfiguration): {
     const ics = mode.value.startsWith("ics:");
     const manual = mode.value.endsWith("manual-static");
     urlLabel.hidden = credentialLabel.hidden = intervalLabel.hidden = !pull;
+    // One ICS document is one calendar.
+    add.hidden = ics;
     url.required = interval.required = pull;
     url.disabled = credential.disabled = interval.disabled = !pull;
     slaLabel.hidden = manual;
@@ -254,7 +256,11 @@ export function sourceForm(configuration?: SourceConfiguration): {
         new Set(mapped.map((row) => row.id)).size !== mapped.length ||
         new Set(mapped.map((row) => row.external_id)).size !== mapped.length
       )
-        throw new Error("日历 ID 或 external_id 重复。");
+        throw new Error("日历映射存在重复 ID，请修正输入。");
+      if (adapter === "ics" && mapped.length !== 1)
+        throw new Error(
+          "ICS 来源只能映射一个日历：一个 ICS 文档对应一个日历。请移除多余映射。",
+        );
       return {
         version: "v1",
         name: name.value,

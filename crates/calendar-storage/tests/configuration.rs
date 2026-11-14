@@ -257,6 +257,35 @@ fn source_capabilities_and_untrusted_fields_have_strict_semantics() {
     let mut bad = original.clone();
     bad.capabilities.delete = true;
     assert!(bad.validate().is_err());
+    // One ICS document is one calendar, enabled or not; standard-calendar may map several.
+    let mut second = original.calendars[0].clone();
+    second.id = "calendar-b".into();
+    second.external_id = "second".into();
+    for (adapter, mode) in [
+        (AdapterKind::Ics, SourceMode::ManualStatic),
+        (AdapterKind::Ics, SourceMode::Pull),
+        (AdapterKind::StandardCalendar, SourceMode::ManualStatic),
+    ] {
+        let base = if mode == SourceMode::Pull {
+            &pull
+        } else {
+            &original
+        };
+        for enabled in [false, true] {
+            let mut body = base.clone();
+            body.adapter = adapter.clone();
+            body.endpoint =
+                (mode == SourceMode::Pull).then(|| "https://calendar.example.test/path".into());
+            body.enabled = enabled;
+            body.validate().unwrap();
+            body.calendars.push(second.clone());
+            assert_eq!(
+                body.validate().is_ok(),
+                adapter == AdapterKind::StandardCalendar,
+                "{adapter:?} {mode:?} enabled={enabled}"
+            );
+        }
+    }
     let mut push = original;
     push.mode = SourceMode::PushOnly;
     push.adapter = AdapterKind::StandardCalendar;

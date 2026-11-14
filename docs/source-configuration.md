@@ -15,7 +15,7 @@ Rust 权威为 `calendar-application::configuration::{SourceConfigurationV1, Sou
 
 沿用 #34 Access JWT、Secure HttpOnly SameSite session、精确 Origin、CSRF 和一次 write nonce。失败鉴权不写业务数据；已经授权的 unsafe 请求即使业务失败也消费 nonce，客户端读取 `X-Admin-Write-Nonce` 后重试。GET/写响应均 no-store。无条件写、弱/重复/同时携带的条件头、未知字段/版本、非法能力为 422（JSON 提取层的语法错误为 400）；stale CAS/身份重映射为 409。沿用全局有界错误码与 request_id；持久错误不回显配置/凭据。管理来源正文额外限制 64 KiB，全局部署预算可更小；原会话登录仍限制 4 KiB。
 
-id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空白无控制字符；1–256 个日历映射。calendar id 全库唯一、external_id 源内唯一；跨源同 EventV1.external_uid 仍由原 `(source_id, external_uid)` 隔离。已有 calendar id/external_id 不可重映射或移除，取消选择用 selected=false，保留事件/历史引用。timezone 只允许有效 IANA TZID 或 null。新日历可追加。发现接口使用 `SourceConfigurationSummary` / `SourceConfigurationPage`，不导出完整配置或凭据引用。
+id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空白无控制字符；1–256 个日历映射；ICS 来源（pull 与 manual-static）恰好一个：一个 ICS 文档对应一个日历，无论是否启用，多映射一律拒绝（#172）。calendar id 全库唯一、external_id 源内唯一；跨源同 EventV1.external_uid 仍由原 `(source_id, external_uid)` 隔离。已有 calendar id/external_id 不可重映射或移除，取消选择用 selected=false，保留事件/历史引用。timezone 只允许有效 IANA TZID 或 null。新日历可追加。发现接口使用 `SourceConfigurationSummary` / `SourceConfigurationPage`，不导出完整配置或凭据引用。
 
 | mode | 本批允许配置与 freshness |
 | --- | --- |

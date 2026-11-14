@@ -461,6 +461,9 @@ test("the final required calendar mapping cannot be removed", async ({
     exact: true,
   });
   await expect(remove).toBeDisabled();
+  await page
+    .getByLabel("来源类型与更新方式")
+    .selectOption("standard-calendar:push-only");
   await page.getByRole("button", { name: "添加日历映射", exact: true }).click();
   await expect(remove.first()).toBeEnabled();
   await remove.last().click();
@@ -1019,4 +1022,26 @@ test("an existing standard-calendar manual source keeps its type and says it has
   await expect(mode.locator("option:checked")).toHaveText(
     "标准日历手动来源（尚无写入入口，不会产生事件）",
   );
+});
+
+test("an ICS source maps exactly one calendar and a second mapping is refused before sending", async ({
+  page,
+}) => {
+  const api = backend(page);
+  await api.install();
+  await page.goto(fixture);
+  await createDraft(page);
+  const add = page.getByRole("button", { name: "添加日历映射", exact: true });
+  const mode = page.getByLabel("来源类型与更新方式");
+  await expect(add).toBeHidden();
+  await mode.selectOption("standard-calendar:push-only");
+  await add.click();
+  await page.getByLabel("远端日历 external_id").last().fill("second");
+  await mode.selectOption("ics:manual-static");
+  await expect(add).toBeHidden();
+  await page.getByRole("button", { name: "保存禁用来源", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "ICS 来源只能映射一个日历：一个 ICS 文档对应一个日历。请移除多余映射。",
+  );
+  expect(api.requests.filter((r) => r.method !== "GET")).toHaveLength(0);
 });

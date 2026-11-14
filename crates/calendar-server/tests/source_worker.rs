@@ -895,15 +895,23 @@ async fn unsupported_mapping_and_credential_kinds_fail_closed_without_http() -> 
     calendar.id = "second".into();
     calendar.external_id = "second".into();
     config.calendars.push(calendar);
-    services
-        .storage
-        .put_source_configuration(
-            "a",
-            ConfigurationCondition::Revision(record.config_revision),
-            config,
-            "test",
-            1000,
-        )
+    assert!(matches!(
+        services
+            .storage
+            .put_source_configuration(
+                "a",
+                ConfigurationCondition::Revision(record.config_revision),
+                config.clone(),
+                "test",
+                1000,
+            )
+            .await,
+        Err(ConfigurationError::Invalid)
+    ));
+    // A multi-calendar ICS row saved before the rule existed still fails closed without HTTP.
+    sqlx::query("UPDATE sources SET config_json=? WHERE id='a'")
+        .bind(serde_json::to_string(&config)?)
+        .execute(services.storage.pool())
         .await?;
     let mut progress = vec![];
     SourceScanner::new(limits(8))
