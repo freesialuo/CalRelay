@@ -150,6 +150,11 @@ impl PushOutput for Output {
                 }
             }
         };
+        // Test-only fault injection: the synthetic Bark's sentinel status makes this delivery
+        // worker panic, so system tests can observe a real core fault.
+        if response.status().as_u16() == 599 {
+            panic!("synthetic delivery worker panic");
+        }
         if response.status().as_u16() == 503 {
             return DeliveryOutcome::Retryable {
                 retry_after_ms: Some(1000),
