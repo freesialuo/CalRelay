@@ -160,7 +160,10 @@ impl SourceConfigurationV1 {
                 }
             }
         }
-        if self.adapter == AdapterKind::Ics && (!c.snapshot || c.delta || c.delete) {
+        // One ICS document is one calendar (#172): a multi-calendar ICS source could never sync.
+        if self.adapter == AdapterKind::Ics
+            && (!c.snapshot || c.delta || c.delete || self.calendars.len() != 1)
+        {
             return Err(invalid());
         }
         let mut ids = HashSet::new();

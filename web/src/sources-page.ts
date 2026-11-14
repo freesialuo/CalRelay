@@ -341,8 +341,11 @@ export function mountSources(
       let config: ReturnType<typeof read>;
       try {
         config = read();
-      } catch {
-        display("日历映射存在重复 ID，请修正输入。", "error");
+      } catch (error) {
+        display(
+          error instanceof Error ? error.message : "配置输入无效，请修正。",
+          "error",
+        );
         return;
       }
       void write(async (sourceId, signal) => {

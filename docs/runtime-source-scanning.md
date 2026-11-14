@@ -6,7 +6,7 @@
 
 每页沿用配置发现最多100摘要；每轮最多1–16页、1–64次同步、1ms–120s单调准入预算。游标保存在实例中：尝试数耗尽时只推进到已处理的来源，下轮继续，不跳过当前页剩余来源。完整遍历后从头再扫；并发配置变更不提供跨页快照，下轮收敛。缓存容量显式限制1–16384个活跃 pull 来源；满额时先用单个 SQLite 读取快照复核缓存 id，清理已禁用/退休/非 pull/缺失项，保留活跃失败来源的退避。确实超限才返回类型化 Capacity，不能悄悄淘汰失败来源然后忙重试。复核查询使用最多16384个绑定参数且不持久缓存动态语句。单实例顺序执行，无无界任务派生或并发；多扫描器竞争仍由原 CAS 防止迟到提交，不声称分布式协调。
 
-只对 enabled、非退休、pull/ICS/snapshot 配置调用同步；static、push-only、disabled 和 retired 不 fetch。单URL多 calendar 的协议语义尚未冻结，本叶子明确返回 Unsupported 并退避，不任选 calendar、不将局部结果当全源快照。selected 仍是输出选择，不作为是否保存源数据的开关。
+只对 enabled、非退休、pull/ICS/snapshot 配置调用同步；static、push-only、disabled 和 retired 不 fetch。一个 ICS 文档对应一个日历（#172）：配置校验拒绝多日历 ICS 来源；此前保存的遗留多日历行仍返回 Unsupported 并退避、上传返回 409，不任选 calendar、不将局部结果当全源快照。selected 仍是输出选择，不作为是否保存源数据的开关。
 
 进程内期限使用注入 Clock 的单调时间；成功后从操作完成起等待配置周期，失败独立指数退避并封顶。429/5xx 带有效 Retry-After 时，HttpSource 以类型化 `IngestionError::RetryAfter` 传到调度层：下次请求不早于本地退避与上游等待中的较大者，本地退避上限不缩短上游等待；上游等待本身最多采纳7天（最大可配置刷新周期），缺省、无效或溢出的 Retry-After 沿用本地退避。调度等待为1ms–60s且可被停止通知打断；退避基数至少等于扫描等待、上限最多1小时。数量/耗时预算只限制新准入，不中断已准入同步；元数据读取后、容量复核后以及取得 task permit 后均复核截止时间，超限不启动同步并保留当前来源续点。实际网络/解析/提交继续受既有 RemoteFetchLimits、IcsLimits、SyncLimits 和 SQLite busy 预算限制；HTTP仍在事务外。根装配必须让真实单次同步与等待预算适配 supervisor stall_timeout，不能用等待 timer 伪造进度。
 

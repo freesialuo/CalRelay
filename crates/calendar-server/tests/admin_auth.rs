@@ -428,8 +428,14 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
         "../../../examples/source-configuration-v1.json"
     ))
     .unwrap();
+    // Many calendar mappings: only standard-calendar sources may map more than one calendar.
+    config["adapter"] = json!("standard-calendar");
     config["calendars"] = (0..50).map(|n|json!({"id":format!("calendar-{n}"),"external_id":format!("main-{n}"),"selected":true,"timezone":"UTC"})).collect();
     assert!(config.to_string().len() > 4096);
+    let mut forged = config.clone();
+    forged["source_id"] = json!("forged");
+    let mut multi_calendar_ics = config.clone();
+    multi_calendar_ics["adapter"] = json!("ics");
     let login = app
         .clone()
         .oneshot(request(
@@ -483,15 +489,17 @@ async fn source_configuration_crud_is_guarded_persistent_and_conditional() {
         .source_configuration("source-a")
         .await
         .is_err());
-    for (condition, expected, mut body) in [
+    for (condition, expected, body) in [
         ("*", StatusCode::CREATED, config.clone()),
         ("\"1\"", StatusCode::OK, config.clone()),
         ("\"1\"", StatusCode::CONFLICT, config.clone()),
-        ("\"2\"", StatusCode::UNPROCESSABLE_ENTITY, config.clone()),
+        ("\"2\"", StatusCode::UNPROCESSABLE_ENTITY, forged),
+        (
+            "\"2\"",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            multi_calendar_ics,
+        ),
     ] {
-        if expected == StatusCode::UNPROCESSABLE_ENTITY {
-            body["source_id"] = json!("forged");
-        }
         let mut req = request(
             "PUT",
             path,
@@ -993,6 +1001,26 @@ async fn ics_upload_replaces_only_manual_static_snapshots_atomically() {
         }
     }
     assert!(!db.source_state("pull").await.unwrap().has_snapshot);
+    // A multi-calendar ICS row saved before #172 still cannot receive an upload.
+    sqlx::query("UPDATE sources SET config_json=json_insert(config_json,'$.calendars[#]',json('{\"id\":\"c_second\",\"external_id\":\"second\",\"selected\":true,\"timezone\":null}')) WHERE id='static'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let before = db.source_state("static").await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(put(
+            "static/snapshot",
+            Some(csrf),
+            &nonce,
+            calendar,
+            "\"2\"",
+            ics(&["late"]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(db.source_state("static").await.unwrap(), before);
 }
 #[tokio::test]
 async fn source_configuration_budget_does_not_expand_session_login_body_budget() {
