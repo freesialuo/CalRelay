@@ -20,9 +20,15 @@
 
 每次发现、配置读取、单源同步分别经过 Services::run_task；停止后无新准入，已准入的有界同步可保存结果，外层有限 drain 仍可取消。SourceProgress 只由真实查询/同步/外部结果产生；Scanned 和 Synchronized 携带当前缓存中是否仍有外部降级，单源成功不会清除另一来源的失败。存储故障返回上层，外部失败持续隔离重试；本模块不退出/重启进程，不操作 Docker，不解除恢复 pause/cutoff。
 
+## 手动刷新（#150）
+
+`POST /api/admin/v1/sources/{source_id}/refresh`（空正文，沿用 Access/会话/Origin/CSRF/一次性写 nonce）只为启用、未退休的 pull/ICS/snapshot 来源在 `source_refresh_requests`（迁移 `0014`）记录一个待处理请求并返回 202；重复请求合并为同一行。manual-static、push-only、禁用或退休来源返回 409，不产生假轮询；未知来源 404。202 只表示请求已记录，不表示同步已执行或成功。
+
+扫描器在下一轮读取该来源时消费请求：跳过配置周期和本地失败退避立即同步，但不早于 `not_before`——上次完成后的本地退避基数（生产 1 秒）与上游 Retry-After 中的较大者；被推迟的请求保留。同步仍走既有 revision fence、条件读取和轮次预算。请求在同步得到结果（成功或外部失败）后按 `sequence` 清除，本轮未获准入的请求保留；同步期间到达的新请求序号不同，会保留到下一轮；针对旧配置修订的请求直接丢弃。请求持久化，重启后仍在；但 `not_before` 与失败退避一样只在进程内，重启后的首次手动刷新可能早于上游 Retry-After。该表只含来源 ID、配置修订、序号和时间，不写审计表，不含端点、凭据或事件内容。管理界面按钮尚未交付。
+
 ## 验证与未交付
 
-14项集成测试使用真实 SQLite、真实配置 CRUD、测试专用 RemoteFetcher 到本地模拟 HTTP、注入 UTC/单调时钟和信号 barrier。覆盖周期/304/无条件读取、失败保留/独立退避、429/503 Retry-After 的边界前不请求/边界可请求/不低于本地退避/7天上限且其他来源照常、重启和未来核验时间、101来源分页、attempt/cache/单调预算、旧 record 网络前拒绝、在途修改/退休、停止排空、HTTP超时与非秘密 credential kind；另覆盖排序靠后的失效缓存回收且保留活跃失败退避、读取阶段耗尽预算后不准入/下轮续扫，以及16384参数查询边界。实际 HttpFetcher 的 TLS/SSRF/认证矩阵在 workspace 原有测试回归；没有生产网络或 loopback 放行开关。
+15项集成测试使用真实 SQLite、真实配置 CRUD、测试专用 RemoteFetcher 到本地模拟 HTTP、注入 UTC/单调时钟和信号 barrier。覆盖周期/304/无条件读取、失败保留/独立退避、手动刷新（跳过周期、本地下限与 Retry-After 边界、合并、重启保留、旧修订丢弃、非 pull 拒绝）、429/503 Retry-After 的边界前不请求/边界可请求/不低于本地退避/7天上限且其他来源照常、重启和未来核验时间、101来源分页、attempt/cache/单调预算、旧 record 网络前拒绝、在途修改/退休、停止排空、HTTP超时与非秘密 credential kind；另覆盖排序靠后的失效缓存回收且保留活跃失败退避、读取阶段耗尽预算后不准入/下轮续扫，以及16384参数查询边界。实际 HttpFetcher 的 TLS/SSRF/认证矩阵在 workspace 原有测试回归；没有生产网络或 loopback 放行开关。
 
 受控去掉 revision pin 与周期准入门槛，分别触发旧配置错误通过及提前轮询的行为断言失败；恢复后通过。自动审核两项 P2 也先观察有效 Red：替换后错误 Capacity；读取耗尽预算后实际(1,Complete)/预期(0,Deadline)，修复后通过。夹具遗漏必需 DTSTAMP、退休保留旧核验时间的测试预期和语法错误不计作需求 Red。未运行长时 fuzz/形式证明/真实上游互操作。
 

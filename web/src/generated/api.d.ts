@@ -1607,6 +1607,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources/{source_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request one manual refresh of an active pull source; repeats merge while pending
+         * @description Empty body. The scanner syncs on its next round, skipping the configured period and local failure backoff but never an upstream Retry-After or the local floor between requests. 202 does not mean the sync ran or succeeded.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Request recorded */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceRefreshReceipt"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Source is not an enabled, unretired pull source */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid source ID or non-empty body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/subscriptions": {
         parameters: {
             query?: never;
@@ -3368,6 +3458,11 @@ export interface components {
             /** @description Unix milliseconds */
             retired_at: number | null;
             snapshot_revision: number | null;
+            source_id: string;
+        };
+        SourceRefreshReceipt: {
+            /** @description Unix milliseconds */
+            requested_at: number;
             source_id: string;
         };
     };

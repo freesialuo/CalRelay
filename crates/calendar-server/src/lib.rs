@@ -13,6 +13,7 @@ mod ingest;
 pub mod production_runtime;
 mod reminder_configuration;
 mod source_configuration;
+mod source_refresh;
 pub mod source_worker;
 pub mod supervision;
 #[cfg(feature = "test-harness")]

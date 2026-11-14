@@ -190,6 +190,8 @@ const MAX_RETRY_AFTER_MS: u64 = 604_800_000;
 struct Schedule {
     config_revision: i64,
     due: u64,
+    /// Earliest manual refresh: the upstream Retry-After and a local floor between requests.
+    not_before: u64,
     failures: u32,
 }
 pub struct SourceScanner {
@@ -256,7 +258,8 @@ impl SourceScanner {
                     .run_task(async |db| {
                         let record = db.source_configuration(&summary.source_id).await;
                         let state = db.source_state(&summary.source_id).await;
-                        (record, state)
+                        let refresh = db.source_refresh_request(&summary.source_id).await;
+                        (record, state, refresh)
                     })
                     .await
                 else {
@@ -278,6 +281,7 @@ impl SourceScanner {
                     }
                     Err(_) => return Err(SourceScanError::Storage),
                 };
+                let refresh = loaded.2.map_err(|_| SourceScanError::Storage)?;
                 if !pull(&record) {
                     self.schedules.remove(&summary.source_id);
                     self.after = Some(summary.source_id);
@@ -328,16 +332,35 @@ impl SourceScanner {
                             clock.utc_now_ms(),
                             interval,
                         )),
+                        not_before: 0,
                         failures: 0,
                     });
                 if entry.config_revision != record.config_revision {
                     *entry = Schedule {
                         config_revision: record.config_revision,
                         due: mono,
+                        not_before: 0,
                         failures: 0,
                     };
                 }
-                if mono >= entry.due {
+                // A manual refresh skips the period and local backoff, never `not_before`. One
+                // made against a superseded configuration is dropped.
+                let stale = refresh.filter(|r| r.config_revision != record.config_revision);
+                let manual = refresh.filter(|r| r.config_revision == record.config_revision);
+                let run = mono >= entry.due || (manual.is_some() && mono >= entry.not_before);
+                if let Some(stale) = stale {
+                    let Some(cleared) = services
+                        .run_task(async |db| {
+                            db.clear_source_refresh(&summary.source_id, stale.sequence)
+                                .await
+                        })
+                        .await
+                    else {
+                        break 'scan SourceRoundEnd::Stopped;
+                    };
+                    cleared.map_err(|_| SourceScanError::Storage)?;
+                }
+                if run {
                     let Some(admission) = services
                         .run_task(async |db| {
                             if clock.monotonic_now_ms().saturating_sub(started)
@@ -360,6 +383,7 @@ impl SourceScanner {
                         Ok(outcome) => {
                             entry.failures = 0;
                             entry.due = finished.saturating_add(interval);
+                            entry.not_before = finished.saturating_add(self.limits.backoff_ms);
                             progress(SourceProgress::Synchronized {
                                 source_id: summary.source_id.clone(),
                                 not_modified: matches!(outcome, SyncOutcome::NotModified),
@@ -385,11 +409,27 @@ impl SourceScanner {
                                 _ => 0,
                             };
                             entry.due = finished.saturating_add(local.max(upstream));
+                            entry.not_before =
+                                finished.saturating_add(self.limits.backoff_ms.max(upstream));
                             progress(SourceProgress::ExternalFailure {
                                 source_id: summary.source_id.clone(),
                                 error,
                             });
                         }
+                    }
+                    // Cleared only once the sync has an outcome, so a request that was not
+                    // admitted this round is still served; a newer one keeps its sequence.
+                    if let Some(served) = manual {
+                        let Some(cleared) = services
+                            .run_task(async |db| {
+                                db.clear_source_refresh(&summary.source_id, served.sequence)
+                                    .await
+                            })
+                            .await
+                        else {
+                            break 'scan SourceRoundEnd::Stopped;
+                        };
+                        cleared.map_err(|_| SourceScanError::Storage)?;
                     }
                 }
                 self.after = Some(summary.source_id);
