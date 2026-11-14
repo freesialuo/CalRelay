@@ -741,6 +741,224 @@ async fn manual_refresh_is_write_guarded_and_only_accepts_active_pull_sources() 
     assert_eq!(db.source_refresh_request("static").await.unwrap(), None);
 }
 #[tokio::test]
+async fn ics_upload_replaces_only_manual_static_snapshots_atomically() {
+    use calendar_application::{
+        configuration::{ConfigurationCondition, SourceConfigurationV1, SourceMode},
+        SourceRepository,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::initialize(server_config(&dir.path().join("upload.db")))
+        .await
+        .unwrap();
+    let db = &server.services.storage;
+    for (id, mode) in [
+        ("static", SourceMode::ManualStatic),
+        ("pull", SourceMode::Pull),
+    ] {
+        let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+            "../../../examples/source-configuration-v1.json"
+        ))
+        .unwrap();
+        config.name = id.into();
+        config.calendars[0].id = format!("c_{id}");
+        if mode == SourceMode::Pull {
+            config.endpoint = Some("https://source.example/pull".into());
+            config.refresh_interval_ms = Some(60000);
+            config.freshness_sla_ms = Some(60000);
+        }
+        config.mode = mode;
+        let record = db
+            .put_source_configuration(id, ConfigurationCondition::Absent, config, "test", 1000)
+            .await
+            .unwrap();
+        let mut config = record.configuration;
+        config.enabled = true;
+        let revision = ConfigurationCondition::Revision(record.config_revision);
+        db.put_source_configuration(id, revision, config, "test", 1000)
+            .await
+            .unwrap();
+    }
+    let state = AdminState::with_clock(
+        server.services.clone(),
+        verifier(Arc::new(Fake::default())),
+        Arc::new(|| NOW),
+    );
+    let app = admin::router(state);
+    let jwt = sign(claims());
+    let login = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            SESSION,
+            &jwt,
+            None,
+            None,
+            None,
+            Some(ORIGIN),
+            json!({"turnstile_token":"upload"}),
+        ))
+        .await
+        .unwrap();
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let tokens: Value =
+        serde_json::from_slice(&to_bytes(login.into_body(), 4096).await.unwrap()).unwrap();
+    let csrf = tokens["csrf_token"].as_str().unwrap();
+    let mut nonce = tokens["write_nonce"].as_str().unwrap().to_owned();
+    let ics = |events: &[&str]| {
+        let mut text = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n");
+        for uid in events {
+            text += &format!("BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20261102T170000Z\r\nSUMMARY:Private {uid}\r\nEND:VEVENT\r\n");
+        }
+        text + "END:VCALENDAR\r\n"
+    };
+    let put = |id: &str, csrf: Option<&str>, nonce: &str, media: &str, tag: &str, body: String| {
+        let mut req = request(
+            "PUT",
+            &format!("/api/admin/v1/sources/{id}/snapshot"),
+            &jwt,
+            Some(&cookie),
+            csrf,
+            Some(nonce),
+            Some(ORIGIN),
+            Value::Null,
+        );
+        req.headers_mut()
+            .insert("content-type", media.parse().unwrap());
+        req.headers_mut().insert("if-match", tag.parse().unwrap());
+        *req.body_mut() = Body::from(body);
+        req
+    };
+    let calendar = "text/calendar; charset=utf-8";
+    let denied = app
+        .clone()
+        .oneshot(put(
+            "static",
+            None,
+            &nonce,
+            calendar,
+            "\"2\"",
+            ics(&["one"]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let initial = db.source_state("static").await.unwrap();
+    assert!(!initial.has_snapshot);
+    let oversized = format!("{}{}", ics(&["one"]), " ".repeat(1_048_576));
+    let many: Vec<String> = (0..102).map(|n| format!("bulk-{n}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    // (source, media type, If-Match, body, expected status, changed events when committed)
+    for (id, media, tag, body, expected, changed) in [
+        (
+            "static",
+            "application/json",
+            "\"2\"",
+            ics(&["one"]),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            0,
+        ),
+        (
+            "static",
+            calendar,
+            "\"1\"",
+            ics(&["one"]),
+            StatusCode::CONFLICT,
+            0,
+        ),
+        (
+            "pull",
+            calendar,
+            "\"2\"",
+            ics(&["one"]),
+            StatusCode::CONFLICT,
+            0,
+        ),
+        (
+            "missing",
+            calendar,
+            "\"2\"",
+            ics(&["one"]),
+            StatusCode::NOT_FOUND,
+            0,
+        ),
+        (
+            "static",
+            calendar,
+            "\"2\"",
+            "BEGIN:VCALENDAR\r\nnot ics".into(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            0,
+        ),
+        (
+            "static",
+            calendar,
+            "\"2\"",
+            oversized,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            0,
+        ),
+        (
+            "static",
+            calendar,
+            "\"2\"",
+            ics(&["one", "two"]),
+            StatusCode::OK,
+            2,
+        ),
+        // Replacement: "one" is deleted, "two" is unchanged, "three" is new.
+        (
+            "static",
+            calendar,
+            "\"2\"",
+            ics(&["two", "three"]),
+            StatusCode::OK,
+            2,
+        ),
+        ("static", calendar, "\"2\"", ics(&many), StatusCode::OK, 104),
+        // Dropping 102 events at once exceeds the deletion limit and changes nothing.
+        (
+            "static",
+            calendar,
+            "\"2\"",
+            ics(&["only"]),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            0,
+        ),
+    ] {
+        let before = db.source_state("static").await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(put(id, Some(csrf), &nonce, media, tag, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{id} {media} {tag}");
+        nonce = response.headers()["x-admin-write-nonce"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let after = db.source_state("static").await.unwrap();
+        if expected == StatusCode::OK {
+            let text = to_bytes(response.into_body(), 4096).await.unwrap();
+            assert!(!String::from_utf8_lossy(&text).contains("Private"));
+            let receipt: Value = serde_json::from_slice(&text).unwrap();
+            assert_eq!(receipt.as_object().unwrap().len(), 3);
+            assert_eq!(receipt["source_id"], "static");
+            assert_eq!(receipt["changed_events"], changed);
+            assert_eq!(receipt["source_revision"], after.revision);
+            assert!(after.has_snapshot && after.revision > before.revision);
+        } else {
+            assert_eq!(after, before, "a rejected upload changes nothing");
+        }
+    }
+    assert!(!db.source_state("pull").await.unwrap().has_snapshot);
+}
+#[tokio::test]
 async fn source_configuration_budget_does_not_expand_session_login_body_budget() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::initialize(server_config(&dir.path().join("db")))

@@ -1697,6 +1697,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources/{source_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the snapshot of an enabled manual-static ICS source with one uploaded ICS document
+         * @description If-Match is the quoted config_revision. The document is normalized to EventV1 and committed atomically as a complete snapshot or rejected as a whole; events absent from it are deleted, up to 100 per upload. The document itself is not stored and nothing is written to a remote calendar.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header: {
+                    "If-Match": string;
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "text/calendar": string;
+                };
+            };
+            responses: {
+                /** @description Snapshot committed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourceSnapshotReceipt"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not an enabled, unretired, single-calendar manual-static ICS source, stale config_revision, or concurrent source change */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Document exceeds the ICS byte or event budget */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Content-Type is not text/calendar */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid source ID, missing If-Match, invalid ICS, or more than 100 deletions */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping or sync deadline exceeded */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/subscriptions": {
         parameters: {
             query?: never;
@@ -3464,6 +3573,11 @@ export interface components {
             /** @description Unix milliseconds */
             requested_at: number;
             source_id: string;
+        };
+        SourceSnapshotReceipt: {
+            changed_events: number;
+            source_id: string;
+            source_revision: number;
         };
     };
     responses: never;

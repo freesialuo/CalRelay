@@ -66,3 +66,15 @@ PR #57 review 回归：三页链 `/api/events` → `/v2/pages/2` → `3` 在旧�
 ## 实现参考
 
 Exa 核对 [SQLx 0.8.6 公共源码](https://docs.rs/crate/sqlx/0.8.6/source/README.md) 和 [SQLite TransactionManager](https://docs.rs/sqlx/latest/sqlx/sqlite/struct.SqliteTransactionManager.html)，复用 #22 的 BEGIN IMMEDIATE、条件 UPDATE 和回滚边界；固定版本行为由真实文件库、故障注入与升级测试核对。JSON Pointer 采用 serde_json 的受限数据选择 API，不解释代码。
+
+## ICS 上传快照（#156）
+
+manual-static 来源没有可拉取的 URL。`PUT /api/admin/v1/sources/{source_id}/snapshot`（`Content-Type: text/calendar`，`If-Match` 为带引号的配置修订，沿用 Access/会话/Origin/CSRF/一次性写 nonce）让管理员上传一个 ICS 文档作为该来源的完整快照。
+
+- 仅启用、未退休、manual-static、ICS、单日历来源接受上传；其他来源或配置修订不符返回 409，未知来源 404，媒体类型不符 415。
+- 文档经 `IcsUpload` adapter 走既有 `normalize_ics` 转为 EventV1，再由 `synchronize` 以来源修订 fence 和来源级 CAS 原子提交；没有分页、验证器或 checkpoint。
+- 整体成功或整体拒绝：无效 ICS 返回 422，超过 ICS 字节/事件等预算返回 413，均不改变既有快照和修订。文档中缺失的既有事件被删除，单次超过 100 条时拒绝（422），与拉取同步使用同一上限；本入口暂不提供越过该上限的显式批准。
+- 回执只含来源 ID、新来源修订和变更事件数；原始文档不落库，不向远端日历写回。请求体上限为 ICS 字节预算（默认 1 MiB），同时受服务全局请求上限约束。
+- 管理界面上传控件尚未交付。
+
+验证：`admin_auth` 的 `ics_upload_replaces_only_manual_static_snapshots_atomically` 使用真实守卫与 SQLite，覆盖缺 CSRF、媒体类型、旧配置修订、pull 来源、未知来源、无效 ICS、超限正文、首次提交、替换（删除/不变/新增）、102 条批量与超限删除拒绝，并断言被拒绝的上传不改变来源状态、回执不含事件文本。受控去掉来源模式、配置修订、删除上限、媒体类型检查分别使该用例失败。

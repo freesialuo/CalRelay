@@ -14,6 +14,7 @@ pub mod production_runtime;
 mod reminder_configuration;
 mod source_configuration;
 mod source_refresh;
+mod source_upload;
 pub mod source_worker;
 pub mod supervision;
 #[cfg(feature = "test-harness")]

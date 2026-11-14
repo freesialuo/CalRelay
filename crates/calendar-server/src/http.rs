@@ -170,6 +170,7 @@ pub fn openapi() -> Value {
     crate::reminder_configuration::describe(&mut document);
     crate::diagnostics::describe(&mut document);
     crate::source_refresh::describe(&mut document);
+    crate::source_upload::describe(&mut document);
     document
 }
 
