@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import {
@@ -20,6 +20,7 @@ function state(): {
   initial_utc?: number;
   control_request?: string;
   control_done?: string;
+  hold_started?: string;
 } {
   return JSON.parse(
     readFileSync(
@@ -410,4 +411,38 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   expect(observed().accepted).toBe(4);
   for (const path of ["/health/live", "/health/ready"])
     expect((await request.get(path)).status(), path).toBe(200);
+
+  // An upstream that stops answering is bounded by the fetch timeout and becomes a
+  // source-level failure; the core stays live and ready while it hangs.
+  const failuresB = (await diagnostic(b.id))?.consecutive_failures ?? 0;
+  await control({ action: "hold", id: "b" });
+  await page
+    .locator("main section")
+    .filter({ hasText: b.id })
+    .getByRole("button", { name: "查看 / 编辑", exact: true })
+    .click();
+  await page.getByRole("button", { name: "请求立即刷新", exact: true }).click();
+  await expect(status(page)).toContainText("服务端已记录刷新请求");
+  // Probe while the fetch of b is actually hanging in the fixture.
+  await expect
+    .poll(() => existsSync(state().hold_started ?? ""), {
+      timeout: 30000,
+      intervals: [50, 100, 250],
+    })
+    .toBe(true);
+  for (const path of ["/health/live", "/health/ready"])
+    expect((await request.get(path)).status(), path).toBe(200);
+  // The 3 s synthetic fetch timeout has not elapsed yet, so the stall was observed live.
+  expect((await diagnostic(b.id))?.consecutive_failures ?? 0).toBe(failuresB);
+  await expect
+    .poll(async () => (await diagnostic(b.id))?.consecutive_failures ?? 0, {
+      timeout: 30000,
+      intervals: [250, 500, 1000],
+    })
+    .toBeGreaterThan(failuresB);
+  // The synthetic fetcher reports its timeout as a transport failure.
+  expect((await diagnostic(b.id)).outcome).toBe("adapter");
+  for (const path of ["/health/live", "/health/ready"])
+    expect((await request.get(path)).status(), path).toBe(200);
+  await control({ action: "release" });
 });
