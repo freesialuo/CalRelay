@@ -2309,8 +2309,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Commit one complete standard-calendar-source/v1 snapshot of a push-only source
-         * @description Body: schemas/standard-calendar-source-v1.schema.json. This version accepts mode=snapshot with pages=1 and collection_tag=null only. The token must hold both upsert and delete permission. base_config_revision and base_source_revision must equal the current values (see the state endpoint). Events absent from the snapshot are deleted; more than 100 deletions, or emptying a non-empty source, is rejected unchanged pending administrator approval. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.
+         * Commit one standard-calendar-source/v1 snapshot or delta of a push-only source
+         * @description Body: schemas/standard-calendar-source-v1.schema.json. This version accepts pages=1 and collection_tag=null only. base_config_revision and base_source_revision must equal the current values (see the state endpoint). A snapshot needs the snapshot capability and a token with both upsert and delete permission; events absent from it are deleted, and more than 100 deletions or emptying a non-empty source is rejected unchanged pending administrator approval. A delta needs the delta capability (and delete for delete operations), the token permission of each operation kind, an existing snapshot baseline and base_checkpoint equal to the persisted checkpoint; each delete must name the event's current revision, and no absent event is deleted. A lower source_sequence than stored is a conflict. proposed_checkpoint is persisted only on success. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.
          */
         post: {
             parameters: {
@@ -2338,14 +2338,14 @@ export interface paths {
                         "application/json": components["schemas"]["StandardCalendarBatchReceipt"];
                     };
                 };
-                /** @description Token missing, wrong source, revoked, expired or without both write permissions */
+                /** @description Token missing, wrong source, revoked, expired or without the permission the batch needs */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description Source not an enabled push-only standard-calendar snapshot source, stale base revision, idempotency conflict, or deletions needing approval */
+                /** @description Source not accepting this mode, stale base revision or checkpoint, missing baseline, delete revision mismatch, lower source sequence, idempotency conflict, or deletions needing approval */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2359,7 +2359,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Invalid envelope, event or calendar; delta or multi-page batch not yet supported */
+                /** @description Invalid envelope, event or calendar; multi-page batch not yet supported */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2423,7 +2423,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Source not an enabled push-only standard-calendar snapshot source */
+                /** @description Source not an enabled push-only standard-calendar source declaring snapshot or delta */
                 409: {
                     headers: {
                         [name: string]: unknown;

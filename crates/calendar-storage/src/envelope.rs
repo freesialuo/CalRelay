@@ -1,19 +1,30 @@
-//! Standard-calendar-source/v1 snapshot batches. Authorization, source state, receipt and commit
+//! Standard-calendar-source/v1 snapshot and delta batches. Authorization, source state, receipt and commit
 //! are one write transaction, so revocation, disabling or a concurrent edit cannot race a batch.
 use crate::{
     security::digest,
     sync::{apply, prepare, SyncError},
     Storage,
 };
-use calendar_application::{Clock, DeletionPolicy, IngestPolicy, SyncBatch, SyncMode, SyncRecord};
+use calendar_application::{
+    Clock, DeletionPolicy, EventV1, IngestPolicy, SyncBatch, SyncMode, SyncRecord,
+};
 use sha2::{Digest, Sha256};
 
 /// More deletions than this, or emptying a non-empty source, needs separate administrator approval.
 pub const SNAPSHOT_DELETION_LIMIT: usize = 100;
 
-macro_rules! accepting_push {
+macro_rules! push_source {
     () => {
-        "s.config_revision>0 AND s.enabled=1 AND s.retired_at IS NULL AND json_extract(s.config_json,'$.enabled')=1 AND json_extract(s.config_json,'$.mode')='push-only' AND json_extract(s.config_json,'$.adapter')='standard-calendar' AND json_extract(s.config_json,'$.capabilities.snapshot')=1"
+        "s.config_revision>0 AND s.enabled=1 AND s.retired_at IS NULL AND json_extract(s.config_json,'$.enabled')=1 AND json_extract(s.config_json,'$.mode')='push-only' AND json_extract(s.config_json,'$.adapter')='standard-calendar'"
+    };
+}
+macro_rules! capability {
+    ($name:literal) => {
+        concat!(
+            "coalesce(json_extract(s.config_json,'$.capabilities.",
+            $name,
+            "')=1,0)"
+        )
     };
 }
 
@@ -23,7 +34,7 @@ pub enum EnvelopeError {
     Denied,
     #[error("invalid batch")]
     Invalid,
-    #[error("source is not an enabled push-only snapshot source")]
+    #[error("source is not an enabled push-only source accepting this batch")]
     NotAccepting,
     #[error("base revision or idempotency conflict")]
     Conflict,
@@ -40,17 +51,37 @@ impl From<sqlx::Error> for EnvelopeError {
     }
 }
 
-/// One validated `mode=snapshot` envelope. `digest` is the server-computed SHA-256 of its JCS form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchMode {
+    /// A complete collection; absent events are deleted.
+    Snapshot,
+    /// Explicit changes against the persisted checkpoint of a complete baseline.
+    Delta { base_checkpoint: Option<String> },
+}
 #[derive(Debug, Clone)]
-pub struct SnapshotBatch {
+pub enum BatchOperation {
+    Upsert {
+        calendar_id: String,
+        event: Box<EventV1>,
+    },
+    /// Only in a delta; the event must exist at exactly this revision.
+    Delete {
+        external_uid: String,
+        expected_event_revision: i64,
+    },
+}
+/// One validated single-page envelope. `digest` is the server SHA-256 of its JCS form.
+#[derive(Debug, Clone)]
+pub struct EnvelopeBatch {
     pub source_id: String,
     pub key: String,
     pub digest: [u8; 32],
     pub batch_id: String,
+    pub mode: BatchMode,
     pub base_config_revision: i64,
     pub base_source_revision: i64,
     pub proposed_checkpoint: Option<String>,
-    pub records: Vec<SyncRecord>,
+    pub operations: Vec<BatchOperation>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchReceipt {
@@ -69,6 +100,20 @@ pub struct PushSourceState {
 }
 
 type SourceRow = (i64, i64, Option<String>, Option<i64>, bool);
+#[derive(sqlx::FromRow)]
+struct Authorized {
+    id: String,
+    can_upsert: bool,
+    can_delete: bool,
+    config_revision: i64,
+    revision: i64,
+    checkpoint: Option<String>,
+    has_snapshot: bool,
+    push: bool,
+    snapshot: bool,
+    delta: bool,
+    delete: bool,
+}
 
 impl Storage {
     pub async fn push_source_state(
@@ -81,8 +126,13 @@ impl Storage {
         let mut tx = self.pool.begin().await?;
         let now = clock.utc_now_ms();
         let row: Option<SourceRow> = sqlx::query_as(concat!(
-            "SELECT s.config_revision,s.revision,s.committed_checkpoint,s.snapshot_revision,",
-            accepting_push!(),
+            "SELECT s.config_revision,s.revision,s.committed_checkpoint,s.snapshot_revision,(",
+            push_source!(),
+            ") AND (",
+            capability!("snapshot"),
+            " OR ",
+            capability!("delta"),
+            ")",
             " FROM api_tokens t JOIN sources s ON s.id=t.source_id WHERE t.token_digest=? ",
             "AND t.source_id=? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>?)"
         ))
@@ -105,10 +155,10 @@ impl Storage {
         })
     }
 
-    pub async fn ingest_snapshot_batch(
+    pub async fn ingest_batch(
         &self,
         secret: &[u8],
-        batch: SnapshotBatch,
+        batch: EnvelopeBatch,
         policy: IngestPolicy,
         clock: &impl Clock,
     ) -> Result<BatchReceipt, EnvelopeError> {
@@ -121,14 +171,39 @@ impl Storage {
         }
         let token_hash = digest("api", secret).map_err(|_| EnvelopeError::Denied)?;
         let key = Sha256::digest(batch.key.as_bytes()).to_vec();
+        let snapshot = batch.mode == BatchMode::Snapshot;
+        let mut expected = Vec::new();
+        let mut records = Vec::with_capacity(batch.operations.len());
+        for operation in batch.operations {
+            records.push(match operation {
+                BatchOperation::Upsert { calendar_id, event } => {
+                    SyncRecord::Upsert { calendar_id, event }
+                }
+                BatchOperation::Delete {
+                    external_uid,
+                    expected_event_revision,
+                } => {
+                    if snapshot || expected_event_revision < 1 {
+                        return Err(EnvelopeError::Invalid);
+                    }
+                    expected.push((external_uid.clone(), expected_event_revision));
+                    SyncRecord::Delete { external_uid }
+                }
+            });
+        }
+        let upserts = records.len() > expected.len();
         let mut sync = SyncBatch {
             source_id: batch.source_id.clone(),
             base_revision: batch.base_source_revision,
-            mode: SyncMode::FullSnapshot {
-                complete: true,
-                deletion_policy: DeletionPolicy::Limit(SNAPSHOT_DELETION_LIMIT),
+            mode: if snapshot {
+                SyncMode::FullSnapshot {
+                    complete: true,
+                    deletion_policy: DeletionPolicy::Limit(SNAPSHOT_DELETION_LIMIT),
+                }
+            } else {
+                SyncMode::Delta
             },
-            records: batch.records,
+            records,
             proposed_checkpoint: batch.proposed_checkpoint,
             verified_at: 0,
         };
@@ -140,25 +215,43 @@ impl Storage {
         let expires_at = now
             .checked_add(policy.retention_ms)
             .ok_or(EnvelopeError::Invalid)?;
-        // A snapshot deletes absent events, so it needs both write permissions.
-        let token: Option<(String, i64, i64, bool)> = sqlx::query_as(concat!(
-            "SELECT t.id,s.config_revision,s.revision,",
-            accepting_push!(),
-            " FROM api_tokens t JOIN sources s ON s.id=t.source_id WHERE t.token_digest=? ",
-            "AND t.source_id=? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>?) ",
-            "AND t.can_upsert=1 AND t.can_delete=1"
+        let token: Option<Authorized> = sqlx::query_as(concat!(
+            "SELECT t.id,t.can_upsert,t.can_delete,s.config_revision,s.revision,",
+            "s.committed_checkpoint AS checkpoint,s.snapshot_revision IS NOT NULL AS has_snapshot,(",
+            push_source!(),
+            ") AS push,",
+            capability!("snapshot"),
+            " AS snapshot,",
+            capability!("delta"),
+            " AS delta,",
+            capability!("delete"),
+            " AS \"delete\" FROM api_tokens t JOIN sources s ON s.id=t.source_id WHERE t.token_digest=? ",
+            "AND t.source_id=? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>?)"
         ))
         .bind(token_hash)
         .bind(&batch.source_id)
         .bind(now)
         .fetch_optional(&mut *tx)
         .await?;
-        let (token_id, config_revision, source_revision, accepting) =
-            token.ok_or(EnvelopeError::Denied)?;
+        let source = token.ok_or(EnvelopeError::Denied)?;
+        let deletes = !expected.is_empty();
+        // A snapshot deletes absent events, so it needs both permissions; a delta needs the
+        // permission of each kind of operation it contains.
+        if ((snapshot || upserts) && !source.can_upsert)
+            || ((snapshot || deletes) && !source.can_delete)
+        {
+            return Err(EnvelopeError::Denied);
+        }
         // Checked before any receipt: a disabled or retired source cannot replay one.
-        if !accepting {
+        let accepts = if snapshot {
+            source.snapshot
+        } else {
+            source.delta && (!deletes || source.delete)
+        };
+        if !source.push || !accepts {
             return Err(EnvelopeError::NotAccepting);
         }
+        let token_id = source.id;
         sqlx::query("DELETE FROM envelope_receipts WHERE expires_at<=?")
             .bind(now)
             .execute(&mut *tx)
@@ -191,10 +284,30 @@ impl Storage {
         if live >= policy.max_records {
             return Err(EnvelopeError::Capacity);
         }
-        if config_revision != batch.base_config_revision || source_revision != sync.base_revision {
+        if source.config_revision != batch.base_config_revision
+            || source.revision != sync.base_revision
+        {
             return Err(EnvelopeError::Conflict);
         }
-        if prepared.is_empty() {
+        if let BatchMode::Delta { base_checkpoint } = &batch.mode {
+            // A delta applies only on top of a complete baseline at the persisted checkpoint.
+            if !source.has_snapshot || *base_checkpoint != source.checkpoint {
+                return Err(EnvelopeError::Conflict);
+            }
+            for (uid, revision) in &expected {
+                let current: Option<i64> = sqlx::query_scalar(
+                    "SELECT revision FROM events WHERE source_id=? AND external_uid=?",
+                )
+                .bind(&batch.source_id)
+                .bind(uid)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if current != Some(*revision) {
+                    return Err(EnvelopeError::Conflict);
+                }
+            }
+        }
+        if snapshot && prepared.is_empty() {
             let current: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM events WHERE source_id=? AND deleted_at IS NULL",
             )
@@ -210,10 +323,10 @@ impl Storage {
             .await
             .map_err(|error| match error {
                 SyncError::ReviewRequired { .. } => EnvelopeError::ReviewRequired,
-                SyncError::Conflict | SyncError::SourceUnavailable => EnvelopeError::Conflict,
-                SyncError::Invalid(_) | SyncError::CalendarMismatch | SyncError::StaleSequence => {
-                    EnvelopeError::Invalid
+                SyncError::Conflict | SyncError::SourceUnavailable | SyncError::StaleSequence => {
+                    EnvelopeError::Conflict
                 }
+                SyncError::Invalid(_) | SyncError::CalendarMismatch => EnvelopeError::Invalid,
                 _ => EnvelopeError::Database,
             })?;
         let changed_events =
