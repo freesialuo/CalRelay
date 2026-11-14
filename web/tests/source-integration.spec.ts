@@ -288,9 +288,30 @@ test("ICS upload replaces a manual-static snapshot and is not offered for pull s
   });
   await expect(approve).toBeHidden();
   await choose("small.ics", ics(["only"]));
+  // While the upload is pending the chooser is locked, so the answer cannot be attributed to
+  // a file selected afterwards.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/snapshot", async (route) => {
+    await held;
+    await route.fallback();
+  });
+  await upload.click();
+  const chooser = page.getByLabel("ICS 文件", { exact: false });
+  await expect(chooser).toBeDisabled();
+  await expect(approve).toBeHidden();
+  release();
+  await expect(sourceStatus(page)).toContainText("需要确认");
+  await expect(chooser).toBeEnabled();
+  await page.unroute("**/snapshot");
+  expect(events(id)).toHaveLength(102);
+  // Choosing another file abandons the pending approval.
+  await choose("small.ics", ics(["only"]));
+  await expect(approve).toBeHidden();
   await upload.click();
   await expect(sourceStatus(page)).toContainText("需要确认");
-  expect(events(id)).toHaveLength(102);
   await page.getByRole("button", { name: "保留既有事件", exact: true }).click();
   await expect(approve).toBeHidden();
   expect(events(id)).toHaveLength(102);

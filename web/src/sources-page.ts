@@ -497,39 +497,63 @@ export function mountSources(
         approve,
         keep,
       );
-      const send = (ics: string, approved: boolean) =>
-        write(async (sourceId, signal) => {
-          const receipt = await api.uploadSnapshot(
-            sourceId,
-            record.config_revision,
-            ics,
-            signal,
-            approved,
-          );
-          if (disposed || signal.aborted) return;
-          if (receipt === "approval-required") {
-            awaitingApproval = ics;
-            approval.hidden = false;
-            display(
-              "需要确认：此文件会删除超过 100 个既有事件；既有事件未改变。",
-              "error",
+      // Bumped whenever the chosen file changes, so a late answer for an earlier file can
+      // never arm the approval of a different one.
+      let fileGeneration = 0;
+      const send = async (
+        text: () => Promise<string>,
+        approved: boolean,
+      ): Promise<void> => {
+        const generation = fileGeneration;
+        // The chooser stays locked for the whole guarded write, including the file read.
+        file.disabled = true;
+        try {
+          await write(async (sourceId, signal) => {
+            const ics = await text();
+            if (disposed || signal.aborted) return;
+            const receipt = await api.uploadSnapshot(
+              sourceId,
+              record.config_revision,
+              ics,
+              signal,
+              approved,
             );
-            return;
-          }
-          settle();
-          file.value = "";
-          display(
-            `服务端已确认替换快照：来源修订 ${receipt.source_revision}，变更 ${receipt.changed_events} 个事件；文件中没有的既有事件已删除。这不代表已规划或发送提醒。`,
-            "success",
-          );
-        }, false);
-      file.addEventListener("change", settle);
+            if (disposed || signal.aborted) return;
+            if (receipt === "approval-required") {
+              if (generation !== fileGeneration) {
+                display("所选文件已更换，请重新上传。", "error");
+                return;
+              }
+              awaitingApproval = ics;
+              approval.hidden = false;
+              display(
+                "需要确认：此文件会删除超过 100 个既有事件；既有事件未改变。",
+                "error",
+              );
+              return;
+            }
+            settle();
+            file.value = "";
+            display(
+              `服务端已确认替换快照：来源修订 ${receipt.source_revision}，变更 ${receipt.changed_events} 个事件；文件中没有的既有事件已删除。这不代表已规划或发送提醒。`,
+              "success",
+            );
+          }, false);
+        } finally {
+          if (file.isConnected) file.disabled = false;
+        }
+      };
+      file.addEventListener("change", () => {
+        fileGeneration++;
+        settle();
+      });
       keep.addEventListener("click", () => {
         settle();
         display("已取消；既有事件未改变。", "success");
       });
       approve.addEventListener("click", () => {
-        if (awaitingApproval !== undefined) void send(awaitingApproval, true);
+        const ics = awaitingApproval;
+        if (ics !== undefined) void send(async () => ics, true);
       });
       upload.addEventListener("click", () => {
         const chosen = file.files?.[0];
@@ -541,26 +565,20 @@ export function mountSources(
           return;
         }
         settle();
-        void chosen.arrayBuffer().then(
-          (bytes) => {
-            // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
-            let ics: string;
-            try {
-              ics = new TextDecoder("utf-8", {
-                fatal: true,
-                ignoreBOM: true,
-              }).decode(bytes);
-            } catch {
-              display(
-                "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
-                "error",
-              );
-              return;
-            }
-            if (!disposed) void send(ics, false);
-          },
-          () => display("无法读取所选文件，未上传。", "error"),
-        );
+        void send(async () => {
+          // File.text() would replace invalid bytes with U+FFFD and upload altered identities.
+          try {
+            return new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: true,
+            }).decode(await chosen.arrayBuffer());
+          } catch {
+            throw new AdminFailure(
+              "invalid",
+              "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
+            );
+          }
+        }, false);
       });
       const section = node("section");
       section.append(
