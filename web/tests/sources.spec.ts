@@ -1247,3 +1247,62 @@ test("revoking a token needs confirmation and re-reads the list", async ({
     "/api/admin/v1/sources/source_a/tokens/pt_live/revoke",
   );
 });
+
+test("an unparsable expiry is refused instead of issuing a token without expiry", async ({
+  page,
+}) => {
+  const calls = await tokenBackend(page, pushConfig(), () => ({ status: 500 }));
+  await page.getByLabel("有效天数（留空表示不过期）").pressSequentially("1e");
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("有效天数须为");
+  expect(calls).toHaveLength(0);
+});
+
+test("a superseded token list response never overwrites a newer one", async ({
+  page,
+}) => {
+  const gate = hold();
+  let reads = 0;
+  let revoked = false;
+  await tokenBackend(page, pushConfig(), (method) => {
+    if (method === "POST") {
+      revoked = true;
+      return { status: 204 };
+    }
+    reads++;
+    const items = [
+      { ...liveToken, revoked_at: revoked ? 1_800_000_000_001 : null },
+    ];
+    return { status: 200, json: { items, more: false } };
+  });
+  // Delay the second read: it answers with the pre-revocation list.
+  await page.route(
+    /\/api\/admin\/v1\/sources\/source_a\/tokens$/,
+    async (route) => {
+      if (reads === 1) {
+        reads++;
+        await gate.held;
+        return route.fulfill({
+          status: 200,
+          json: { items: [liveToken], more: false },
+        });
+      }
+      return route.fallback();
+    },
+  );
+  const reload = page.getByRole("button", { name: "读取令牌", exact: true });
+  await reload.click();
+  await expect(tokenList(page)).toContainText("有效");
+  await reload.click();
+  await page.getByRole("button", { name: "撤销 pt_live", exact: true }).click();
+  await page
+    .getByRole("button", { name: "确认撤销 pt_live", exact: true })
+    .click();
+  await expect(tokenList(page)).toContainText("已撤销");
+  gate.release();
+  await page.waitForTimeout(200);
+  await expect(tokenList(page)).toContainText("已撤销");
+  await expect(
+    page.getByRole("button", { name: "撤销 pt_live", exact: true }),
+  ).toHaveCount(0);
+});

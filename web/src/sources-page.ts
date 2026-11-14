@@ -698,12 +698,21 @@ export function mountSources(
           button.dataset.blocked = String(blocked);
         authorize();
       };
+      // Only the latest read may render: an earlier, slower answer must never replace the list
+      // read after a revocation.
+      let tokenRead: AbortController | undefined;
       const readTokens = async (sourceId: string) => {
+        tokenRead?.abort();
         const controller = new AbortController();
+        tokenRead = controller;
         requests.add(controller);
         try {
           const page = await api.tokens(sourceId, controller.signal);
-          if (!disposed && !controller.signal.aborted)
+          if (
+            !disposed &&
+            tokenRead === controller &&
+            !controller.signal.aborted
+          )
             render(page.items, page.more);
         } catch (error) {
           if (!disposed && !controller.signal.aborted)
@@ -726,7 +735,8 @@ export function mountSources(
           return;
         }
         let expires: number | null = null;
-        if (days.value !== "") {
+        // A partly typed number reads as "" but must not mean "never expires".
+        if (days.validity.badInput || days.value !== "") {
           const count = Number(days.value);
           if (!Number.isInteger(count) || count < 1 || count > 3650) {
             display("有效天数须为 1–3650 的整数，或留空。", "error");
