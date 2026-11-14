@@ -170,6 +170,7 @@ fn request(f: &PlanningConfiguration) -> PlanningRequest {
         horizon_ms: 86_400_000,
         max_lead_ms: 604_800_000,
         extension_interval_ms: 300_000,
+        catch_up_ms: 900_000,
         tzdata_version: "2025b".into(),
         limits: PlanningLimits {
             max_occurrences: 100,

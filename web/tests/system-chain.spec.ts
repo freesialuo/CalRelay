@@ -48,6 +48,24 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   await login(page);
   const a = await source(page, "ics:pull", logicalEndpoints.a, true);
   const b = await source(page, "ics:pull", logicalEndpoints.b, false);
+  // A manual-static source has no URL: its only event arrives through the browser upload.
+  const c = await source(page);
+  const due = (state().initial_utc ?? Date.now() - 30000) + 60000;
+  const stamp = new Date(due)
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d+Z$/, "Z");
+  await page.getByLabel("ICS 文件", { exact: false }).setInputFiles({
+    name: "static.ics",
+    mimeType: "text/calendar",
+    buffer: Buffer.from(
+      `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:uploaded\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:${stamp}\r\nSUMMARY:Uploaded synthetic calendar\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`,
+    ),
+  });
+  await page
+    .getByRole("button", { name: "上传并替换快照", exact: true })
+    .click();
+  await expect(status(page)).toContainText("变更 1 个事件");
   const outputId = await output(page);
   await page
     .getByLabel("Bark HTTPS origin", { exact: false })
@@ -60,7 +78,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   await page.getByLabel("名称", { exact: true }).fill("系统双源规则");
   await page.getByLabel("提前提醒（秒）").fill("0");
   await page.getByRole("button", { name: "读取来源选项", exact: true }).click();
-  for (const s of [a, b]) {
+  for (const s of [a, b, c]) {
     await page
       .getByRole("combobox", { name: "选择来源", exact: true })
       .selectOption(s.id);
@@ -104,7 +122,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       },
       { timeout: 10000, intervals: [100, 250, 500] },
     )
-    .toEqual({ events: 2, watermarks: 2 });
+    .toEqual({ events: 3, watermarks: 3 });
   const clock = state();
   function frame(utc: number) {
     if (!clock.clock_file) throw new Error("Missing controlled clock");
@@ -123,10 +141,10 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   await expect
     .poll(observed, { timeout: 75000, intervals: [100, 250, 500] })
     .toMatchObject({
-      events: 2,
-      watermarks: 2,
-      accepted: 2,
-      accepted_logical: 2,
+      events: 3,
+      watermarks: 3,
+      accepted: 3,
+      accepted_logical: 3,
     });
   const feed = await request.get(capability);
   expect(feed.status()).toBe(200);
@@ -157,7 +175,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
         { timeout: 3000 },
       )
       .toBe(503);
-    expect(observed().accepted).toBe(2);
+    expect(observed().accepted).toBe(3);
     // Management authentication keeps real UTC despite business time movement.
     expect((await page.request.get("/api/admin/v1/sources")).status()).toBe(
       200,
@@ -175,7 +193,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       (r: { kind: string; status: number }) =>
         r.kind === "bark" && r.status === 200,
     ),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   for (const source of ["a", "b"])
     expect(
       network.requests.filter(

@@ -156,6 +156,130 @@ test("real guard and SQLite source lifecycle survives browser refresh", async ({
   ).toEqual([0, 0]);
 });
 
+test("manual refresh is offered only for enabled pull sources and records one request", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await create(page);
+  const refresh = page.getByRole("button", {
+    name: "请求立即刷新",
+    exact: true,
+  });
+  await expect(refresh).toHaveCount(0);
+  await page.getByLabel("启用来源", { exact: true }).check();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 2");
+  const pending = () =>
+    JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,json,sys; db=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps(db.execute('SELECT config_revision,sequence FROM source_refresh_requests WHERE source_id=?',(sys.argv[2],)).fetchall()))",
+          state().database,
+          id,
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  expect(pending()).toEqual([]);
+  await refresh.click();
+  await expect(sourceStatus(page)).toContainText("服务端已记录刷新请求");
+  await expect(sourceStatus(page)).toContainText("不代表同步已执行或成功");
+  expect(pending()).toEqual([[2, 1]]);
+  await refresh.click();
+  await expect(sourceStatus(page)).toContainText("服务端已记录刷新请求");
+  expect(pending()).toEqual([[2, 2]]);
+});
+
+test("ICS upload replaces a manual-static snapshot and is not offered for pull sources", async ({
+  page,
+}) => {
+  await login(page);
+  const upload = page.getByRole("button", {
+    name: "上传并替换快照",
+    exact: true,
+  });
+  const pull = await create(page);
+  await page.getByLabel("启用来源", { exact: true }).check();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 2");
+  await expect(upload).toHaveCount(0);
+  const id = `source_${crypto.randomUUID().replaceAll("-", "")}`;
+  await page.getByRole("button", { name: "创建来源", exact: true }).click();
+  await page.getByLabel("稳定来源 ID").fill(id);
+  await page.getByLabel("名称", { exact: true }).fill("静态上传来源");
+  await page.getByLabel("来源类型与更新方式").selectOption("ics:manual-static");
+  await page.getByLabel("远端日历 external_id").fill("primary");
+  await page.getByRole("button", { name: "保存禁用来源", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 1");
+  await expect(upload).toHaveCount(0);
+  await page.getByLabel("启用来源", { exact: true }).check();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 2");
+  const events = (source: string) =>
+    JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,json,sys; db=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps(sorted(r[0] for r in db.execute('SELECT external_uid FROM events WHERE source_id=? AND deleted_at IS NULL',(sys.argv[2],)))))",
+          state().database,
+          source,
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  const ics = (uids: string[]) =>
+    Buffer.from(
+      `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n${uids
+        .map(
+          (uid) =>
+            `BEGIN:VEVENT\r\nUID:${uid}\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20991102T170000Z\r\nSUMMARY:Synthetic ${uid}\r\nEND:VEVENT\r\n`,
+        )
+        .join("")}END:VCALENDAR\r\n`,
+    );
+  const choose = (name: string, buffer: Buffer) =>
+    page
+      .getByLabel("ICS 文件", { exact: false })
+      .setInputFiles({ name, mimeType: "text/calendar", buffer });
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("请先选择 ICS 文件");
+  await choose("first.ics", ics(["one", "two"]));
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("变更 2 个事件");
+  await expect(sourceStatus(page)).toContainText("不代表已规划或发送提醒");
+  expect(events(id)).toEqual(["one", "two"]);
+  await choose("broken.ics", Buffer.from("BEGIN:VCALENDAR\r\nnot ics"));
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("既有事件未改变");
+  expect(events(id)).toEqual(["one", "two"]);
+  // Invalid UTF-8 must be refused locally, not rewritten to U+FFFD and committed.
+  let uploads = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/snapshot")) uploads++;
+  });
+  const valid = ics(["two", "three"]);
+  const at = valid.indexOf("three");
+  await choose(
+    "invalid-utf8.ics",
+    Buffer.concat([
+      valid.subarray(0, at),
+      Buffer.from([0xff]),
+      valid.subarray(at),
+    ]),
+  );
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("不是有效的 UTF-8");
+  expect(uploads).toBe(0);
+  expect(events(id)).toEqual(["one", "two"]);
+  await choose("second.ics", ics(["two", "three"]));
+  await upload.click();
+  await expect(sourceStatus(page)).toContainText("变更 2 个事件");
+  expect(events(id)).toEqual(["three", "two"]);
+  expect(events(pull)).toEqual([]);
+});
+
 test("source retirement discards invalid unsaved fields while saving still validates them", async ({
   page,
 }) => {

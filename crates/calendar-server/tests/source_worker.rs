@@ -111,6 +111,7 @@ struct Gate {
 #[derive(Default)]
 struct MockState {
     statuses: Mutex<BTreeMap<String, u16>>,
+    retry_after_s: Mutex<BTreeMap<String, u64>>,
     requests: Mutex<Vec<(String, bool)>>,
     gate: Mutex<Option<Arc<Gate>>>,
 }
@@ -156,9 +157,11 @@ impl Http {
                         } else {
                             status
                         };
+                        let retry = state.retry_after_s.lock().unwrap().get(&id).copied();
                         (
                             axum::http::StatusCode::from_u16(status).unwrap(),
                             [("etag", "\"same\"")],
+                            retry.map(|seconds| [("retry-after", seconds.to_string())]),
                             if status == 200 { ICS } else { "" },
                         )
                     }
@@ -246,10 +249,23 @@ impl RemoteFetcher for TestFetcher {
                 Ok(RemoteFetchOutcome::NotModified(validators))
             }
             304 => Err(RemoteFetchError::UnexpectedNotModified),
-            _ => Err(RemoteFetchError::Server {
-                status,
-                retry_after_ms: None,
-            }),
+            _ => {
+                let retry_after_ms = head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    let seconds: i64 = name
+                        .eq_ignore_ascii_case("retry-after")
+                        .then(|| value.trim().parse().ok())??;
+                    seconds.checked_mul(1000)
+                });
+                Err(if status == 429 {
+                    RemoteFetchError::RateLimited { retry_after_ms }
+                } else {
+                    RemoteFetchError::Server {
+                        status,
+                        retry_after_ms,
+                    }
+                })
+            }
         }
     }
 }
@@ -374,6 +390,179 @@ async fn failure_preserves_snapshot_and_backoff_does_not_block_another_source() 
     Ok(())
 }
 
+#[tokio::test]
+async fn upstream_retry_after_outlasts_the_local_backoff_cap_without_blocking_another_source(
+) -> Result {
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    let http = Http::new().await?;
+    source(&services, "a", SourceMode::Pull, true).await?;
+    source(&services, "b", SourceMode::Pull, true).await?;
+    let clock = Time::new();
+    let runner = http.runner();
+    let mut scanner = SourceScanner::new(limits(8));
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    let count = |id: &str| http.requests().iter().filter(|(r, _)| r == id).count();
+    // (status, Retry-After seconds, expected wait): an hour beats the 240 s local cap for 429 and
+    // 503, a one-second hint never undercuts the 60 s local backoff, and 30 days is bounded to 7.
+    let mut mono = 0;
+    for (status, seconds, wait) in [
+        (429, 3600, 3_600_000),
+        (503, 3600, 3_600_000),
+        (429, 1, 60_000),
+        (503, 2_592_000, 604_800_000),
+    ] {
+        mono += 60_000;
+        let before = services.storage.source_state("a").await?;
+        let set = |status| {
+            http.state
+                .statuses
+                .lock()
+                .unwrap()
+                .insert("a".into(), status)
+        };
+        set(status);
+        http.state
+            .retry_after_s
+            .lock()
+            .unwrap()
+            .insert("a".into(), seconds);
+        clock.set(1000 + mono as i64, mono);
+        let mut progress = vec![];
+        scanner
+            .round(&services, &runner, &clock, |p| progress.push(p))
+            .await?;
+        let expected = SourceRunError::Sync(IngestionError::RetryAfter {
+            retry_after_ms: seconds * 1000,
+        });
+        assert!(progress.iter().any(|p| matches!(
+            p,
+            SourceProgress::ExternalFailure { source_id, error }
+                if source_id == "a" && *error == expected
+        )));
+        assert_eq!(services.storage.source_state("a").await?, before);
+        let (a, b) = (count("a"), count("b"));
+        mono += wait;
+        clock.set(1000 + mono as i64 - 1, mono - 1);
+        scanner.round(&services, &runner, &clock, |_| {}).await?;
+        assert_eq!(count("a"), a, "{status} must wait {wait} ms");
+        if wait > 60_000 {
+            assert_eq!(count("b"), b + 1, "another source keeps its period");
+        }
+        set(200);
+        clock.set(1000 + mono as i64, mono);
+        scanner.round(&services, &runner, &clock, |_| {}).await?;
+        assert_eq!(count("a"), a + 1, "{status} may retry at the boundary");
+    }
+    services.drain().await;
+    Ok(())
+}
+#[tokio::test]
+async fn manual_refresh_skips_the_period_but_not_retry_after_and_only_for_pull_sources() -> Result {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("db");
+    let services = service(&path).await?;
+    let http = Http::new().await?;
+    source(&services, "a", SourceMode::Pull, true).await?;
+    source(&services, "b", SourceMode::Pull, true).await?;
+    source(&services, "disabled", SourceMode::Pull, false).await?;
+    source(&services, "push", SourceMode::PushOnly, true).await?;
+    source(&services, "static", SourceMode::ManualStatic, true).await?;
+    let db = &services.storage;
+    for id in ["disabled", "push", "static"] {
+        assert!(matches!(
+            db.request_source_refresh(id, 1).await,
+            Err(ConfigurationError::Conflict)
+        ));
+    }
+    assert!(matches!(
+        db.request_source_refresh("missing", 1).await,
+        Err(ConfigurationError::NotFound)
+    ));
+    let clock = Time::new();
+    let runner = http.runner();
+    // One-second scan wait and local floor, 240 s backoff cap, one-minute configured period.
+    let second = Duration::from_secs(1);
+    let limits = SourceScanLimits::new(
+        1,
+        8,
+        1024,
+        Duration::from_secs(120),
+        second,
+        second,
+        Duration::from_secs(240),
+    )
+    .unwrap();
+    let mut scanner = SourceScanner::new(limits);
+    let count = |id: &str| http.requests().iter().filter(|(r, _)| r == id).count();
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!((count("a"), count("b")), (1, 1));
+
+    // Repeats merge; the local floor after the last sync holds the request, then it is served
+    // long before the period while the other source is left alone.
+    db.request_source_refresh("a", 10).await?;
+    db.request_source_refresh("a", 11).await?;
+    let pending = db.source_refresh_request("a").await?.unwrap();
+    assert_eq!((pending.sequence, pending.requested_at), (2, 11));
+    clock.set(1999, 999);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 1);
+    assert!(db.source_refresh_request("a").await?.is_some());
+    clock.set(2000, 1000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!((count("a"), count("b")), (2, 1));
+    assert_eq!(db.source_refresh_request("a").await?, None);
+    clock.set(12000, 11000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 2, "a served request does not repeat");
+
+    // Upstream Retry-After outranks a manual request, which stays pending until the boundary.
+    http.state.statuses.lock().unwrap().insert("a".into(), 429);
+    http.state
+        .retry_after_s
+        .lock()
+        .unwrap()
+        .insert("a".into(), 100);
+    db.request_source_refresh("a", 12).await?;
+    clock.set(13000, 12000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 3);
+    db.request_source_refresh("a", 13).await?;
+    clock.set(112_999, 111_999);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 3);
+    assert!(db.source_refresh_request("a").await?.is_some());
+
+    // The request survives a restart, where the fresh scanner serves it at once.
+    drop(scanner);
+    services.drain().await;
+    let services = service(&path).await?;
+    let db = &services.storage;
+    assert!(db.source_refresh_request("a").await?.is_some());
+    http.state.statuses.lock().unwrap().insert("a".into(), 200);
+    let mut scanner = SourceScanner::new(limits);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(count("a"), 4);
+    assert_eq!(db.source_refresh_request("a").await?, None);
+
+    // A request made against a superseded configuration is dropped, not replayed later.
+    db.request_source_refresh("a", 14).await?;
+    let record = db.source_configuration("a").await?;
+    let mut config = record.configuration;
+    config.name = "renamed".into();
+    db.put_source_configuration(
+        "a",
+        ConfigurationCondition::Revision(record.config_revision),
+        config,
+        "test",
+        1000,
+    )
+    .await?;
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(db.source_refresh_request("a").await?, None);
+    services.drain().await;
+    Ok(())
+}
 #[tokio::test]
 async fn restart_reconstructs_remaining_period_and_handles_future_verified_time() -> Result {
     let dir = tempfile::tempdir()?;
