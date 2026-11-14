@@ -422,6 +422,28 @@ export function mountSources(
       });
       form.append(retire, confirmation);
     }
+    if (
+      record &&
+      !retired &&
+      record.configuration.enabled &&
+      record.configuration.mode === "pull"
+    ) {
+      const refreshNow = node("button", "请求立即刷新");
+      refreshNow.type = "button";
+      writes.add(refreshNow);
+      localWrites.add(refreshNow);
+      refreshNow.addEventListener("click", () => {
+        void write(async (sourceId, signal) => {
+          await api.refresh(sourceId, signal);
+          if (!disposed && !signal.aborted)
+            display(
+              "服务端已记录刷新请求，按已保存的配置在下一轮扫描执行；这不代表同步已执行或成功，结果请在诊断中查看。",
+              "success",
+            );
+        }, false);
+      });
+      form.append(refreshNow);
+    }
     if (retired)
       editor.append(
         node(

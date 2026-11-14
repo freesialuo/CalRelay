@@ -156,6 +156,42 @@ test("real guard and SQLite source lifecycle survives browser refresh", async ({
   ).toEqual([0, 0]);
 });
 
+test("manual refresh is offered only for enabled pull sources and records one request", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await create(page);
+  const refresh = page.getByRole("button", {
+    name: "请求立即刷新",
+    exact: true,
+  });
+  await expect(refresh).toHaveCount(0);
+  await page.getByLabel("启用来源", { exact: true }).check();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(sourceStatus(page)).toContainText("配置版本 2");
+  const pending = () =>
+    JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,json,sys; db=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps(db.execute('SELECT config_revision,sequence FROM source_refresh_requests WHERE source_id=?',(sys.argv[2],)).fetchall()))",
+          state().database,
+          id,
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  expect(pending()).toEqual([]);
+  await refresh.click();
+  await expect(sourceStatus(page)).toContainText("服务端已记录刷新请求");
+  await expect(sourceStatus(page)).toContainText("不代表同步已执行或成功");
+  expect(pending()).toEqual([[2, 1]]);
+  await refresh.click();
+  await expect(sourceStatus(page)).toContainText("服务端已记录刷新请求");
+  expect(pending()).toEqual([[2, 2]]);
+});
+
 test("source retirement discards invalid unsaved fields while saving still validates them", async ({
   page,
 }) => {

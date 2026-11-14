@@ -194,6 +194,40 @@ export class SourcesAPI {
       throw unknown();
     }
   }
+  /** Records a refresh request only; the receipt does not mean a sync ran or succeeded. */
+  async refresh(id: string, signal: AbortSignal): Promise<void> {
+    const response = await this.session.write(
+      `${path(id)}/refresh`,
+      "POST",
+      {},
+      undefined,
+      signal,
+    );
+    if (response.status === 409) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "conflict",
+        "来源当前不是已启用的可拉取来源，未记录刷新请求。请重新读取来源核实。",
+      );
+    }
+    await requireStatus(response, [202]);
+    try {
+      const data = await boundedJSON(response);
+      if (
+        !object(data) ||
+        Object.keys(data).length !== 2 ||
+        data.source_id !== id ||
+        !Number.isSafeInteger(data.requested_at)
+      )
+        throw unknown();
+    } catch {
+      this.session.clear();
+      throw new AdminFailure(
+        "unknown",
+        "响应不符合刷新回执契约。未确认请求已记录，请稍后在诊断中核实。",
+      );
+    }
+  }
   async retire(
     id: string,
     revision: number,
