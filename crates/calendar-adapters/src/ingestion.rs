@@ -1,9 +1,9 @@
 //! ICS and constrained JSON-pointer mapping, independently of SQLite.
 use crate::ics::{normalize_ics, IcsLimits};
 use calendar_application::{
-    IngestionError as E, RemoteAuthentication, RemoteFetchOutcome, RemoteFetchRequest,
-    RemoteFetcher, RemoteValidators, SourceAdapter, SourcePage, SourcePageOutcome, SourceState,
-    SyncRecord, MAX_BATCH_RECORDS,
+    IngestionError as E, RemoteAuthentication, RemoteFetchError, RemoteFetchOutcome,
+    RemoteFetchRequest, RemoteFetcher, RemoteValidators, SourceAdapter, SourcePage,
+    SourcePageOutcome, SourceState, SyncRecord, MAX_BATCH_RECORDS,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -107,7 +107,18 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
                 now_ms: now,
             })
             .await
-            .map_err(|_| E::Adapter)?;
+            .map_err(|error| match error {
+                RemoteFetchError::RateLimited {
+                    retry_after_ms: Some(ms),
+                }
+                | RemoteFetchError::Server {
+                    retry_after_ms: Some(ms),
+                    ..
+                } => E::RetryAfter {
+                    retry_after_ms: ms.max(0).unsigned_abs(),
+                },
+                _ => E::Adapter,
+            })?;
         let doc = match outcome {
             RemoteFetchOutcome::NotModified(_) => return Ok(SourcePageOutcome::NotModified),
             RemoteFetchOutcome::Modified(doc) => doc,

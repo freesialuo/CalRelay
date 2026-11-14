@@ -185,6 +185,8 @@ pub struct SourceRound {
     pub attempted: usize,
     pub end: SourceRoundEnd,
 }
+/// Longest honoured upstream wait: the largest configurable refresh interval (7 days).
+const MAX_RETRY_AFTER_MS: u64 = 604_800_000;
 struct Schedule {
     config_revision: i64,
     due: u64,
@@ -370,12 +372,19 @@ impl SourceScanner {
                         Err(error) => {
                             entry.failures = entry.failures.saturating_add(1);
                             let factor = 1_u64 << entry.failures.saturating_sub(1).min(63);
-                            entry.due = finished.saturating_add(
-                                self.limits
-                                    .backoff_ms
-                                    .saturating_mul(factor)
-                                    .min(self.limits.max_backoff_ms),
-                            );
+                            let local = self
+                                .limits
+                                .backoff_ms
+                                .saturating_mul(factor)
+                                .min(self.limits.max_backoff_ms);
+                            // Upstream Retry-After is a lower bound the local cap never shortens.
+                            let upstream = match error {
+                                SourceRunError::Sync(IngestionError::RetryAfter {
+                                    retry_after_ms,
+                                }) => retry_after_ms.min(MAX_RETRY_AFTER_MS),
+                                _ => 0,
+                            };
+                            entry.due = finished.saturating_add(local.max(upstream));
                             progress(SourceProgress::ExternalFailure {
                                 source_id: summary.source_id.clone(),
                                 error,
