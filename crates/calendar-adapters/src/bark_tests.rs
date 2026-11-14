@@ -159,6 +159,57 @@ async fn ac1_https_json_key_only_in_body_and_handle_reloaded_per_attempt() {
     }
     assert_eq!(output.credentials.calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn occurrence_override_text_reaches_bark_json_and_clear_falls_back_to_title() {
+    let cases = [
+        (
+            serde_json::json!({"title":"Changed title","description":"Changed body"}),
+            "Changed title",
+            "Changed body",
+        ),
+        (
+            serde_json::json!({"title":"Changed title"}),
+            "Changed title",
+            "Master body",
+        ),
+        (
+            serde_json::json!({"title":"Changed title","description":null}),
+            "Changed title",
+            "Changed title",
+        ),
+        (
+            serde_json::json!({"description":"Changed body"}),
+            "Master title",
+            "Changed body",
+        ),
+    ];
+    let mut server = server(vec![reply(200, "", r#"{"code":200}"#); cases.len()]).await;
+    let output = output(&server, None);
+    for (patch, title, body) in cases {
+        let mut envelope = envelope();
+        envelope.original_key = "utc:2026-11-02T17:00:00Z".into();
+        envelope.event = serde_json::from_value(serde_json::json!({
+            "schema_version":"1.0", "external_uid":"series", "title":"Master title",
+            "description":"Master body", "status":"confirmed",
+            "start":{"kind":"utc","value":"2026-11-02T17:00:00Z"}, "duration":"PT1H",
+            "recurrence":{"rrule":"FREQ=DAILY;COUNT=2", "exceptions":[{
+                "recurrence_id":{"kind":"utc","value":"2026-11-02T17:00:00Z"},
+                "range":"single", "change":{"kind":"override","patch":patch}
+            }]}
+        }))
+        .unwrap();
+        // The same domain projection is invoked by Storage::prepare after its fences.
+        envelope.event.apply_occurrence_text(&envelope.original_key);
+        assert_eq!(output.deliver(envelope).await, DeliveryOutcome::Accepted);
+        let request = server.received.recv().await.unwrap();
+        let (_, payload) = request.split_once("\r\n\r\n").unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+            serde_json::json!({"device_key":KEY,"title":title,"body":body})
+        );
+    }
+}
 #[tokio::test]
 async fn ac3_lost_response_then_explicit_retry_can_duplicate() {
     let mut server = server(vec![Vec::new(), reply(200, "", r#"{"code":200}"#)]).await;

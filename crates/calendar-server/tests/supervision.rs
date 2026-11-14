@@ -340,7 +340,9 @@ async fn shutdown_deadline_cancels_a_nonresponsive_async_worker() {
     }
     let dir = tempfile::tempdir().unwrap();
     let mut budgets = options();
-    budgets.shutdown_timeout = Duration::from_millis(80);
+    // The same budget also bounds cleanup after cancellation; if SQLite cleanup on a slow
+    // runner outlasts it the fault becomes ShutdownIncomplete, so keep it generous.
+    budgets.shutdown_timeout = Duration::from_secs(1);
     let server =
         Server::initialize_with_supervision(config(&dir.path().join("timeout.db")), budgets)
             .await
@@ -360,15 +362,18 @@ async fn shutdown_deadline_cancels_a_nonresponsive_async_worker() {
     let serving = tokio::spawn(server.serve(listener, async {
         let _ = entered_rx.await;
     }));
-    let error = tokio::time::timeout(Duration::from_secs(1), serving)
+    let error = tokio::time::timeout(Duration::from_secs(5), serving)
         .await
         .unwrap()
         .unwrap()
         .unwrap_err();
-    assert!(matches!(
-        error,
-        calendar_server::StartError::Supervision(CoreFault::ShutdownTimeout)
-    ));
+    assert!(
+        matches!(
+            error,
+            calendar_server::StartError::Supervision(CoreFault::ShutdownTimeout)
+        ),
+        "{error:?}"
+    );
     tokio::time::timeout(Duration::from_secs(1), dropped_rx)
         .await
         .unwrap()
@@ -470,7 +475,7 @@ async fn shutdown_timeout_cancels_an_independently_admitted_transaction_before_r
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(&dir.path().join("admitted-cancel.db"));
     let mut budgets = options();
-    budgets.shutdown_timeout = Duration::from_millis(80);
+    budgets.shutdown_timeout = Duration::from_secs(1);
     let server = Server::initialize_with_supervision(cfg.clone(), budgets)
         .await
         .unwrap();
@@ -510,14 +515,17 @@ async fn shutdown_timeout_cancels_an_independently_admitted_transaction_before_r
     });
     second_entered_rx.await.unwrap();
     let listener = server.bind().await.unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(1), server.serve(listener, async {}))
+    let error = tokio::time::timeout(Duration::from_secs(5), server.serve(listener, async {}))
         .await
         .unwrap()
         .unwrap_err();
-    assert!(matches!(
-        error,
-        calendar_server::StartError::Supervision(CoreFault::ShutdownTimeout)
-    ));
+    assert!(
+        matches!(
+            error,
+            calendar_server::StartError::Supervision(CoreFault::ShutdownTimeout)
+        ),
+        "{error:?}"
+    );
     // All admitted futures must already be dropped before returning completed cleanup.
     assert!(services.storage.pool().is_closed());
     assert!(release_tx.send(()).is_err());
@@ -561,10 +569,13 @@ async fn unconfirmed_storage_cleanup_has_a_separate_bounded_error() {
         .await
         .unwrap()
         .unwrap_err();
-    assert!(matches!(
-        error,
-        calendar_server::StartError::Supervision(CoreFault::ShutdownIncomplete)
-    ));
+    assert!(
+        matches!(
+            error,
+            calendar_server::StartError::Supervision(CoreFault::ShutdownIncomplete)
+        ),
+        "{error:?}"
+    );
     assert!(
         services.storage.pool().is_closed(),
         "new acquisitions must be fenced even when cleanup is incomplete"

@@ -42,7 +42,7 @@ export function sourceForm(configuration?: SourceConfiguration): {
   const mode = node("select");
   for (const [value, title] of [
     ["ics:pull", "ICS URL（定期读取）"],
-    ["ics:manual-static", "ICS 静态 / 手动（此页面暂不提供文件上传）"],
+    ["ics:manual-static", "ICS 静态 / 手动（启用后在来源详情上传文件）"],
     ["standard-calendar:push-only", "外部 producer 推送"],
     ["standard-calendar:manual-static", "标准日历手动来源"],
   ]) {

@@ -61,6 +61,12 @@ TDD 记录：
 | AC2：无效重复实例、时区绑定与有限窗口/数量预算 | 跨 DST（含午夜跳变）保持当地时间；`floating`/`date` 须提供 `calendar_tzid`；窗口/次数/步数超限显式报错 | `ac2_dst_transitions_and_timezone_bindings_preserve_local_wall_clock`、`ac2_finite_window_and_quantity_or_iteration_budgets_fail_explicitly` |
 | AC3：记录选型及未通过项显式拒绝，不扩大当前 `RRULE` 校验声明 | `validate_event` 边界不变，`expand_occurrences` 对未验证子句返回 `UnsupportedRrule` | `ac3_unverified_rrule_clauses_and_ranges_are_explicitly_rejected_without_widening_validator` |
 
+### RRULE 落入 DST 空缺的实例（#129）
+
+RFC 5545 §3.3.10 对此有两句相互矛盾的规定：一句要求“不存在的本地时间”实例 MUST be ignored 且不计入集合；另一句要求本地开始时间不存在或重复的实例按 §3.3.5 的显式 DATE-TIME 规则解释。本项目采用后者：空缺实例使用跳变前偏移解析（Vancouver 每日 02:30 在 2026-03-08 落在 10:30Z，即当地 03:30），照常生成并计入 `COUNT`。只有不存在的日历日（如 2 月 30 日）被跳过且不扣减 `COUNT`。
+
+理由：提醒产品不应在换时当天静默漏掉每日提醒；该读法与 ical.net 维护者在 [ical-org/ical.net#681](https://github.com/ical-org/ical.net/issues/681) 的结论及其记录的 Google Calendar 行为一致（本项目未自行测试 Google Calendar）。黄金样例 `ac2_dst_transitions_and_timezone_bindings_preserve_local_wall_clock` 固定此行为（含 Havana 午夜空缺）。#129 提出的“跳过且不计数”因此不采纳，未改动实现。
+
 TDD 记录：
 
 - Red：先定义 `expand_occurrences` 入口与 `tests/recurrence_golden.rs` 6 项测试，占位实现仅返回单次母事件；运行 `cargo test -p calendar-domain --test recurrence_golden --locked`，0 通过、6 失败（未展开候选序列、未应用 `EXDATE`/`RDATE PERIOD`/例外、未拒绝 `FREQ=HOURLY` 与超预算请求）。
