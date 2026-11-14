@@ -21,3 +21,4 @@ web/playwright-report/
 /deployment.json
 
 web/.test-admin-state.json
+.claude/
