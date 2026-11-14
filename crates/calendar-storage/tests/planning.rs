@@ -60,6 +60,7 @@ fn request(revision: i64) -> PlanningRequest {
         horizon_ms: 30 * DAY,
         max_lead_ms: 7 * DAY,
         extension_interval_ms: 300_000,
+        catch_up_ms: 900_000,
         tzdata_version: "2025b".into(),
         limits: PlanningLimits {
             max_occurrences: 100,

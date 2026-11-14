@@ -28,7 +28,7 @@ Stack：父层 [#55 / #26](https://github.com/freesialuo/CalRelay/pull/55) 提�
 | 其他（含 206） | Status，显式拒绝 |
 | DNS/超时/连接或截断/大小/协议 | 各自类型化错误，不产生部分文档 |
 
-Retry-After 支持非负秒数和 HTTP 日期，按注入的 now_ms 转为毫秒；过去日期返回 0，溢出/无效值返回 None。304 不推进 checkpoint 或自行更新数据库；下游需合并缺省验证器并绑定真实快照状态，不能用任意缓存存在冒充已提交快照。
+Retry-After 支持非负秒数和 HTTP 日期，按注入的 now_ms 转为毫秒；过去日期返回 0，溢出/无效值返回 None。来源扫描器对该值的调度见[运行时来源扫描](runtime-source-scanning.md)。304 不推进 checkpoint 或自行更新数据库；下游需合并缺省验证器并绑定真实快照状态，不能用任意缓存存在冒充已提交快照。
 
 ## 验收与验证
 

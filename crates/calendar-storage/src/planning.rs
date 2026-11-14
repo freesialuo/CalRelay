@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::Storage;
 
-// generation, event/rule/output revisions, due time, state, interpretation context
-type JobVersion = (i64, i64, i64, i64, i64, String, Option<String>);
+// generation, event/rule/output revisions, due time, state, interpretation context, deadline
+type JobVersion = (i64, i64, i64, i64, i64, String, Option<String>, Option<i64>);
 
 fn parse_timezone_policy(raw: &str) -> Result<Option<String>, PlanningError> {
     let val: Value = serde_json::from_str(raw)
@@ -318,7 +318,7 @@ impl ReminderPlanner for Storage {
             check_budget()?;
 
             let latest_job: Option<JobVersion> = sqlx::query_as(
-                "SELECT generation, event_revision, rule_revision, output_revision, due_at, state, planning_context
+                "SELECT generation, event_revision, rule_revision, output_revision, due_at, state, planning_context, deadline_at
                  FROM delivery_jobs
                  WHERE logical_delivery_id = ?
                  ORDER BY generation DESC
@@ -330,10 +330,10 @@ impl ReminderPlanner for Storage {
             .map_err(db_err)?;
             check_budget()?;
 
-            let next_generation = match latest_job {
-                None => 1,
-                Some((_, _, _, _, _, ref state, _)) if state == "accepted" => continue,
-                Some((_, ev_rev, r_rev, o_rev, due, ref state, ref old_context))
+            let (next_generation, deadline_at) = match latest_job {
+                None => (1, None),
+                Some((_, _, _, _, _, ref state, _, _)) if state == "accepted" => continue,
+                Some((_, ev_rev, r_rev, o_rev, due, ref state, ref old_context, _))
                     if matches!(
                         state.as_str(),
                         "pending" | "retry_wait" | "leased" | "failed_permanent" | "expired"
@@ -357,7 +357,7 @@ impl ReminderPlanner for Storage {
                     }
                     continue;
                 }
-                Some((gen, _, _, _, _, _, _)) => {
+                Some((gen, _, _, _, due, _, _, deadline)) => {
                     sqlx::query(
                         "UPDATE delivery_jobs SET state = 'superseded'
                          WHERE logical_delivery_id = ? AND state IN ('pending', 'retry_wait', 'leased')",
@@ -367,14 +367,18 @@ impl ReminderPlanner for Storage {
                     .await
                     .map_err(db_err)?;
                     check_budget()?;
-                    gen.checked_add(1).ok_or(PlanningError::InvalidWindow)?
+                    // An unchanged due time keeps any persisted deadline; never extend it.
+                    (
+                        gen.checked_add(1).ok_or(PlanningError::InvalidWindow)?,
+                        deadline.filter(|_| due == occ.due_at),
+                    )
                 }
             };
 
             sqlx::query(
                 "INSERT INTO delivery_jobs(
-                     id, logical_delivery_id, generation, event_revision, rule_revision, output_revision, due_at, state, next_attempt_at, planning_context
-                 ) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                     id, logical_delivery_id, generation, event_revision, rule_revision, output_revision, due_at, state, next_attempt_at, planning_context, deadline_at
+                 ) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
             )
             .bind(&logical_id)
             .bind(next_generation)
@@ -384,6 +388,7 @@ impl ReminderPlanner for Storage {
             .bind(occ.due_at)
             .bind(occ.due_at)
             .bind(context)
+            .bind(deadline_at)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;

@@ -34,9 +34,12 @@ impl Storage {
         ).bind(id).fetch_optional(&mut *tx).await.map_err(|_| Error::Storage)?;
         let (config, retired_at, last_verified_at, snapshot_revision) =
             row.ok_or(Error::NotFound)?;
-        let configuration: SourceConfigurationV1 =
+        let mut configuration: SourceConfigurationV1 =
             serde_json::from_str(&config).map_err(|_| Error::Storage)?;
         configuration.validate().map_err(|_| Error::Storage)?;
+        if retired_at.is_some() {
+            configuration.enabled = false;
+        }
         let mut deliveries: Vec<DeliveryDiagnostic> = sqlx::query_as(
             "SELECT j.id AS job_id,l.rule_id,l.output_id,j.state,j.due_at,j.next_attempt_at,l.accepted_at,a.outcome AS last_outcome,a.started_at,a.sent_at,a.finished_at FROM delivery_jobs j JOIN logical_deliveries l ON l.id=j.logical_delivery_id JOIN events e ON e.id=l.event_id LEFT JOIN delivery_attempts a ON a.id=(SELECT x.id FROM delivery_attempts x WHERE x.job_id=j.id ORDER BY x.attempt_no DESC LIMIT 1) WHERE e.source_id=? ORDER BY j.rowid DESC LIMIT 21"
         ).bind(id).fetch_all(&mut *tx).await.map_err(|_| Error::Storage)?;

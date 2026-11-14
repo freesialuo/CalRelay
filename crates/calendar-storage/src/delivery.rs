@@ -421,8 +421,9 @@ impl DeliveryRepository for Storage {
             .execute(&mut *tx)
             .await
             .map_err(db_error)?;
-        let event =
+        let mut event: calendar_application::EventV1 =
             serde_json::from_str(&job.document_json).map_err(|_| DeliveryError::InvalidData)?;
+        event.apply_occurrence_text(&job.original_key);
         tx.commit().await.map_err(db_error)?;
         Ok(Some(DeliveryEnvelope {
             job_id: job.id,

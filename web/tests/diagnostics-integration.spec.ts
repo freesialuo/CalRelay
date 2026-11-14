@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
-import { login, source } from "./support/journey";
+import { login, source, status } from "./support/journey";
 
 const database = () =>
   JSON.parse(
@@ -71,6 +71,31 @@ test("real guarded diagnostics deny capabilities, show empty instance and missin
   expect(
     (await page.request.get("/api/admin/v1/sources/none/diagnostics")).status(),
   ).toBe(404);
+});
+test("retired source diagnostics agree with the current configuration", async ({
+  page,
+}) => {
+  await login(page);
+  const s = await source(page);
+  const path = `/api/admin/v1/sources/${s.id}`;
+  const before = await (await page.request.get(`${path}/diagnostics`)).json();
+  expect(before.enabled).toBe(true);
+  expect(before.retired_at).toBeNull();
+
+  await page.getByRole("button", { name: "退休来源", exact: true }).click();
+  await page.getByRole("button", { name: "确认永久退休", exact: true }).click();
+  await expect(status(page)).toContainText("服务端已确认永久退休");
+  const saved = await (await page.request.get(path)).json();
+  const response = await page.request.get(`${path}/diagnostics`);
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  const diagnostic = await response.json();
+  expect(saved.configuration.enabled).toBe(false);
+  expect(saved.retired_at).toBeGreaterThan(0);
+  expect(diagnostic.enabled).toBe(saved.configuration.enabled);
+  expect(diagnostic.retired_at).toBe(saved.retired_at);
+  const card = await open(page, s.id);
+  await expect(card).toContainText("来源状态：已退休");
 });
 test("real SQLite success, retry, unknown and failure are safe read-only projections", async ({
   page,

@@ -381,6 +381,71 @@ test("expired and empty subscriptions are bounded explicit configurations and mo
   });
 });
 
+test("subscription expiry rejects invalid calendar dates and clock times before writing", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await subscriptionDraft(page);
+  let writes = 0;
+  page.on("request", (request) => {
+    if (request.method() === "PUT") writes++;
+  });
+  const expiry = page.getByLabel("到期时间", { exact: false });
+  for (const value of [
+    "2027-02-29T00:00:00Z",
+    "2100-02-29T00:00:00Z",
+    "2028-04-31T00:00:00Z",
+    "2028-01-01T24:00:00Z",
+    "2028-00-01T00:00:00Z",
+    "2028-13-01T00:00:00Z",
+    "2028-01-00T00:00:00Z",
+    "2028-01-32T00:00:00Z",
+    "2028-01-01T12:60:00Z",
+    "2028-01-01T12:00:60Z",
+  ]) {
+    await expiry.fill(value);
+    await page
+      .getByRole("button", { name: "保存禁用订阅", exact: true })
+      .click();
+    await expect(status(page)).toContainText(
+      "到期时间须为有效 UTC ISO 8601 时间",
+    );
+    await expect(expiry).toHaveValue(value);
+    expect(writes, value).toBe(0);
+    expect(persisted(id), value).toBeNull();
+  }
+});
+
+test("subscription expiry preserves leap days and UTC minute second millisecond precision", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await subscriptionDraft(page);
+  const cases: [string, number | null][] = [
+    ["2028-02-29T12:34Z", Date.UTC(2028, 1, 29, 12, 34)],
+    ["2028-02-29T12:34:56Z", Date.UTC(2028, 1, 29, 12, 34, 56)],
+    ["2028-02-29T12:34:56.1Z", Date.UTC(2028, 1, 29, 12, 34, 56, 100)],
+    ["2028-02-29T12:34:56.12Z", Date.UTC(2028, 1, 29, 12, 34, 56, 120)],
+    ["2028-02-29T12:34:56.123Z", Date.UTC(2028, 1, 29, 12, 34, 56, 123)],
+    ["2000-02-29T00:00:00Z", Date.UTC(2000, 1, 29)],
+    ["", null],
+  ];
+  for (const [index, [value, expected]] of cases.entries()) {
+    await page.getByLabel("到期时间", { exact: false }).fill(value);
+    if (index === 0) {
+      await saveSubscription(page);
+      await dismissSecret(page);
+    } else {
+      await page.getByRole("button", { name: "保存配置", exact: true }).click();
+      await expect(status(page)).toContainText(`配置版本 ${index + 1}`);
+    }
+    expect(persisted(id).configuration.expires_at, value).toBe(expected);
+    await expect(page.getByLabel("到期时间", { exact: false })).toHaveValue(
+      expected === null ? "" : new Date(expected).toISOString(),
+    );
+  }
+});
+
 test("output requires an existing CLI handle and invalid reference cannot claim saved", async ({
   page,
 }) => {

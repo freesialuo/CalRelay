@@ -468,13 +468,18 @@ export function configurationForm<K extends Kind>(
     ),
   );
   return () => {
-    const time = expiry.value ? Date.parse(expiry.value) : null;
-    if (
-      expiry.value &&
-      (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?Z$/.test(
+    const time = expiry.value ? new Date(expiry.value) : null;
+    const parts =
+      /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)(?::(\d\d)(?:\.(\d{1,3}))?)?Z$/.exec(
         expiry.value,
-      ) ||
-        !Number.isSafeInteger(time))
+      );
+    // Date parsing normalizes invalid days and 24:00; require the exact UTC fields.
+    if (
+      time !== null &&
+      (!parts ||
+        !Number.isSafeInteger(time.getTime()) ||
+        time.toISOString() !==
+          `${parts[1]}T${parts[2]}:${parts[3] ?? "00"}.${(parts[4] ?? "").padEnd(3, "0")}Z`)
     )
       throw new AdminFailure(
         "invalid",
@@ -490,7 +495,7 @@ export function configurationForm<K extends Kind>(
       })),
       visible_fields: fieldInputs.filter(([, c]) => c.checked).map(([f]) => f),
       stale_policy: "reject",
-      expires_at: time,
+      expires_at: time?.getTime() ?? null,
     } as Configurations[K];
   };
 }

@@ -1,9 +1,9 @@
 //! ICS and constrained JSON-pointer mapping, independently of SQLite.
 use crate::ics::{normalize_ics, IcsLimits};
 use calendar_application::{
-    IngestionError as E, RemoteAuthentication, RemoteFetchOutcome, RemoteFetchRequest,
-    RemoteFetcher, RemoteValidators, SourceAdapter, SourcePage, SourcePageOutcome, SourceState,
-    SyncRecord, MAX_BATCH_RECORDS,
+    IngestionError as E, RemoteAuthentication, RemoteFetchError, RemoteFetchOutcome,
+    RemoteFetchRequest, RemoteFetcher, RemoteValidators, SourceAdapter, SourcePage,
+    SourcePageOutcome, SourceState, SyncRecord, MAX_BATCH_RECORDS,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -27,6 +27,43 @@ pub struct HttpSource<F> {
     pub authentication: RemoteAuthentication,
     pub calendar_id: String,
     pub format: SourceFormat,
+}
+/// One administrator-supplied ICS document as a complete snapshot. Nothing is fetched and the
+/// document is not retained; it has no validators, so no checkpoint is proposed.
+pub struct IcsUpload<'a> {
+    pub text: &'a str,
+    pub calendar_id: String,
+    pub limits: IcsLimits,
+}
+impl SourceAdapter for IcsUpload<'_> {
+    async fn page(
+        &self,
+        _: &SourceState,
+        cursor: Option<&str>,
+        _: i64,
+    ) -> Result<SourcePageOutcome, E> {
+        if cursor.is_some() {
+            return Err(E::InvalidSnapshot);
+        }
+        let normalized = normalize_ics(self.text, &self.limits).map_err(|error| match error {
+            crate::ics::IcsError::BudgetExceeded { .. } => E::Budget,
+            _ => E::Adapter,
+        })?;
+        Ok(SourcePageOutcome::Modified(SourcePage {
+            snapshot_token: None,
+            records: normalized
+                .events
+                .into_iter()
+                .map(|event| SyncRecord::Upsert {
+                    calendar_id: self.calendar_id.clone(),
+                    event: Box::new(event),
+                })
+                .collect(),
+            next: None,
+            checkpoint: None,
+            bytes: self.text.len(),
+        }))
+    }
 }
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 struct Checkpoint {
@@ -107,7 +144,18 @@ impl<F: RemoteFetcher> SourceAdapter for HttpSource<F> {
                 now_ms: now,
             })
             .await
-            .map_err(|_| E::Adapter)?;
+            .map_err(|error| match error {
+                RemoteFetchError::RateLimited {
+                    retry_after_ms: Some(ms),
+                }
+                | RemoteFetchError::Server {
+                    retry_after_ms: Some(ms),
+                    ..
+                } => E::RetryAfter {
+                    retry_after_ms: ms.max(0).unsigned_abs(),
+                },
+                _ => E::Adapter,
+            })?;
         let doc = match outcome {
             RemoteFetchOutcome::NotModified(_) => return Ok(SourcePageOutcome::NotModified),
             RemoteFetchOutcome::Modified(doc) => doc,
