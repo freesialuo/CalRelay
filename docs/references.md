@@ -8,6 +8,7 @@
 | --- | --- |
 | [RFC 5545：iCalendar](https://datatracker.ietf.org/doc/html/rfc5545) | 时间、VEVENT、重复与例外、VTIMEZONE、VALARM、ICS 序列化的主要依据；模型不是完整标准兼容承诺 |
 | [RFC 8984：JSCalendar](https://datatracker.ietf.org/doc/html/rfc8984) | 参考其结构化日历表达；CalRelay EventV1 是自定义协议，不冒充 JSCalendar |
+| [RFC 8785：JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html) | 标准源 envelope 摘要（#174）：I-JSON 无重复键、ECMAScript 字符串转义、按 UTF-16 码元排序键；本协议只接受安全整数 |
 
 ## 实现文档与公共代码
 

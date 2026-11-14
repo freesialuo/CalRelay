@@ -5,6 +5,7 @@ pub mod aggregate;
 pub mod backup;
 pub mod configuration;
 pub mod diagnostics;
+pub mod envelope;
 pub mod feed;
 pub mod ingest;
 pub mod reminder_configuration;

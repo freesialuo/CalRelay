@@ -133,8 +133,8 @@
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:calrelay:schema:standard-calendar-source:v1",
-  "title": "Standard calendar source v1 envelope (not yet a mounted API)",
-  "description": "Authentication context supplies source. This schema does not authorize a batch or prove completeness. See docs/source-configuration.md for semantic/CAS/receipt rules and staged implementation.",
+  "title": "Standard calendar source v1 envelope",
+  "description": "Authentication context supplies source. This schema does not authorize a batch or prove completeness. See docs/source-configuration.md for semantic/CAS/receipt rules and staged implementation; only single-page snapshots are executed so far (#174).",
   "allOf": [
     {
       "if": {

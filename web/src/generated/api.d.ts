@@ -2299,6 +2299,168 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingest/standard-calendar/v1/sources/{source_id}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commit one complete standard-calendar-source/v1 snapshot of a push-only source
+         * @description Body: schemas/standard-calendar-source-v1.schema.json. This version accepts mode=snapshot with pages=1 and collection_tag=null only. The token must hold both upsert and delete permission. base_config_revision and base_source_revision must equal the current values (see the state endpoint). Events absent from the snapshot are deleted; more than 100 deletions, or emptying a non-empty source, is rejected unchanged pending administrator approval. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Idempotency-Key": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            responses: {
+                /** @description Snapshot committed, or the identical receipt replayed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StandardCalendarBatchReceipt"];
+                    };
+                };
+                /** @description Token missing, wrong source, revoked, expired or without both write permissions */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Source not an enabled push-only standard-calendar snapshot source, stale base revision, idempotency conflict, or deletions needing approval */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Request exceeds the byte budget */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid envelope, event or calendar; delta or multi-page batch not yet supported */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Persistence failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping or receipt capacity exhausted */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingest/standard-calendar/v1/sources/{source_id}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the revisions a push-only producer needs for its next batch */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    source_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current source state; no event content */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PushSourceState"];
+                    };
+                };
+                /** @description Token missing, wrong source, revoked or expired */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Source not an enabled push-only standard-calendar snapshot source */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid source ID */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage failed */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingest/v1/sources/{source_id}/events/{uid}": {
         parameters: {
             query?: never;
@@ -3473,6 +3635,13 @@ export interface components {
                 request_id: string;
             };
         };
+        PushSourceState: {
+            checkpoint: string | null;
+            config_revision: number;
+            has_snapshot: boolean;
+            source_id: string;
+            source_revision: number;
+        };
         ReminderConfigurationPage: {
             items: components["schemas"]["ReminderConfigurationSummary"][];
             next_after: string | null;
@@ -3600,6 +3769,12 @@ export interface components {
             next_allowed_at: number;
             /** @enum {string} */
             outcome: "success" | "not_modified" | "unsupported" | "unavailable" | "conflict" | "adapter" | "invalid_snapshot" | "budget" | "timeout" | "unexpected_not_modified" | "retry_after" | "review_required";
+        };
+        StandardCalendarBatchReceipt: {
+            batch_id: string;
+            changed_events: number;
+            source_id: string;
+            source_revision: number;
         };
     };
     responses: never;

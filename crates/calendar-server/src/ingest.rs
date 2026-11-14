@@ -17,7 +17,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-struct SystemClock;
+pub(crate) struct SystemClock;
 impl Clock for SystemClock {
     fn utc_now_ms(&self) -> i64 {
         SystemTime::now()
