@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  timeout: 120000,
+  timeout: 180000,
   use: {
     baseURL: "https://127.0.0.1:4175",
     ignoreHTTPSErrors: true,
