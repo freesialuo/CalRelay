@@ -567,3 +567,416 @@ test("unrelated edits preserve valid millisecond interval and SLA precision", as
   expect(api.record?.configuration.refresh_interval_ms).toBe(60001);
   expect(api.record?.configuration.freshness_sla_ms).toBe(300001);
 });
+
+// Refresh and ICS upload error branches.
+const pullConfig = (): SourceConfiguration => ({ ...config(), enabled: true });
+const staticConfig = (): SourceConfiguration => ({
+  ...config(),
+  enabled: true,
+  mode: "manual-static",
+  endpoint: null,
+  refresh_interval_ms: null,
+  freshness_sla_ms: null,
+});
+const refreshSuccess = "服务端已记录刷新请求";
+const uploadSuccess = "服务端已确认替换快照";
+const noAuthorization = "当前没有可用的管理写入授权";
+const authorizationMissing = (page: Page) =>
+  page.getByText(noAuthorization, { exact: false });
+const validReceipt = { source_id: "source_a", requested_at: 1 };
+const snapshotReceipt = {
+  source_id: "source_a",
+  source_revision: 2,
+  changed_events: 3,
+};
+const icsFile = (buffer: Buffer = Buffer.from("BEGIN:VCALENDAR\r\n")) => ({
+  name: "a.ics",
+  mimeType: "text/calendar",
+  buffer,
+});
+
+type Answer = (
+  url: URL,
+  call: number,
+) => Promise<{
+  status: number;
+  json?: unknown;
+  headers?: Record<string, string>;
+}>;
+async function writeBackend(
+  page: Page,
+  configuration: SourceConfiguration,
+  answer: Answer,
+) {
+  const base = backend(page, {
+    source_id: "source_a",
+    config_revision: 1,
+    source_revision: 1,
+    retired_at: null,
+    configuration,
+  });
+  await base.install();
+  const calls: URL[] = [];
+  await page.route(
+    /\/api\/admin\/v1\/sources\/source_a\/(refresh|snapshot)/,
+    async (route) => {
+      const url = new URL(route.request().url());
+      calls.push(url);
+      const reply = await answer(url, calls.length);
+      await route
+        .fulfill({
+          ...reply,
+          headers: {
+            "x-admin-write-nonce": `rotated_nonce_${calls.length}`,
+            ...reply.headers,
+          },
+        })
+        .catch(() => {});
+    },
+  );
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "查看 / 编辑", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("已读取配置版本 1");
+  return calls;
+}
+const refreshButton = (page: Page) =>
+  page.getByRole("button", { name: "请求立即刷新", exact: true });
+const uploadButton = (page: Page) =>
+  page.getByRole("button", { name: "上传并替换快照", exact: true });
+const chooseFile = (page: Page, buffer?: Buffer) =>
+  page.getByLabel("ICS 文件", { exact: false }).setInputFiles(icsFile(buffer));
+const hold = () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { held, release: () => release() };
+};
+
+test("refresh button only for enabled pull sources, upload only for enabled manual-static ICS", async ({
+  page,
+}) => {
+  await writeBackend(page, pullConfig(), async () => ({ status: 202 }));
+  await expect(refreshButton(page)).toBeVisible();
+  await expect(uploadButton(page)).toHaveCount(0);
+});
+
+test("refresh and upload controls are absent for disabled sources", async ({
+  page,
+}) => {
+  await writeBackend(page, config(), async () => ({ status: 202 }));
+  await expect(refreshButton(page)).toHaveCount(0);
+  await expect(uploadButton(page)).toHaveCount(0);
+});
+
+test("push-only sources have neither refresh nor upload control", async ({
+  page,
+}) => {
+  await writeBackend(
+    page,
+    { ...staticConfig(), mode: "push-only" },
+    async () => ({ status: 200 }),
+  );
+  await expect(refreshButton(page)).toHaveCount(0);
+  await expect(uploadButton(page)).toHaveCount(0);
+});
+
+test("upload control only for enabled manual-static ICS sources", async ({
+  page,
+}) => {
+  await writeBackend(page, staticConfig(), async () => ({ status: 200 }));
+  await expect(uploadButton(page)).toBeVisible();
+  await expect(refreshButton(page)).toHaveCount(0);
+});
+
+test("static source with a non-ICS adapter has no upload control", async ({
+  page,
+}) => {
+  await writeBackend(
+    page,
+    { ...staticConfig(), adapter: "standard-calendar" },
+    async () => ({ status: 200 }),
+  );
+  await expect(uploadButton(page)).toHaveCount(0);
+});
+
+test("refresh HTTP 409 reports conflict, never claims success and blocks the editor", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, pullConfig(), async () => ({
+    status: 409,
+  }));
+  await refreshButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText(
+    "来源当前不是已启用的可拉取来源，未记录刷新请求。请重新读取来源核实。",
+  );
+  await expect(status).not.toContainText(refreshSuccess);
+  await expect(refreshButton(page)).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存配置", exact: true }),
+  ).toBeDisabled();
+  expect(calls).toHaveLength(1);
+});
+
+test("refresh HTTP 403 is denied, never claims success and clears write authorization", async ({
+  page,
+}) => {
+  await writeBackend(page, pullConfig(), async () => ({ status: 403 }));
+  await refreshButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText(
+    "管理请求被拒绝。请重新登录并检查会话、CSRF、Origin 与权限。",
+  );
+  await expect(status).not.toContainText(refreshSuccess);
+  await expect(authorizationMissing(page)).toBeVisible();
+  await expect(refreshButton(page)).toBeDisabled();
+});
+
+for (const [name, body] of [
+  ["wrong source_id", { ...validReceipt, source_id: "source_b" }],
+  ["extra key", { ...validReceipt, extra: true }],
+  ["non-integer requested_at", { ...validReceipt, requested_at: 1.5 }],
+] as const) {
+  test(`refresh 202 with invalid receipt (${name}) clears write authorization`, async ({
+    page,
+  }) => {
+    await writeBackend(page, pullConfig(), async () => ({
+      status: 202,
+      json: body,
+    }));
+    await expect(authorizationMissing(page)).toHaveCount(0);
+    await refreshButton(page).click();
+    const status = page.getByRole("status");
+    await expect(status).toHaveAttribute("data-state", "error");
+    await expect(status).toHaveText(
+      "响应不符合刷新回执契约。未确认请求已记录，请稍后在诊断中核实。",
+    );
+    await expect(status).not.toContainText(refreshSuccess);
+    await expect(authorizationMissing(page)).toBeVisible();
+    await expect(refreshButton(page)).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "保存配置", exact: true }),
+    ).toBeDisabled();
+  });
+}
+
+test("refresh 202 with a valid receipt claims only a recorded request", async ({
+  page,
+}) => {
+  await writeBackend(page, pullConfig(), async () => ({
+    status: 202,
+    json: validReceipt,
+  }));
+  await refreshButton(page).click();
+  await expect(page.getByRole("status")).toContainText(refreshSuccess);
+  await expect(authorizationMissing(page)).toHaveCount(0);
+});
+
+test("upload HTTP 409 reports conflict, never claims success and blocks the editor", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, staticConfig(), async () => ({
+    status: 409,
+  }));
+  await chooseFile(page);
+  await uploadButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText(
+    "来源不是已启用的 ICS 静态来源，或配置已变化；既有事件未改变。请重新读取来源核实。",
+  );
+  await expect(status).not.toContainText(uploadSuccess);
+  await expect(uploadButton(page)).toBeDisabled();
+  expect(calls).toHaveLength(1);
+});
+
+for (const code of [413, 415, 422]) {
+  test(`upload HTTP ${code} is rejected without claiming success and the editor stays usable`, async ({
+    page,
+  }) => {
+    const calls = await writeBackend(page, staticConfig(), async () => ({
+      status: code,
+    }));
+    await chooseFile(page);
+    await uploadButton(page).click();
+    const status = page.getByRole("status");
+    await expect(status).toHaveAttribute("data-state", "error");
+    await expect(status).toHaveText("ICS 无效或超出预算；既有事件未改变。");
+    await expect(status).not.toContainText(uploadSuccess);
+    await expect(uploadButton(page)).toBeEnabled();
+    expect(calls).toHaveLength(1);
+  });
+}
+
+test("upload HTTP 200 with an invalid receipt clears write authorization", async ({
+  page,
+}) => {
+  await writeBackend(page, staticConfig(), async () => ({
+    status: 200,
+    json: { ...snapshotReceipt, source_id: "source_b" },
+  }));
+  await chooseFile(page);
+  await uploadButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText(
+    "响应不符合快照回执契约。未确认是否已替换，请在诊断中核实，勿重复上传。",
+  );
+  await expect(status).not.toContainText(uploadSuccess);
+  await expect(authorizationMissing(page)).toBeVisible();
+  await expect(uploadButton(page)).toBeDisabled();
+});
+
+test("upload HTTP 200 with a valid receipt reports the replacement", async ({
+  page,
+}) => {
+  await writeBackend(page, staticConfig(), async () => ({
+    status: 200,
+    json: snapshotReceipt,
+  }));
+  await chooseFile(page);
+  await uploadButton(page).click();
+  await expect(page.getByRole("status")).toContainText(
+    "来源修订 2，变更 3 个事件",
+  );
+});
+
+test("a file larger than 1 MiB is refused locally without any request", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, staticConfig(), async () => ({
+    status: 200,
+    json: snapshotReceipt,
+  }));
+  await chooseFile(page, Buffer.alloc(1_048_577, "a"));
+  await uploadButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText("ICS 文件超过 1 MiB，未上传。");
+  await expect(status).not.toContainText(uploadSuccess);
+  expect(calls).toHaveLength(0);
+});
+
+test("an invalid UTF-8 file is refused locally without any request", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, staticConfig(), async () => ({
+    status: 200,
+    json: snapshotReceipt,
+  }));
+  await chooseFile(page, Buffer.from([0x42, 0xff, 0xfe, 0x41]));
+  await uploadButton(page).click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveText(
+    "文件不是有效的 UTF-8 文本，未上传；既有事件未改变。",
+  );
+  await expect(status).not.toContainText(uploadSuccess);
+  expect(calls).toHaveLength(0);
+});
+
+test("upload without a chosen file asks for one and sends nothing", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, staticConfig(), async () => ({
+    status: 200,
+  }));
+  await uploadButton(page).click();
+  await expect(page.getByRole("status")).toHaveText("请先选择 ICS 文件。");
+  expect(calls).toHaveLength(0);
+});
+
+test("upload 428 then 保留既有事件 sends no second request and hides the prompt", async ({
+  page,
+}) => {
+  const calls = await writeBackend(page, staticConfig(), async () => ({
+    status: 428,
+  }));
+  await chooseFile(page);
+  await uploadButton(page).click();
+  const approve = page.getByRole("button", {
+    name: "确认删除并替换",
+    exact: true,
+  });
+  await expect(approve).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText(
+    "需要确认：此文件会删除超过 100 个既有事件；既有事件未改变。",
+  );
+  await page.getByRole("button", { name: "保留既有事件", exact: true }).click();
+  await expect(approve).toBeHidden();
+  await expect(page.getByRole("status")).toHaveText("已取消；既有事件未改变。");
+  await expect(page.getByRole("status")).not.toContainText(uploadSuccess);
+  expect(calls).toHaveLength(1);
+  expect(calls[0].search).toBe("");
+});
+
+test("upload 428 then confirm sends the approved request, which may fail with 409", async ({
+  page,
+}) => {
+  const calls = await writeBackend(
+    page,
+    staticConfig(),
+    async (_url, call) => ({ status: call === 1 ? 428 : 409 }),
+  );
+  await chooseFile(page);
+  await uploadButton(page).click();
+  await page
+    .getByRole("button", { name: "确认删除并替换", exact: true })
+    .click();
+  const status = page.getByRole("status");
+  await expect(status).toHaveText(
+    "来源不是已启用的 ICS 静态来源，或配置已变化；既有事件未改变。请重新读取来源核实。",
+  );
+  await expect(status).not.toContainText(uploadSuccess);
+  await expect(
+    page.getByRole("button", { name: "确认删除并替换", exact: true }),
+  ).toBeHidden();
+  await expect(uploadButton(page)).toBeDisabled();
+  expect(calls.map((url) => url.search)).toEqual([
+    "",
+    "?approve_deletions=true",
+  ]);
+});
+
+for (const kind of ["refresh", "upload"] as const) {
+  test(`cancelling a pending ${kind} reports an unknown result and blocks the editor`, async ({
+    page,
+  }) => {
+    const gate = hold();
+    const calls = await writeBackend(
+      page,
+      kind === "refresh" ? pullConfig() : staticConfig(),
+      async () => {
+        await gate.held;
+        return kind === "refresh"
+          ? { status: 202, json: validReceipt }
+          : { status: 200, json: snapshotReceipt };
+      },
+    );
+    if (kind === "refresh") await refreshButton(page).click();
+    else {
+      await chooseFile(page);
+      await uploadButton(page).click();
+    }
+    await expect.poll(() => calls.length).toBe(1);
+    await page
+      .getByRole("button", { name: "取消等待并核实结果", exact: true })
+      .click();
+    const status = page.getByRole("status");
+    await expect(status).toHaveAttribute("data-state", "error");
+    await expect(status).toContainText("写入结果未知");
+    gate.release();
+    await expect(status).toContainText("写入结果未知");
+    await expect(status).not.toContainText(
+      kind === "refresh" ? refreshSuccess : uploadSuccess,
+    );
+    await expect(authorizationMissing(page)).toBeVisible();
+    await expect(
+      kind === "refresh" ? refreshButton(page) : uploadButton(page),
+    ).toBeDisabled();
+    expect(calls).toHaveLength(1);
+  });
+}
