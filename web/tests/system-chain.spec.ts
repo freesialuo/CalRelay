@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -579,4 +579,31 @@ test("browser configuration drives actual scanner planner delivery and distinct 
     })
     .toBe(200);
   expect((await request.get("/health/live")).status()).toBe(200);
+
+  // Another process holding an exclusive lock on the real database makes the readiness
+  // probe time out: ready reports it, and recovers once the lock is released.
+  const holder = spawn("python3", [
+    "-c",
+    "import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1],isolation_level=None); c.execute('BEGIN EXCLUSIVE'); print('locked',flush=True); time.sleep(float(sys.argv[2])); c.execute('ROLLBACK')",
+    state().database,
+    "6",
+  ]);
+  const released = new Promise((resolve) => holder.once("exit", resolve));
+  await new Promise<void>((resolve, reject) => {
+    holder.stdout.once("data", () => resolve());
+    holder.once("error", reject);
+  });
+  await expect
+    .poll(async () => (await request.get("/health/ready")).status(), {
+      timeout: 5000,
+      intervals: [100, 250, 500],
+    })
+    .toBe(503);
+  await released;
+  await expect
+    .poll(async () => (await request.get("/health/ready")).status(), {
+      timeout: 15000,
+      intervals: [250, 500, 1000],
+    })
+    .toBe(200);
 });

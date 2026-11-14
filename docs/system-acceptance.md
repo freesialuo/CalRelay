@@ -74,7 +74,7 @@ npm run test:system
 npm run test:system:clock
 ```
 
-npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认120秒总期限，真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
+npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，现有10个夹具协议+74个旧回归保留；browser helpers从原配置集成测试提取复用，没有再复制全套CRUD。系统测试默认180秒总期限（#216 起；原为120秒），真实UTC将两条合成事件安排在夹具启动约60秒后，通过有界状态轮询等待，不固定sleep或缩短source配置周期。允许真实周期再次读取ICS，首次两源成功必须分别观察，不把合法304/再次200当失败。
 
 仅现有feature-gated calendar-admin-harness新增 `--system-fixtures FILE --deployment-config FILE`（可选尾部 `--business-clock FILE`），不修改生产main/配置schema/SSRF适配器。默认fresh仍拒绝已有DB；系统模式启动时只能创建新DB，只有夹具请求的强杀重启以 `--reopen-database` 重新打开同一DB，部署绑定必须loopback随机端口、无生产admin字段，原合成签名Verifier随后装配。复用#117正式HarnessRoot::initialize(Fresh)、KeyRing与CLI，系统目录为私有canonical calrelay-system-*，不增加Reopen/Restored参数；fixture与Clock控制文件使用既有有界常规文件读取器，拒绝symlink/FIFO与超限，系统清理等待覆盖10秒排空及10秒强制清理预算；固定logical HTTPS目标映射到受控HTTP夹具，未知目标、非loopback/重定向/错误认证拒绝。网络替身保留真实output_for_delivery查询、凭据provider解密、JSON响应code判断及有界body/timeout；实际BarkOutput的TLS/SSRF/完整payload协议仍由独立adapter证据覆盖，不能把此替身当生产网络适配器已成功发送。
 
@@ -95,5 +95,7 @@ npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，�
 故障后的恢复（#210）：重启后，Bark 故障期间记为 retryable 的提醒被重试并 accepted。受控时钟下再两次把业务时间推进 61 秒：第一次越过 60 秒租约，panic 时在途的提醒记为 unknown 并排期重试；第二次越过有界重试退避，该提醒 accepted，全部 6 个逻辑投递 accepted。unknown 后重发可能重复通知，不承诺 exactly-once。真实时钟模式在 120 秒用例期限内只断言前者。
 
 扫描工作器 panic（#212）：同一 harness 的模拟抓取在模拟来源返回哨兵状态 599 时 panic。系统链路让来源 a 返回 599 并请求立即刷新：模拟网络记录到 599 后 `/health/live` 为 503，管理接口仍返回 200；恢复来源并强杀重启后 live/ready 恢复 200。
+
+数据库锁（#216）：另一个进程对真实 SQLite 持有排他锁 6 秒，数据库探针超时，`/health/ready` 报告 503；锁释放后恢复 200。串联场景增长后，系统测试单用例期限由 120 秒调为 180 秒。
 
 restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。
