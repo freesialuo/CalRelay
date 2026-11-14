@@ -280,3 +280,70 @@ test("recent management changes are listed read-only and newest first", async ({
   const body = await response.json();
   expect(body.items[0].actor).toMatch(/^[0-9a-f]{12}$/);
 });
+test("management changes page through older records and filter by kind", async ({
+  page,
+}) => {
+  await login(page);
+  const s = await source(page);
+  // 120 older source revisions guarantee more than one page of source changes.
+  execFileSync("python3", [
+    "-c",
+    "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.executemany(\"INSERT INTO configuration_audit(source_id,config_revision,action,actor_digest,changed_at) VALUES (?,?,'update',?,?)\",[(sys.argv[2],1000+n,'a'*64,1+n) for n in range(120)]); c.commit()",
+    database(),
+    s.id,
+  ]);
+  const expected: number[] = [];
+  let cursor: string | null = null;
+  do {
+    const response = await page.request.get(
+      `/api/admin/v1/audit?kind=source${cursor ? `&before=${cursor}` : ""}`,
+    );
+    const body: {
+      items: { at: number }[];
+      more: boolean;
+      next_before: string | null;
+    } = await response.json();
+    expected.push(...body.items.map((i) => i.at));
+    expect(body.more).toBe(body.next_before !== null);
+    cursor = body.next_before;
+  } while (cursor);
+  expect(expected.length).toBeGreaterThan(120);
+
+  const card = await open(page);
+  const audit = card.getByLabel("最近管理变更");
+  const items = audit.locator("li");
+  const state = card.getByLabel("管理变更读取状态");
+  const earlier = card.getByRole("button", {
+    name: "加载更早记录",
+    exact: true,
+  });
+  await expect(earlier).toBeHidden();
+  await card.getByLabel("管理变更类型").selectOption("source");
+  await expect(items).toHaveCount(100);
+  await expect(state).toContainText("还有更早的记录");
+  for (let shown = 100; shown < expected.length; shown += 100) {
+    await earlier.click();
+    await expect(items).toHaveCount(Math.min(shown + 100, expected.length));
+  }
+  await expect(earlier).toBeHidden();
+  await expect(state).toContainText(`已显示全部 ${expected.length} 条`);
+  const texts = await items.allTextContents();
+  expect(new Set(texts).size).toBe(texts.length);
+  expect(texts.every((t) => t.startsWith("来源 "))).toBe(true);
+  expect(texts.at(-1)).toContain(`来源 ${s.id} · 修订 1000 · 更新`);
+  expect(texts.at(-1)).toContain(new Date(1).toISOString());
+
+  await card.getByLabel("管理变更类型").selectOption("producer_token");
+  await expect(state).not.toContainText("正在读取");
+  await expect(items.filter({ hasNotText: /^生产者令牌 / })).toHaveCount(0);
+  await expect(items.filter({ hasText: s.id })).toHaveCount(0);
+
+  for (const query of [
+    "kind=nope",
+    "before=not-a-cursor",
+    "kind=source&before=1.nope.1",
+  ])
+    expect(
+      (await page.request.get(`/api/admin/v1/audit?${query}`)).status(),
+    ).toBe(422);
+});

@@ -165,11 +165,25 @@ export function mountDiagnostics(
   result.setAttribute("aria-label", "持久诊断结果");
   for (const b of [refresh, next, read, cancel]) b.type = "button";
   const readAudit = node("button", "读取最近管理变更");
-  readAudit.type = "button";
+  const earlier = node("button", "加载更早记录");
+  earlier.hidden = true;
+  readAudit.type = earlier.type = "button";
+  const kindLabel = node("label", "管理变更类型");
+  kindLabel.className = "source-form";
+  const kind = node("select");
+  kind.append(node("option", "全部类型"));
+  kind.options[0].value = "";
+  for (const [value, text] of Object.entries(auditKinds)) {
+    const option = node("option", text);
+    option.value = value;
+    kind.append(option);
+  }
+  kindLabel.append(kind);
   const auditStatus = node(
     "p",
-    "按需读取最近 100 条管理变更；读取不改变任何状态。",
+    "按需每次读取 100 条管理变更，最新在前；读取不改变任何状态。",
   );
+  auditStatus.setAttribute("aria-label", "管理变更读取状态");
   const audit = node("ul");
   audit.setAttribute("aria-label", "最近管理变更");
   section.append(
@@ -182,8 +196,10 @@ export function mountDiagnostics(
     result,
     node("h3", "最近管理变更"),
     auditStatus,
+    kindLabel,
     readAudit,
     audit,
+    earlier,
   );
   root.append(section);
   let current: AbortController | undefined;
@@ -322,21 +338,28 @@ export function mountDiagnostics(
       auditRead?.abort();
       result.replaceChildren();
       audit.replaceChildren();
+      earlier.hidden = true;
       status.textContent =
         "会话授权已变化；请重新登录并读取诊断，旧结果已清除。";
     }
   };
   let auditRead: AbortController | undefined;
-  readAudit.onclick = () => {
+  let before: string | null = null;
+  // A fresh read replaces the list; a cursor read appends the next older page.
+  function readAuditPage(cursor: string | null) {
     auditRead?.abort();
     const controller = new AbortController();
     auditRead = controller;
-    audit.replaceChildren();
+    earlier.hidden = true;
+    if (cursor === null) audit.replaceChildren();
     auditStatus.textContent = "正在读取管理变更…";
+    const query = new URLSearchParams();
+    if (kind.value) query.set("kind", kind.value);
+    if (cursor !== null) query.set("before", cursor);
     void (async () => {
       try {
         const response = await session.read(
-          "/api/admin/v1/audit",
+          `/api/admin/v1/audit${query.size ? `?${query}` : ""}`,
           controller.signal,
         );
         await requireStatus(response, [200]);
@@ -346,7 +369,13 @@ export function mountDiagnostics(
           !Array.isArray(value.items) ||
           value.items.length > 100 ||
           !value.items.every(auditEntry) ||
-          typeof value.more !== "boolean"
+          typeof value.more !== "boolean" ||
+          !(
+            value.next_before === null ||
+            (typeof value.next_before === "string" &&
+              /^[0-9a-z_.]{1,64}$/.test(value.next_before))
+          ) ||
+          value.more !== (value.next_before !== null)
         )
           throw new Error("Invalid audit response");
         if (controller.signal.aborted || disposed || auditRead !== controller)
@@ -358,18 +387,28 @@ export function mountDiagnostics(
               `${auditKinds[e.kind]} ${e.subject_id}${e.source_id === null ? "" : `（来源 ${e.source_id}）`}${e.revision === null ? "" : ` · 修订 ${e.revision}`} · ${auditActions[e.action]} · 管理员 ${e.actor ?? "系统"} · ${date(e.at)}`,
             ),
           );
-        auditStatus.textContent = value.items.length
-          ? `共 ${value.items.length} 条，最新在前${value.more ? "；还有更早的记录，本页不是完整审计导出" : ""}。`
-          : "尚无管理变更记录。";
+        before = value.next_before as string | null;
+        earlier.hidden = before === null;
+        const shown = audit.childElementCount;
+        auditStatus.textContent = !shown
+          ? "尚无管理变更记录。"
+          : before === null
+            ? `已显示全部 ${shown} 条，最新在前。`
+            : `已显示 ${shown} 条，最新在前；还有更早的记录，本页不是完整审计导出。`;
       } catch (error) {
-        if (!controller.signal.aborted && !disposed)
+        if (!controller.signal.aborted && !disposed) {
+          earlier.hidden = cursor === null;
           auditStatus.textContent =
             error instanceof AdminFailure
               ? error.message
               : "未取得可信的管理变更记录；请重新读取。";
+        }
       }
     })();
-  };
+  }
+  readAudit.onclick = () => readAuditPage(null);
+  kind.onchange = () => readAuditPage(null);
+  earlier.onclick = () => readAuditPage(before);
   session.addEventListener("change", authorization);
   void list();
   return {
