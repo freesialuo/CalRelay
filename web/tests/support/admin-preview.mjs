@@ -196,6 +196,7 @@ try {
         ? {
             control_request: join(directory, "control-request"),
             control_done: join(directory, "control-done"),
+            hold_started: join(directory, "hold-started"),
           }
         : {}),
     }),
@@ -210,6 +211,7 @@ try {
     let held;
     const request = join(directory, "control-request");
     const done = join(directory, "control-done");
+    const holdStarted = join(directory, "hold-started");
     setInterval(async () => {
       if (busy || closing || !existsSync(request)) return;
       busy = true;
@@ -229,9 +231,13 @@ try {
         } else if (command.action === "hold" && !held) {
           // The next response for this target stalls until released.
           held = fixture.holdNext(command.id);
+          // Signals that the stalled request has actually reached the fixture.
+          held.started.then(() => writeFile(holdStarted, "1")).catch(() => {});
         } else if (command.action === "release" && held) {
           held.release();
           held = undefined;
+          if (existsSync(holdStarted))
+            await execute("find", [holdStarted, "-delete"]);
         } else throw new Error("Unknown control request");
         handled++;
         await writeFile(done, String(handled));
