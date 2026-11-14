@@ -305,7 +305,8 @@ impl Storage {
             .bind(now)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM envelope_pages WHERE expires_at<=?")
+        // A collection expires as a unit, so no gap can break arrival-order numbering.
+        sqlx::query("DELETE FROM envelope_pages WHERE (source_id,collection_tag) IN (SELECT source_id,collection_tag FROM envelope_pages WHERE expires_at<=?)")
             .bind(now)
             .execute(&mut *tx)
             .await?;
@@ -409,10 +410,30 @@ impl Storage {
                     pages: batch.pages,
                 });
             }
-            // The final page: assemble the whole collection in arrival order.
+            // Every page key gets the collection receipt, so all of them must fit.
+            if live + earlier.len() as i64 >= policy.max_records {
+                return Err(EnvelopeError::Capacity);
+            }
+            // The final page: assemble the whole collection in arrival order. Each earlier page
+            // is committed only while its own token is still valid and permitted for it.
             let mut all = Vec::with_capacity(count as usize);
             for page in earlier {
                 let ops = decode(&page.4).ok_or(EnvelopeError::Database)?;
+                let permitted: Option<(bool, bool)> = sqlx::query_as("SELECT can_upsert,can_delete FROM api_tokens WHERE id=? AND source_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)")
+                    .bind(&page.0).bind(&batch.source_id).bind(now)
+                    .fetch_optional(&mut *tx).await?;
+                let page_upserts = ops
+                    .iter()
+                    .any(|op| matches!(op, BatchOperation::Upsert { .. }));
+                let page_deletes = ops
+                    .iter()
+                    .any(|op| matches!(op, BatchOperation::Delete { .. }));
+                match permitted {
+                    Some((can_upsert, can_delete))
+                        if (can_upsert || !(snapshot || page_upserts))
+                            && (can_delete || !(snapshot || page_deletes)) => {}
+                    _ => return Err(EnvelopeError::Conflict),
+                }
                 all.extend(ops);
                 held_keys.push((page.0, page.1, page.2));
             }

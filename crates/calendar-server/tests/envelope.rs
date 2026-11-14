@@ -856,3 +856,99 @@ async fn unfinished_pages_expire_after_an_hour() {
     );
     s.server.services.drain().await;
 }
+
+#[tokio::test]
+async fn staged_pages_of_a_revoked_token_are_never_committed() {
+    let s = setup_with(incremental).await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    assert_eq!(
+        post(&s, &s.full, "snap", envelope(config, base, &[("a", "A")]))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let rev = base + 1;
+    let deleting = paged(
+        delta(config, rev, Some("cp"), "cp2", vec![remove("a", 1)]),
+        "r",
+        2,
+        "r1",
+    );
+    assert_eq!(
+        post(&s, &s.full, "r1", &deleting).await.0,
+        StatusCode::ACCEPTED
+    );
+    sqlx::query("UPDATE api_tokens SET revoked_at=1 WHERE id='full'")
+        .execute(s.server.services.storage.pool())
+        .await
+        .unwrap();
+    let adding = paged(
+        delta(config, rev, Some("cp"), "cp2", vec![upsert("b", "B")]),
+        "r",
+        2,
+        "r2",
+    );
+    assert_eq!(
+        post(&s, &s.upsert_only, "r2", &adding).await.0,
+        StatusCode::CONFLICT
+    );
+    assert!(live(&s, "a").await && !live(&s, "b").await);
+    s.server.services.drain().await;
+}
+
+#[tokio::test]
+async fn collections_expire_whole_and_reserve_a_receipt_for_every_page() {
+    use calendar_storage::envelope::{BatchOperation, BatchOutcome};
+    let s = setup().await;
+    let db = &s.server.services.storage;
+    let page = |key: &str, uid: &str, pages: u32, tag: &str| EnvelopeBatch {
+        source_id: "push".into(),
+        key: key.into(),
+        digest: [key.len() as u8; 32],
+        batch_id: key.into(),
+        mode: BatchMode::Snapshot,
+        base_config_revision: s.record.config_revision,
+        base_source_revision: s.record.source_revision,
+        proposed_checkpoint: None,
+        pages,
+        collection_tag: Some(tag.into()),
+        operations: vec![BatchOperation::Upsert {
+            calendar_id: "calendar-a".into(),
+            event: Box::new(serde_json::from_value(event(uid, "x")).unwrap()),
+        }],
+    };
+    let secret = s.full.as_bytes();
+    let policy = IngestPolicy::default();
+    // Pages 1 and 2 arrive 30 minutes apart; page 3 arrives after page 1 expired: the whole
+    // collection restarts instead of leaving a gap.
+    db.ingest_batch(secret, page("a", "a", 3, "t"), policy, &At(1_000))
+        .await
+        .unwrap();
+    db.ingest_batch(secret, page("bb", "b", 3, "t"), policy, &At(1_801_000))
+        .await
+        .unwrap();
+    let third = db
+        .ingest_batch(secret, page("ccc", "c", 3, "t"), policy, &At(3_601_500))
+        .await;
+    assert_eq!(
+        third,
+        Ok(BatchOutcome::Staged {
+            received_pages: 1,
+            pages: 3
+        })
+    );
+    // With room for one receipt, a two-page collection cannot commit two.
+    let tight = IngestPolicy {
+        retention_ms: 60_000,
+        max_records: 1,
+    };
+    db.ingest_batch(secret, page("dddd", "d", 2, "u"), tight, &At(4_000_000))
+        .await
+        .unwrap();
+    let last = db
+        .ingest_batch(secret, page("eeeee", "e", 2, "u"), tight, &At(4_000_001))
+        .await;
+    assert_eq!(last, Err(EnvelopeError::Capacity));
+    s.server.services.drain().await;
+}
