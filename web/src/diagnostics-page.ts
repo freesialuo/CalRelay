@@ -9,6 +9,25 @@ import { node } from "./source-form";
 import { SourcesAPI, validId } from "./sources-api";
 
 type Diagnostic = components["schemas"]["SourceDiagnostic"];
+type AuditEntry = components["schemas"]["AuditEntry"];
+const auditKinds: Record<AuditEntry["kind"], string> = {
+  source: "来源",
+  rule: "规则",
+  output: "输出",
+  subscription: "汇总订阅",
+  producer_token: "生产者令牌",
+  deletion_approval: "超限删除批准",
+};
+const auditActions: Record<AuditEntry["action"], string> = {
+  create: "创建",
+  update: "更新",
+  retire: "退休",
+  credential_changed: "凭据变更",
+  rotate: "轮换链接",
+  issue: "签发",
+  revoke: "撤销",
+  approve: "批准",
+};
 const freshness: Record<Diagnostic["freshness"], string> = {
   not_applicable: "不按轮询时效判定（静态来源或未声明 SLA 的推送源）",
   never_verified: "尚无成功校验记录",
@@ -98,6 +117,21 @@ function valid(value: unknown, id: string): value is Diagnostic {
     )
   );
 }
+function auditEntry(value: unknown): value is AuditEntry {
+  return (
+    object(value) &&
+    Object.keys(value).length === 7 &&
+    validId(value.subject_id) &&
+    (value.source_id === null || validId(value.source_id)) &&
+    (value.revision === null || Number.isSafeInteger(value.revision)) &&
+    member(value.kind, auditKinds) &&
+    member(value.action, auditActions) &&
+    (value.actor === null ||
+      (typeof value.actor === "string" &&
+        /^[0-9a-f]{12}$/.test(value.actor))) &&
+    time(value.at)
+  );
+}
 const date = (value: number | null) =>
   value === null ? "无记录" : new Date(value).toISOString();
 export function mountDiagnostics(
@@ -130,7 +164,27 @@ export function mountDiagnostics(
   const result = node("div");
   result.setAttribute("aria-label", "持久诊断结果");
   for (const b of [refresh, next, read, cancel]) b.type = "button";
-  section.append(status, refresh, next, label, read, cancel, result);
+  const readAudit = node("button", "读取最近管理变更");
+  readAudit.type = "button";
+  const auditStatus = node(
+    "p",
+    "按需读取最近 100 条管理变更；读取不改变任何状态。",
+  );
+  const audit = node("ul");
+  audit.setAttribute("aria-label", "最近管理变更");
+  section.append(
+    status,
+    refresh,
+    next,
+    label,
+    read,
+    cancel,
+    result,
+    node("h3", "最近管理变更"),
+    auditStatus,
+    readAudit,
+    audit,
+  );
   root.append(section);
   let current: AbortController | undefined;
   let after: string | undefined;
@@ -265,10 +319,56 @@ export function mountDiagnostics(
   const authorization = () => {
     if (!session.writable) {
       current?.abort();
+      auditRead?.abort();
       result.replaceChildren();
+      audit.replaceChildren();
       status.textContent =
         "会话授权已变化；请重新登录并读取诊断，旧结果已清除。";
     }
+  };
+  let auditRead: AbortController | undefined;
+  readAudit.onclick = () => {
+    auditRead?.abort();
+    const controller = new AbortController();
+    auditRead = controller;
+    audit.replaceChildren();
+    auditStatus.textContent = "正在读取管理变更…";
+    void (async () => {
+      try {
+        const response = await session.read(
+          "/api/admin/v1/audit",
+          controller.signal,
+        );
+        await requireStatus(response, [200]);
+        const value = await boundedJSON(response, 65536);
+        if (
+          !object(value) ||
+          !Array.isArray(value.items) ||
+          value.items.length > 100 ||
+          !value.items.every(auditEntry) ||
+          typeof value.more !== "boolean"
+        )
+          throw new Error("Invalid audit response");
+        if (controller.signal.aborted || disposed || auditRead !== controller)
+          return;
+        for (const e of value.items as AuditEntry[])
+          audit.append(
+            node(
+              "li",
+              `${auditKinds[e.kind]} ${e.subject_id}${e.source_id === null ? "" : `（来源 ${e.source_id}）`}${e.revision === null ? "" : ` · 修订 ${e.revision}`} · ${auditActions[e.action]} · 管理员 ${e.actor ?? "系统"} · ${date(e.at)}`,
+            ),
+          );
+        auditStatus.textContent = value.items.length
+          ? `共 ${value.items.length} 条，最新在前${value.more ? "；还有更早的记录，本页不是完整审计导出" : ""}。`
+          : "尚无管理变更记录。";
+      } catch (error) {
+        if (!controller.signal.aborted && !disposed)
+          auditStatus.textContent =
+            error instanceof AdminFailure
+              ? error.message
+              : "未取得可信的管理变更记录；请重新读取。";
+      }
+    })();
   };
   session.addEventListener("change", authorization);
   void list();
@@ -277,6 +377,7 @@ export function mountDiagnostics(
     dispose: () => {
       disposed = true;
       current?.abort();
+      auditRead?.abort();
       result.replaceChildren();
       session.removeEventListener("change", authorization);
     },

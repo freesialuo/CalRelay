@@ -2,6 +2,7 @@
 
 pub mod admin_sessions;
 pub mod aggregate;
+pub mod audit;
 pub mod backup;
 pub mod configuration;
 pub mod deletion_approval;
