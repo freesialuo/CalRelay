@@ -11,6 +11,9 @@ export type SourceRecord = components["schemas"]["SourceConfigurationRecord"];
 export type SourcePage = components["schemas"]["SourceConfigurationPage"];
 export type SourceSummary = components["schemas"]["SourceConfigurationSummary"];
 export type SnapshotReceipt = components["schemas"]["SourceSnapshotReceipt"];
+export type ProducerToken = components["schemas"]["ProducerToken"];
+export type ProducerTokenPage = components["schemas"]["ProducerTokenPage"];
+export type ProducerTokenGrant = components["schemas"]["ProducerTokenGrant"];
 export const MAX_ICS_BYTES = 1_048_576;
 export const validId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -89,6 +92,19 @@ function record(value: unknown): value is SourceRecord {
     positive(value.source_revision) &&
     timestamp(value.retired_at) &&
     configuration(value.configuration)
+  );
+}
+function producerToken(value: unknown): value is ProducerToken {
+  return (
+    object(value) &&
+    Object.keys(value).length === 6 &&
+    validId(value.token_id) &&
+    typeof value.can_upsert === "boolean" &&
+    typeof value.can_delete === "boolean" &&
+    (value.can_upsert || value.can_delete) &&
+    timestamp(value.expires_at) &&
+    timestamp(value.revoked_at) &&
+    timestamp(value.issued_at)
   );
 }
 const unknown = () =>
@@ -287,6 +303,100 @@ export class SourcesAPI {
         "响应不符合快照回执契约。未确认是否已替换，请在诊断中核实，勿重复上传。",
       );
     }
+  }
+  async tokens(id: string, signal: AbortSignal): Promise<ProducerTokenPage> {
+    const response = await this.session.read(`${path(id)}/tokens`, signal);
+    await requireStatus(response, [200]);
+    try {
+      const data = await boundedJSON(response);
+      if (
+        !object(data) ||
+        Object.keys(data).length !== 2 ||
+        !Array.isArray(data.items) ||
+        data.items.length > 100 ||
+        !data.items.every(producerToken) ||
+        typeof data.more !== "boolean"
+      )
+        throw unknown();
+      return data as ProducerTokenPage;
+    } catch {
+      throw new AdminFailure("unknown", "令牌列表响应不符合契约，请重新读取。");
+    }
+  }
+  /** Issues a producer token; the secret in the grant is shown once and never stored. */
+  async issueToken(
+    id: string,
+    request: {
+      can_upsert: boolean;
+      can_delete: boolean;
+      expires_at: number | null;
+    },
+    signal: AbortSignal,
+  ): Promise<ProducerTokenGrant> {
+    const response = await this.session.write(
+      `${path(id)}/tokens`,
+      "POST",
+      { "content-type": "application/json" },
+      JSON.stringify(request),
+      signal,
+    );
+    if (response.status === 409) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "invalid",
+        "未签发：来源不能持有生产者令牌，或有效令牌已达 16 个上限。请撤销不用的令牌或重新读取来源核实。",
+      );
+    }
+    if (response.status === 422) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "invalid",
+        "未签发：至少选择一项权限，有效期须晚于当前时间。",
+      );
+    }
+    await requireStatus(response, [201]);
+    try {
+      const data = await boundedJSON(response);
+      if (
+        !object(data) ||
+        Object.keys(data).length !== 2 ||
+        !producerToken(data.token) ||
+        data.token.revoked_at !== null ||
+        typeof data.secret !== "string" ||
+        !/^[0-9a-f]{64}$/.test(data.secret)
+      )
+        throw unknown();
+      return data as ProducerTokenGrant;
+    } catch {
+      this.session.clear();
+      throw new AdminFailure(
+        "unknown",
+        "响应不符合令牌签发契约。未确认是否已签发，请重新读取令牌列表核实，必要时撤销未知令牌。",
+      );
+    }
+  }
+  async revokeToken(
+    id: string,
+    tokenId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!validId(tokenId)) throw new AdminFailure("invalid", "令牌 ID 无效。");
+    const response = await this.session.write(
+      `${path(id)}/tokens/${tokenId}/revoke`,
+      "POST",
+      {},
+      undefined,
+      signal,
+    );
+    if (response.status === 404) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "invalid",
+        "令牌不存在或不属于此来源；请重新读取令牌列表。",
+      );
+    }
+    await requireStatus(response, [204]);
+    await response.body?.cancel();
   }
   async retire(
     id: string,

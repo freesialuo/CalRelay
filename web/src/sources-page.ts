@@ -2,6 +2,7 @@ import { AdminFailure } from "./admin-session";
 import { node, sourceForm } from "./source-form";
 import {
   MAX_ICS_BYTES,
+  type ProducerToken,
   type SourceRecord,
   type SourcesAPI,
   validId,
@@ -597,6 +598,187 @@ export function mountSources(
         fileLabel,
         upload,
         approval,
+      );
+      editor.append(section);
+    }
+    if (
+      record &&
+      !retired &&
+      record.configuration.adapter === "standard-calendar" &&
+      record.configuration.mode === "push-only"
+    ) {
+      const tokenStatus = node("p", "尚未读取令牌。");
+      const list = node("ul");
+      list.setAttribute("aria-label", "生产者令牌列表");
+      const reload = node("button", "读取令牌");
+      reload.type = "button";
+      const option = (title: string) => {
+        const box = node("input");
+        box.type = "checkbox";
+        box.checked = true;
+        const label = node("label", title);
+        label.prepend(box);
+        return [label, box] as const;
+      };
+      const [upsertLabel, upsertBox] = option("允许新增 / 更新（upsert）");
+      const [deleteLabel, deleteBox] = option(
+        "允许删除（delete；快照批次需要）",
+      );
+      const days = node("input");
+      days.type = "number";
+      days.min = "1";
+      days.max = "3650";
+      days.step = "1";
+      const daysLabel = node("label", "有效天数（留空表示不过期）");
+      daysLabel.append(days);
+      const issue = node("button", "签发令牌");
+      issue.type = "button";
+      writes.add(issue);
+      localWrites.add(issue);
+      // The one-time secret lives only in this field until the list is re-read or the page left.
+      const secretBox = node("div");
+      const clearSecret = () => secretBox.replaceChildren();
+      const rowWrites = new Set<HTMLButtonElement>();
+      const date = (value: number | null) =>
+        value === null ? "无" : new Date(value).toISOString();
+      const render = (items: ProducerToken[], more: boolean) => {
+        for (const button of rowWrites) {
+          writes.delete(button);
+          localWrites.delete(button);
+        }
+        rowWrites.clear();
+        list.replaceChildren();
+        for (const token of items) {
+          const live =
+            token.revoked_at === null &&
+            (token.expires_at === null || token.expires_at > Date.now());
+          const permissions = [
+            token.can_upsert ? "upsert" : "",
+            token.can_delete ? "delete" : "",
+          ]
+            .filter(Boolean)
+            .join(" + ");
+          const item = node(
+            "li",
+            `${token.token_id} · ${permissions} · 签发：${date(token.issued_at)} · 到期：${date(token.expires_at)} · ${token.revoked_at !== null ? `已撤销 ${date(token.revoked_at)}` : live ? "有效" : "已过期"}`,
+          );
+          if (live) {
+            const revoke = node("button", `撤销 ${token.token_id}`);
+            revoke.type = "button";
+            const confirm = node("button", `确认撤销 ${token.token_id}`);
+            confirm.type = "button";
+            confirm.hidden = true;
+            for (const button of [revoke, confirm]) {
+              rowWrites.add(button);
+              writes.add(button);
+              localWrites.add(button);
+            }
+            revoke.addEventListener("click", () => {
+              confirm.hidden = false;
+            });
+            confirm.addEventListener("click", () => {
+              void write(async (sourceId, signal) => {
+                await api.revokeToken(sourceId, token.token_id, signal);
+                if (disposed || signal.aborted) return;
+                display(
+                  `服务端已撤销令牌 ${token.token_id}；持有它的生产者从现在起被拒绝。`,
+                  "success",
+                );
+                await readTokens(sourceId);
+              }, false);
+            });
+            item.append(revoke, confirm);
+          }
+          list.append(item);
+        }
+        tokenStatus.textContent = items.length
+          ? `共 ${items.length} 个令牌${more ? "；还有更早的历史记录未显示" : ""}。有效令牌总是列在前面。`
+          : "此来源还没有令牌。";
+        for (const button of rowWrites)
+          button.dataset.blocked = String(blocked);
+        authorize();
+      };
+      const readTokens = async (sourceId: string) => {
+        const controller = new AbortController();
+        requests.add(controller);
+        try {
+          const page = await api.tokens(sourceId, controller.signal);
+          if (!disposed && !controller.signal.aborted)
+            render(page.items, page.more);
+        } catch (error) {
+          if (!disposed && !controller.signal.aborted)
+            tokenStatus.textContent =
+              error instanceof AdminFailure
+                ? error.message
+                : "未能读取令牌列表，请重试。";
+        } finally {
+          requests.delete(controller);
+        }
+      };
+      reload.addEventListener("click", () => {
+        clearSecret();
+        void readTokens(record.source_id);
+      });
+      issue.addEventListener("click", () => {
+        clearSecret();
+        if (!upsertBox.checked && !deleteBox.checked) {
+          display("未签发：至少选择一项权限。", "error");
+          return;
+        }
+        let expires: number | null = null;
+        if (days.value !== "") {
+          const count = Number(days.value);
+          if (!Number.isInteger(count) || count < 1 || count > 3650) {
+            display("有效天数须为 1–3650 的整数，或留空。", "error");
+            return;
+          }
+          expires = Date.now() + count * 86_400_000;
+        }
+        void write(async (sourceId, signal) => {
+          const grant = await api.issueToken(
+            sourceId,
+            {
+              can_upsert: upsertBox.checked,
+              can_delete: deleteBox.checked,
+              expires_at: expires,
+            },
+            signal,
+          );
+          if (disposed || signal.aborted) return;
+          const field = node("input");
+          field.readOnly = true;
+          field.value = grant.secret;
+          const label = node("label", "新令牌密钥（只显示这一次）");
+          label.append(field);
+          secretBox.replaceChildren(
+            label,
+            node(
+              "p",
+              "请立即交给生产者保存；服务端只存摘要，无法再次显示。重新读取列表或离开页面后此处清除。",
+            ),
+          );
+          display(
+            `服务端已签发令牌 ${grant.token.token_id}；密钥只显示这一次。`,
+            "success",
+          );
+          await readTokens(sourceId);
+        }, false);
+      });
+      const section = node("section");
+      section.append(
+        node("h3", "生产者令牌"),
+        node(
+          "p",
+          "来源作用域的 bearer 令牌，供外部生产者调用单事件与批次接入接口；不提供管理权限。快照批次需要同时具备 upsert 与 delete。",
+        ),
+        reload,
+        tokenStatus,
+        list,
+        upsertLabel,
+        deleteLabel,
+        daysLabel,
+        issue,
+        secretBox,
       );
       editor.append(section);
     }

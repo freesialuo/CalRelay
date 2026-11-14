@@ -1045,3 +1045,205 @@ test("an ICS source maps exactly one calendar and a second mapping is refused be
   );
   expect(api.requests.filter((r) => r.method !== "GET")).toHaveLength(0);
 });
+
+// Producer tokens of push-only sources (#180).
+const pushConfig = (): SourceConfiguration => ({
+  ...config(),
+  enabled: true,
+  adapter: "standard-calendar",
+  mode: "push-only",
+  endpoint: null,
+  refresh_interval_ms: null,
+  freshness_sla_ms: null,
+});
+const liveToken = {
+  token_id: "pt_live",
+  can_upsert: true,
+  can_delete: true,
+  expires_at: null,
+  revoked_at: null,
+  issued_at: 1_800_000_000_000,
+};
+const secret = "a".repeat(64);
+type TokenReply = { status: number; json?: unknown };
+async function tokenBackend(
+  page: Page,
+  configuration: SourceConfiguration,
+  answer: (method: string, url: URL, body: unknown) => TokenReply,
+) {
+  const base = backend(page, {
+    source_id: "source_a",
+    config_revision: 1,
+    source_revision: 1,
+    retired_at: null,
+    configuration,
+  });
+  await base.install();
+  const calls: { method: string; path: string; body: unknown }[] = [];
+  await page.route(
+    /\/api\/admin\/v1\/sources\/source_a\/tokens/,
+    async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const body = request.postData()
+        ? JSON.parse(request.postData() ?? "")
+        : null;
+      calls.push({ method: request.method(), path: url.pathname, body });
+      const reply = answer(request.method(), url, body);
+      await route.fulfill({
+        ...reply,
+        headers: { "x-admin-write-nonce": `rotated_${calls.length}` },
+      });
+    },
+  );
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "查看 / 编辑", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("已读取配置版本 1");
+  return calls;
+}
+const tokenList = (page: Page) => page.getByLabel("生产者令牌列表");
+const secretField = (page: Page) =>
+  page.getByLabel("新令牌密钥（只显示这一次）");
+
+test("only push-only standard-calendar sources show producer tokens", async ({
+  page,
+}) => {
+  await tokenBackend(page, pullConfig(), () => ({ status: 500 }));
+  await expect(page.getByRole("heading", { name: "生产者令牌" })).toHaveCount(
+    0,
+  );
+});
+
+test("producer tokens are listed without secrets and issued once", async ({
+  page,
+}) => {
+  const calls = await tokenBackend(page, pushConfig(), (method) =>
+    method === "GET"
+      ? { status: 200, json: { items: [liveToken], more: false } }
+      : {
+          status: 201,
+          json: {
+            token: { ...liveToken, token_id: "pt_new" },
+            secret,
+          },
+        },
+  );
+  await expect(page.getByRole("heading", { name: "生产者令牌" })).toBeVisible();
+  await page.getByRole("button", { name: "读取令牌", exact: true }).click();
+  await expect(tokenList(page)).toContainText("pt_live");
+  await expect(tokenList(page)).toContainText("upsert + delete");
+  await expect(secretField(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "服务端已签发令牌 pt_new；密钥只显示这一次",
+  );
+  await expect(secretField(page)).toHaveValue(secret);
+  const issued = calls.find((c) => c.method === "POST");
+  expect(issued?.body).toEqual({
+    can_upsert: true,
+    can_delete: true,
+    expires_at: null,
+  });
+  // Re-reading the list clears the one-time secret.
+  await page.getByRole("button", { name: "读取令牌", exact: true }).click();
+  await expect(secretField(page)).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(secret);
+});
+
+test("an expiry in days is sent as a future timestamp", async ({ page }) => {
+  const calls = await tokenBackend(page, pushConfig(), (method) =>
+    method === "GET"
+      ? { status: 200, json: { items: [], more: false } }
+      : { status: 201, json: { token: liveToken, secret } },
+  );
+  await page.getByLabel("有效天数（留空表示不过期）").fill("30");
+  await page.getByLabel("允许删除（delete；快照批次需要）").uncheck();
+  const before = Date.now();
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  await expect(secretField(page)).toHaveValue(secret);
+  const body = calls.find((c) => c.method === "POST")?.body as {
+    can_delete: boolean;
+    expires_at: number;
+  };
+  expect(body.can_delete).toBe(false);
+  expect(body.expires_at).toBeGreaterThanOrEqual(before + 30 * 86_400_000);
+  expect(body.expires_at).toBeLessThan(before + 31 * 86_400_000);
+});
+
+for (const [status, message] of [
+  [409, "未签发：来源不能持有生产者令牌，或有效令牌已达 16 个上限"],
+  [422, "未签发：至少选择一项权限"],
+] as const) {
+  test(`issue HTTP ${status} reports the refusal and shows no secret`, async ({
+    page,
+  }) => {
+    await tokenBackend(page, pushConfig(), () => ({ status }));
+    await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText(message);
+    await expect(secretField(page)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "签发令牌", exact: true }),
+    ).toBeEnabled();
+  });
+}
+
+test("an invalid issue receipt shows no secret and clears write authorization", async ({
+  page,
+}) => {
+  await tokenBackend(page, pushConfig(), () => ({
+    status: 201,
+    json: { token: liveToken, secret: "short" },
+  }));
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "响应不符合令牌签发契约",
+  );
+  await expect(secretField(page)).toHaveCount(0);
+  await expect(authorizationMissing(page)).toBeVisible();
+});
+
+test("selecting no permission is refused locally", async ({ page }) => {
+  const calls = await tokenBackend(page, pushConfig(), () => ({ status: 500 }));
+  await page.getByLabel("允许新增 / 更新（upsert）").uncheck();
+  await page.getByLabel("允许删除（delete；快照批次需要）").uncheck();
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("至少选择一项权限");
+  expect(calls).toHaveLength(0);
+});
+
+test("revoking a token needs confirmation and re-reads the list", async ({
+  page,
+}) => {
+  let revoked = false;
+  const calls = await tokenBackend(page, pushConfig(), (method, url) => {
+    if (method === "POST" && url.pathname.endsWith("/revoke")) {
+      revoked = true;
+      return { status: 204 };
+    }
+    return {
+      status: 200,
+      json: {
+        items: [
+          { ...liveToken, revoked_at: revoked ? 1_800_000_000_001 : null },
+        ],
+        more: false,
+      },
+    };
+  });
+  await page.getByRole("button", { name: "读取令牌", exact: true }).click();
+  await page.getByRole("button", { name: "撤销 pt_live", exact: true }).click();
+  expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  await page
+    .getByRole("button", { name: "确认撤销 pt_live", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "服务端已撤销令牌 pt_live",
+  );
+  await expect(tokenList(page)).toContainText("已撤销");
+  await expect(
+    page.getByRole("button", { name: "撤销 pt_live", exact: true }),
+  ).toHaveCount(0);
+  expect(calls.find((c) => c.method === "POST")?.path).toBe(
+    "/api/admin/v1/sources/source_a/tokens/pt_live/revoke",
+  );
+});
