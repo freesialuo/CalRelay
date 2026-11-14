@@ -1294,3 +1294,52 @@ async fn restart_restores_persisted_waits_bounded_against_utc_jumps_and_ignores_
     services.drain().await;
     Ok(())
 }
+#[tokio::test]
+async fn an_outcome_finishing_during_shutdown_is_persisted_from_its_completion_time() -> Result {
+    use calendar_storage::{SourceSyncOutcome, SourceSyncStatus};
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("db");
+    let services = service(&path).await?;
+    let http = Http::new().await?;
+    let record = source(&services, "a", SourceMode::Pull, true).await?;
+    http.state.statuses.lock().unwrap().insert("a".into(), 429);
+    http.state
+        .retry_after_s
+        .lock()
+        .unwrap()
+        .insert("a".into(), 3600);
+    let gate = Arc::new(Gate {
+        entered: Semaphore::new(0),
+        release: Semaphore::new(0),
+    });
+    *http.state.gate.lock().unwrap() = Some(gate.clone());
+    let clock = Arc::new(Time::new());
+    let (worker_services, worker_clock, runner) = (services.clone(), clock.clone(), http.runner());
+    let worker = tokio::spawn(async move {
+        SourceScanner::new(limits(8))
+            .run(&worker_services, &runner, &*worker_clock, |_| {})
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), gate.entered.acquire())
+        .await??
+        .forget();
+    // The attempt takes 50 s and shutdown starts before the upstream answers.
+    clock.set(51_000, 50_000);
+    services.stop();
+    gate.release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(2), worker).await???;
+    services.drain().await;
+    let reopened = service(&path).await?;
+    assert_eq!(
+        reopened.storage.source_sync_status("a").await?,
+        Some(SourceSyncStatus {
+            config_revision: record.config_revision,
+            attempted_at: 51_000,
+            outcome: SourceSyncOutcome::RetryAfter,
+            consecutive_failures: 1,
+            next_allowed_at: 51_000 + 3_600_000,
+        })
+    );
+    reopened.drain().await;
+    Ok(())
+}

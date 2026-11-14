@@ -3593,7 +3593,7 @@ export interface components {
         };
         /** @description Last sync attempt under the current configuration revision */
         SourceSyncStatus: {
-            /** @description Unix milliseconds */
+            /** @description Unix milliseconds when the attempt completed */
             attempted_at: number;
             consecutive_failures: number;
             /** @description Unix milliseconds; no scheduled or manual request before it */

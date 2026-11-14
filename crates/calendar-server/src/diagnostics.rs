@@ -82,7 +82,7 @@ pub(crate) fn describe(document: &mut Value) {
         "description":"Last sync attempt under the current configuration revision",
         "required":["attempted_at","outcome","consecutive_failures","next_allowed_at"],
         "properties":{
-            "attempted_at":{"type":"integer","description":"Unix milliseconds"},
+            "attempted_at":{"type":"integer","description":"Unix milliseconds when the attempt completed"},
             "outcome":{"type":"string","enum":outcomes},
             "consecutive_failures":{"type":"integer","minimum":0},
             "next_allowed_at":{"type":"integer","description":"Unix milliseconds; no scheduled or manual request before it"}
