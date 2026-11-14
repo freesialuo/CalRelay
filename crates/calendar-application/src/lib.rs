@@ -166,6 +166,8 @@ pub struct PlanningRequest {
     pub horizon_ms: i64,
     pub max_lead_ms: i64,
     pub extension_interval_ms: i64,
+    /// Delivery catch-up window; reminders stay plannable while `now < due_at + catch_up_ms`.
+    pub catch_up_ms: i64,
     pub tzdata_version: String,
     pub limits: PlanningLimits,
 }
@@ -246,6 +248,7 @@ impl PlanningRequest {
             || self.max_lead_ms < 0
             || self.extension_interval_ms <= 0
             || self.horizon_ms <= 0
+            || self.catch_up_ms <= 0
             || self.limits.max_occurrences == 0
             || self.limits.max_iterations == 0
             || self.limits.max_elapsed_ms == 0
@@ -339,7 +342,13 @@ pub fn plan_events<C: Clock + ?Sized>(
             epoch - Duration::from_millis(ms.unsigned_abs())
         }
     };
-    let window_start_dt = to_utc(window_start);
+    // Look back by the delivery catch-up window so a revision cannot drop a reminder
+    // that has ended but is still deliverable; anything at or past its deadline is skipped.
+    let expansion_start = window_start
+        .checked_sub(request.catch_up_ms)
+        .filter(|start| *start >= MIN_UTC_MS)
+        .ok_or(PlanningError::InvalidWindow)?;
+    let window_start_dt = to_utc(expansion_start);
     let window_end_dt = to_utc(planned_until);
 
     let mut remaining_occurrences = request.limits.max_occurrences;
@@ -393,7 +402,13 @@ pub fn plan_events<C: Clock + ?Sized>(
 
         for occ in expanded {
             let planned = build_planned_occurrence(item, occ, policy.lead_ms, &all_day_hms)?;
-            occurrences.push(planned);
+            let deadline = planned
+                .due_at
+                .checked_add(request.catch_up_ms)
+                .ok_or(PlanningError::InvalidWindow)?;
+            if window_start < deadline {
+                occurrences.push(planned);
+            }
         }
     }
 
