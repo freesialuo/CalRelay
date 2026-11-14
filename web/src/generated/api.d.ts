@@ -7,10 +7,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the latest 100 management changes, newest first; not a complete audit export */
+        /**
+         * Read management changes 100 at a time, newest first; not a complete audit export
+         * @description Total order: time descending, kind, then later writes first. A cursor is stable under new writes and only valid for the current database. Unknown query fields rejected.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description next_before of the previous page */
+                    before?: string;
+                    kind?: "deletion_approval" | "output" | "producer_token" | "rule" | "source" | "subscription";
+                };
                 header: {
                     "Cf-Access-Jwt-Assertion": string;
                 };
@@ -30,8 +37,22 @@ export interface paths {
                         "application/json": components["schemas"]["AuditPage"];
                     };
                 };
+                /** @description Invalid query */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
                 /** @description Management authentication denied */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid cursor or kind */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3987,7 +4008,7 @@ export interface components {
             /** @description Unix milliseconds */
             at: number;
             /** @enum {string} */
-            kind: "source" | "rule" | "output" | "subscription" | "producer_token" | "deletion_approval";
+            kind: "deletion_approval" | "output" | "producer_token" | "rule" | "source" | "subscription";
             revision: number | null;
             /** @description Owning source of a producer token */
             source_id: string | null;
@@ -3996,6 +4017,8 @@ export interface components {
         AuditPage: {
             items: components["schemas"]["AuditEntry"][];
             more: boolean;
+            /** @description Opaque cursor for the next older page; null on the last page */
+            next_before: string | null;
         };
         BarkOutputConfigurationRecord: {
             configuration: components["schemas"]["BarkOutputConfigurationV1"];

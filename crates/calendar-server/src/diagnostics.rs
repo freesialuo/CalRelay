@@ -1,13 +1,13 @@
 //! Read-only management diagnostics behind the existing Access + session guard.
 use crate::{admin::AdminState, source_configuration::error};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::get,
     Json, Router,
 };
 use calendar_application::configuration::{valid_id, SourceMode};
-use calendar_storage::SourceSyncOutcome;
+use calendar_storage::{audit::AUDIT_KINDS, SourceSyncOutcome};
 use serde_json::{json, Value};
 
 pub(crate) fn routes() -> Router<AdminState> {
@@ -60,11 +60,20 @@ async fn read(
         "freshness":freshness,"sync_status":sync_status,"deliveries":deliveries,"more_deliveries":row.more_deliveries}),
     ))
 }
-/// The latest management changes; identifiers, revisions, actions and times only.
-async fn audit(State(state): State<AdminState>) -> Result<Json<Value>, StatusCode> {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuditQuery {
+    before: Option<String>,
+    kind: Option<String>,
+}
+/// Management changes newest first; identifiers, revisions, actions and times only.
+async fn audit(
+    State(state): State<AdminState>,
+    Query(q): Query<AuditQuery>,
+) -> Result<Json<Value>, StatusCode> {
     let page = state
         .services
-        .run_task(async |db| db.recent_audit().await)
+        .run_task(async |db| db.audit_page(q.before.as_deref(), q.kind.as_deref()).await)
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
         .map_err(error)?;
@@ -76,7 +85,9 @@ async fn audit(State(state): State<AdminState>) -> Result<Json<Value>, StatusCod
             "revision":e.revision,"action":e.action,"actor":e.actor,"at":e.at})
         })
         .collect();
-    Ok(Json(json!({"items":items,"more":page.more})))
+    Ok(Json(
+        json!({"items":items,"more":page.next_before.is_some(),"next_before":page.next_before}),
+    ))
 }
 pub(crate) fn describe(document: &mut Value) {
     let nullable_time = json!({"type":["integer","null"],"description":"Unix milliseconds"});
@@ -123,7 +134,7 @@ pub(crate) fn describe(document: &mut Value) {
         .collect::<Vec<_>>());
     document["components"]["schemas"]["SourceDiagnostic"] = source;
     let mut entry = json!({"type":"object","additionalProperties":false,"properties":{
-        "kind":{"type":"string","enum":["source","rule","output","subscription","producer_token","deletion_approval"]},
+        "kind":{"type":"string","enum":AUDIT_KINDS},
         "subject_id":{"type":"string"},"source_id":{"type":["string","null"],"description":"Owning source of a producer token"},
         "revision":{"type":["integer","null"]},
         "action":{"type":"string","enum":["create","update","retire","credential_changed","rotate","issue","revoke","approve"]},
@@ -136,14 +147,19 @@ pub(crate) fn describe(document: &mut Value) {
         .keys()
         .collect::<Vec<_>>());
     document["components"]["schemas"]["AuditEntry"] = entry;
-    document["components"]["schemas"]["AuditPage"] = json!({"type":"object","additionalProperties":false,"required":["items","more"],
-        "properties":{"items":{"type":"array","maxItems":100,"items":{"$ref":"#/components/schemas/AuditEntry"}},"more":{"type":"boolean"}}});
+    document["components"]["schemas"]["AuditPage"] = json!({"type":"object","additionalProperties":false,"required":["items","more","next_before"],
+        "properties":{"items":{"type":"array","maxItems":100,"items":{"$ref":"#/components/schemas/AuditEntry"}},"more":{"type":"boolean"},
+        "next_before":{"type":["string","null"],"description":"Opaque cursor for the next older page; null on the last page"}}});
     document["paths"]["/api/admin/v1/audit"] = json!({"get":{
-        "summary":"Read the latest 100 management changes, newest first; not a complete audit export",
+        "summary":"Read management changes 100 at a time, newest first; not a complete audit export",
+        "description":"Total order: time descending, kind, then later writes first. A cursor is stable under new writes and only valid for the current database. Unknown query fields rejected.",
         "parameters":[{"name":"Cf-Access-Jwt-Assertion","in":"header","required":true,"schema":{"type":"string"}},
-            {"name":"__Host-calrelay_admin","in":"cookie","required":true,"schema":{"type":"string"}}],
+            {"name":"__Host-calrelay_admin","in":"cookie","required":true,"schema":{"type":"string"}},
+            {"name":"before","in":"query","required":false,"schema":{"type":"string"},"description":"next_before of the previous page"},
+            {"name":"kind","in":"query","required":false,"schema":{"type":"string","enum":AUDIT_KINDS}}],
         "responses":{"200":{"description":"Identifiers, revisions, actions and times only","content":{"application/json":{"schema":{"$ref":"#/components/schemas/AuditPage"}}}},
-            "403":{"description":"Management authentication denied"},"500":{"description":"Storage unavailable"},"503":{"description":"Service stopping or unavailable"}}
+            "400":{"description":"Invalid query"},"403":{"description":"Management authentication denied"},"422":{"description":"Invalid cursor or kind"},
+            "500":{"description":"Storage unavailable"},"503":{"description":"Service stopping or unavailable"}}
     }});
     document["paths"]["/api/admin/v1/sources/{source_id}/diagnostics"] = json!({"get":{
         "summary":"Read source snapshot/freshness, last classified sync attempt and latest 20 created jobs",
