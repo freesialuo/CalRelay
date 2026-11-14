@@ -345,8 +345,69 @@ test("browser configuration drives actual scanner planner delivery and distinct 
     .poll(fetchedB, { timeout: 30000, intervals: [250, 500, 1000] })
     .toBeGreaterThan(before);
   expect((await diagnostic(b.id)).consecutive_failures).toBe(0);
-  // The push source has no upstream to fail and Bark being down is also not a core fault.
+  // Bark being down is also not a core fault: a new due reminder meets the outage, its
+  // attempt is recorded as retryable and the core stays live and ready.
   await control({ action: "bark", status: 503 });
+  const businessNow = clock.clock_file
+    ? JSON.parse(readFileSync(clock.clock_file, "utf8")).utc_now_ms
+    : Date.now() + 3000;
+  const late = await (
+    await request.get(`${ingest}/state`, { headers: bearer })
+  ).json();
+  const event = (uid: string, at: number) => ({
+    op: "upsert",
+    calendar_id: d.calendar,
+    event: {
+      schema_version: "1.0",
+      external_uid: uid,
+      title: "Pushed synthetic event",
+      status: "confirmed",
+      start: {
+        kind: "utc",
+        value: new Date(at).toISOString().replace(/\.\d+Z$/, "Z"),
+      },
+    },
+  });
+  const repushed = await request.post(`${ingest}/batches`, {
+    headers: { ...bearer, "idempotency-key": "system-push-2" },
+    data: {
+      protocol_version: "standard-calendar-source/v1",
+      batch_id: "system-push-2",
+      mode: "snapshot",
+      base_source_revision: late.source_revision,
+      base_config_revision: late.config_revision,
+      base_checkpoint: null,
+      proposed_checkpoint: null,
+      complete: true,
+      pages: 1,
+      collection_tag: null,
+      operations: [event("pushed", due), event("pushed-late", businessNow)],
+    },
+  });
+  expect(repushed.status()).toBe(200);
+  const retryable = () =>
+    Number(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(c.execute(\"SELECT count(*) FROM delivery_attempts WHERE outcome='retryable'\").fetchone()[0])",
+          state().database,
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  await expect
+    .poll(retryable, { timeout: 45000, intervals: [250, 500, 1000] })
+    .toBeGreaterThan(0);
+  const outage = await (await request.get(state().fixture_status)).json();
+  expect(
+    outage.requests.some(
+      (r: { kind: string; status: number }) =>
+        r.kind === "bark" && r.status === 503,
+    ),
+  ).toBe(true);
+  expect(observed().accepted).toBe(4);
   for (const path of ["/health/live", "/health/ready"])
     expect((await request.get(path)).status(), path).toBe(200);
 });
