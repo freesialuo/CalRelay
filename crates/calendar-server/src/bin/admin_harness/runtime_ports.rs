@@ -67,6 +67,11 @@ impl RemoteFetcher for Fetcher {
                 .map(str::to_owned),
             last_modified: None,
         };
+        // Test-only fault injection: a synthetic source's sentinel status makes this scanner
+        // worker panic, so system tests can observe a real core fault.
+        if response.status().as_u16() == 599 {
+            panic!("synthetic source scanner panic");
+        }
         if response.status().as_u16() == 304 {
             if !r.has_committed_snapshot {
                 return Err(E::UnexpectedNotModified);

@@ -545,4 +545,38 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       })
       .toBeGreaterThanOrEqual(5);
   }
+
+  // A panicking source scanner is a core fault too, and a forced restart recovers it.
+  await control({ action: "source", id: "a", status: 599 });
+  await login(page);
+  await page.getByRole("link", { name: "来源", exact: true }).click();
+  await page
+    .locator("main section")
+    .filter({ hasText: a.id })
+    .getByRole("button", { name: "查看 / 编辑", exact: true })
+    .click();
+  await page.getByRole("button", { name: "请求立即刷新", exact: true }).click();
+  await expect(status(page)).toContainText("服务端已记录刷新请求");
+  await expect
+    .poll(async () => (await request.get("/health/live")).status(), {
+      timeout: 30000,
+      intervals: [250, 500, 1000],
+    })
+    .toBe(503);
+  const scanned = await (await request.get(state().fixture_status)).json();
+  expect(
+    scanned.requests.some(
+      (r: { kind: string; status: number; source?: string }) =>
+        r.kind === "ics" && r.status === 599 && r.source === "a",
+    ),
+  ).toBe(true);
+  expect((await page.request.get("/api/admin/v1/sources")).status()).toBe(200);
+  await control({ action: "source", id: "a", status: 200 });
+  await control({ action: "restart" });
+  await expect
+    .poll(async () => (await request.get("/health/ready")).status(), {
+      timeout: 20000,
+    })
+    .toBe(200);
+  expect((await request.get("/health/live")).status()).toBe(200);
 });
