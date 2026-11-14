@@ -128,7 +128,11 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
         const state = { ...states[source] };
         const tag = `"system-${source}-r${state.revision}"`;
         const conditional = request.headers["if-none-match"] === tag;
-        const status = state.status === 503 ? 503 : conditional ? 304 : 200;
+        const status = [503, 599].includes(state.status)
+          ? state.status
+          : conditional
+            ? 304
+            : 200;
         // Snapshot the response before the barrier to exercise an old in-flight fetch.
         const body = calendar(source, state, nowMs);
         const pending = held.get(source);
@@ -233,7 +237,8 @@ export async function startSystemFixtures({ nowMs, barkCredential }) {
           (k) => !["status", "shift", "cancelled"].includes(k),
         ) ||
         (Object.hasOwn(change, "status") &&
-          ![200, 503].includes(change.status)) ||
+          // 599 is a test-only sentinel that makes the harness scanner worker panic.
+          ![200, 503, 599].includes(change.status)) ||
         (Object.hasOwn(change, "shift") &&
           (!Number.isSafeInteger(change.shift) ||
             Math.abs(change.shift) > 604800000)) ||
