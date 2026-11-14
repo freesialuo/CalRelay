@@ -40,12 +40,21 @@ export function sourceForm(configuration?: SourceConfiguration): {
   const [nameLabel, name] = input("名称", configuration?.name ?? "", true);
   name.maxLength = 256;
   const mode = node("select");
-  for (const [value, title] of [
+  const modes = [
     ["ics:pull", "ICS URL（定期读取）"],
     ["ics:manual-static", "ICS 静态 / 手动（启用后在来源详情上传文件）"],
     ["standard-calendar:push-only", "外部 producer 推送"],
-    ["standard-calendar:manual-static", "标准日历手动来源"],
-  ]) {
+  ];
+  // No upload or push path exists for this type; it stays visible only for saved sources.
+  if (
+    configuration?.adapter === "standard-calendar" &&
+    configuration.mode === "manual-static"
+  )
+    modes.push([
+      "standard-calendar:manual-static",
+      "标准日历手动来源（尚无写入入口，不会产生事件）",
+    ]);
+  for (const [value, title] of modes) {
     const option = node("option", title);
     option.value = value;
     mode.append(option);

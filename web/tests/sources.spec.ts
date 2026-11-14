@@ -980,3 +980,43 @@ for (const kind of ["refresh", "upload"] as const) {
     expect(calls).toHaveLength(1);
   });
 }
+
+test("new sources cannot pick the standard-calendar manual type, which has no write path", async ({
+  page,
+}) => {
+  await backend(page).install();
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "创建来源", exact: true }).click();
+  const mode = page.getByLabel("来源类型与更新方式");
+  await expect(mode.locator("option")).toHaveText([
+    "ICS URL（定期读取）",
+    "ICS 静态 / 手动（启用后在来源详情上传文件）",
+    "外部 producer 推送",
+  ]);
+});
+
+test("an existing standard-calendar manual source keeps its type and says it has no write path", async ({
+  page,
+}) => {
+  await backend(page, {
+    source_id: "source_a",
+    config_revision: 1,
+    source_revision: 1,
+    retired_at: null,
+    configuration: {
+      ...config(),
+      adapter: "standard-calendar",
+      mode: "manual-static",
+      endpoint: null,
+      refresh_interval_ms: null,
+      freshness_sla_ms: null,
+    },
+  }).install();
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "查看 / 编辑", exact: true }).click();
+  const mode = page.getByLabel("来源类型与更新方式");
+  await expect(mode).toHaveValue("standard-calendar:manual-static");
+  await expect(mode.locator("option:checked")).toHaveText(
+    "标准日历手动来源（尚无写入入口，不会产生事件）",
+  );
+});
