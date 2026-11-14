@@ -501,4 +501,48 @@ test("browser configuration drives actual scanner planner delivery and distinct 
     })
     .toBe(200);
   expect((await request.get("/health/live")).status()).toBe(200);
+
+  // Recovery: the reminder that met the Bark outage is retried and accepted. Under the
+  // controlled clock, moving business time past the 60 s lease also reclaims the reminder
+  // that was in flight when the worker panicked. Redelivery after an unknown result may
+  // notify twice; no exactly-once claim is made.
+  if (clock.clock_file) {
+    const advance = () =>
+      frame(
+        JSON.parse(readFileSync(clock.clock_file ?? "", "utf8")).utc_now_ms +
+          61000,
+      );
+    const unknown = () =>
+      Number(
+        execFileSync(
+          "python3",
+          [
+            "-c",
+            "import sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(c.execute(\"SELECT count(*) FROM delivery_attempts WHERE outcome='unknown'\").fetchone()[0])",
+            state().database,
+          ],
+          { encoding: "utf8" },
+        ),
+      );
+    // Past the lease: the panicked attempt is recorded as unknown and scheduled for retry.
+    advance();
+    await expect
+      .poll(unknown, { timeout: 30000, intervals: [250, 500, 1000] })
+      .toBeGreaterThan(0);
+    // Past the bounded retry backoff: it is delivered.
+    advance();
+    await expect
+      .poll(() => observed().accepted_logical, {
+        timeout: 45000,
+        intervals: [250, 500, 1000],
+      })
+      .toBe(6);
+  } else {
+    await expect
+      .poll(() => observed().accepted_logical, {
+        timeout: 30000,
+        intervals: [250, 500, 1000],
+      })
+      .toBeGreaterThanOrEqual(5);
+  }
 });
