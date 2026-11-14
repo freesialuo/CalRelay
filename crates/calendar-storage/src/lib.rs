@@ -12,7 +12,7 @@ pub mod security;
 
 mod ingestion;
 mod source_runtime;
-pub use source_runtime::SourceRefreshRequest;
+pub use source_runtime::{SourceRefreshRequest, SourceSyncOutcome, SourceSyncStatus};
 
 mod delivery;
 mod planning;

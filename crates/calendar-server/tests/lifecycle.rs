@@ -137,6 +137,18 @@ async fn http_contract_limits_ids_errors_and_openapi() {
         "#/components/schemas/SourceDiagnostic"
     );
     assert!(diagnostic.get("put").is_none());
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(
+        schemas["SourceDiagnostic"]["properties"]["sync_status"]["oneOf"][0]["$ref"],
+        "#/components/schemas/SourceSyncStatus"
+    );
+    assert_eq!(
+        schemas["SourceSyncStatus"]["properties"]["outcome"]["enum"]
+            .as_array()
+            .unwrap()
+            .len(),
+        12
+    );
     for path in [
         "/health/live",
         "/health/ready",
