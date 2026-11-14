@@ -37,7 +37,7 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 ## 标准源 envelope v1 冻结边界
 
-`schemas/standard-calendar-source-v1.schema.json` 是下一批执行入口的结构契约，引用现有 EventV1 urn，不复制模型。当前只执行 #30 的 `/api/ingest/v1/sources/{source_id}/events/{uid}` PUT/DELETE，既有非托管来源的认证、If-Match/If-None-Match、token-wide Idempotency-Key、receipt TTL 及预算原样兼容。新托管来源只允许 push-only + standard-calendar 的已声明操作使用机器 API；在回执查询前重新核对模式/能力/启用/退休，配置收窄不能通过旧幂等回执放行。旧单事件入口没有 config CAS 请求头；同一允许操作的普通配置更新仍按原 Event revision CAS，完整 config/source/checkpoint CAS 由后续 envelope 入口承载，不冒充已完成 #73 AC5。此 PR 没有新增机器批次端点、receipt 表或声称 snapshot/delta 已接入 HTTP。不能把 envelope 发往旧单事件端点；它会按未知形状拒绝。
+`schemas/standard-calendar-source-v1.schema.json` 是下一批执行入口的结构契约，引用现有 EventV1 urn，不复制模型。当前只执行 #30 的 `/api/ingest/v1/sources/{source_id}/events/{uid}` PUT/DELETE，既有非托管来源的认证、If-Match/If-None-Match、token-wide Idempotency-Key、receipt TTL 及预算原样兼容。新托管来源只允许 push-only + standard-calendar 的已声明操作使用机器 API；在回执查询前重新核对模式/能力/启用/退休，配置收窄不能通过旧幂等回执放行。旧单事件入口没有 config CAS 请求头；同一允许操作的普通配置更新仍按原 Event revision CAS，完整 config/source/checkpoint CAS 由后续 envelope 入口承载，不冒充已完成 #73 AC5。#30 本身没有机器批次端点；单页快照批次由 #174 接入（见下文），delta 仍未接入。不能把 envelope 发往旧单事件端点；它会按未知形状拒绝。
 
 后续 envelope 入口应为独立版本路径（实现前在 OpenAPI 明示），同一个 source-scoped token 的授权先于幂等回执；认证上下文注入 source_id，正文任何 source_id/权限/内部 context 均是未知字段拒绝。protocol_version 固定 `standard-calendar-source/v1`；batch_id 是 idempotency key 的可审计关联而非来源身份。upsert 携带 calendar_id + 原 EventV1；delete 携带 external_uid + 正 revision。所有 upsert/delete 授权、结构/领域/日历归属检查必须整批完成后短事务提交。
 
@@ -45,7 +45,15 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 后续新批次摘要冻结为 SHA-256(JCS RFC 8785 的完整 envelope UTF-8)，服务端计算，不相信客户端提供的 digest；JSON 重复键必须在解析时拒绝，非 JCS 可表示数值拒绝。操作数组顺序有意义但重复 UID 拒绝；null/省略不等价（envelope 所有字段必填）。receipt 分区为认证 principal + source + versioned route + Idempotency-Key，24小时保留、全库100000未过期记录容量（沿用 IngestPolicy 部署范围）；同 key 异摘要409，容量满503不淘汰有效项，同 key 同摘要返回原回执。撤销/到期/禁用/退休即时拒绝，不能通过 receipt 绕过。记录过期后必须重新核对 base config/source/checkpoint 与 delete/event CAS，不能覆盖新修订。#30 既有摘要算法/token-wide key 继续不变，不能无迁移合并新 receipt namespace。
 
-预算：每个 envelope 请求同时受部署 max_request_bytes 与32MiB同步总字节上限约束（取更小），最多10000操作、32页、256日历、60秒同步时限、单源一个提交胜者；EventV1 单字段/时区/重复展开仍受原 schema/domain/SyncLimits/PlanningLimits/IcsLimits 约束，不新增无界展开。结构/版本/未知操作422，认证401，授权作用域拒绝按 #30 401，CAS/基线/重放冲突409，大规模删除待审409，预算413或同步 budget/容量503；均有 request_id，无事件/凭据正文日志。以上执行语义仍待下一批集成测试，不把 schema 测试当作服务器已支持。
+### 首个执行叶子（#174）
+
+`POST /api/ingest/standard-calendar/v1/sources/{source_id}/batches` 执行单页快照：仅 `mode=snapshot`、`pages=1`、`collection_tag=null`；delta 与多页返回 422（尚未支持），结构契约不变。来源须为已启用、未退休的 push-only + standard-calendar 且声明 snapshot，否则 409。bearer 须绑定该来源且同时具备 upsert 与 delete 权限（快照会删除缺失事件），否则 401；必须带 `Idempotency-Key`。解析拒绝重复键、小数与超出 ±(2^53−1) 的整数（本协议没有小数字段，安全整数在 JCS 下按十进制原样表示），随后执行 envelope 与 EventV1 Schema、类型化及领域校验。摘要为 SHA-256(JCS)，由服务端计算。
+
+令牌、来源状态、回执与提交在同一写事务内：先验证令牌与来源，再查回执（同 key 同摘要返回原回执，异摘要 409），两条机器路由的未过期回执合计不超过 `IngestPolicy.max_records`，任一路由满额都返回 503 且不淘汰；然后核对 `base_config_revision`、`base_source_revision`（失配 409），删除超过 100 条或清空非空来源返回 409 且不变（批准入口留待后续叶子），成功时写入 `proposed_checkpoint` 并返回 `{source_id,batch_id,source_revision,changed_events}`。回执表 `envelope_receipts`（迁移 `0016`）以 token + key 摘要为主键，只存摘要与计数，保留期沿用 `IngestPolicy.retention_ms`。
+
+`GET /api/ingest/standard-calendar/v1/sources/{source_id}/state` 用同一来源令牌（任一写权限）返回 `{source_id,config_revision,source_revision,checkpoint,has_snapshot}`，供 producer 填写 base 字段；不返回事件、端点、凭据或配置正文，鉴权与来源拒绝同上。
+
+预算：每个 envelope 请求同时受部署 max_request_bytes 与32MiB同步总字节上限约束（取更小），最多10000操作、32页、256日历、60秒同步时限、单源一个提交胜者；EventV1 单字段/时区/重复展开仍受原 schema/domain/SyncLimits/PlanningLimits/IcsLimits 约束，不新增无界展开。结构/版本/未知操作422，认证401，授权作用域拒绝按 #30 401，CAS/基线/重放冲突409，大规模删除待审409，预算413或同步 budget/容量503；均有 request_id，无事件/凭据正文日志。delta、多页、删除批准与浏览器 producer 语义仍待后续叶子；单页快照部分由 #174 的 HTTP+SQLite 集成测试覆盖，不把 schema 测试当作服务器已支持。
 
 浏览器只申请明确来源域权限；后台隔离保存 scoped token，不进入页面 localStorage/DOM/内容脚本/URL；仅向精确配置 ingest origin 发请求，不携带管理 Cookie。服务继续无通配 CORS；确切 extension origin/方法/header 需单独受控策略，CORS 不能替代 bearer。主服务不下载/运行任意 producer，插件进程与浏览器安装/权限/真实账号不在本批范围。
 

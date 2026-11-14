@@ -7,6 +7,7 @@ mod config;
 pub mod credentials_bootstrap;
 pub mod delivery_worker;
 mod diagnostics;
+mod envelope;
 mod feed;
 mod http;
 mod ingest;

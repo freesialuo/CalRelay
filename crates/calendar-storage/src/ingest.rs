@@ -102,9 +102,13 @@ impl Storage {
                 request_id,
             });
         }
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM ingest_requests")
-            .fetch_one(&mut *tx)
-            .await?;
+        // One receipt budget across both machine routes (#174 snapshot batches included).
+        let count: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM ingest_requests)+(SELECT count(*) FROM envelope_receipts WHERE expires_at>?)",
+        )
+        .bind(now)
+        .fetch_one(&mut *tx)
+        .await?;
         if count >= policy.max_records {
             return Err(IngestError::Capacity);
         }
