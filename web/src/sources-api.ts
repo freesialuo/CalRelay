@@ -14,6 +14,7 @@ export type SnapshotReceipt = components["schemas"]["SourceSnapshotReceipt"];
 export type ProducerToken = components["schemas"]["ProducerToken"];
 export type ProducerTokenPage = components["schemas"]["ProducerTokenPage"];
 export type ProducerTokenGrant = components["schemas"]["ProducerTokenGrant"];
+export type DeletionApproval = components["schemas"]["DeletionApproval"];
 export const MAX_ICS_BYTES = 1_048_576;
 export const validId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -397,6 +398,47 @@ export class SourcesAPI {
     }
     await requireStatus(response, [204]);
     await response.body?.cancel();
+  }
+  /** Lets the next snapshot commit of this source exceed the deletion limit, once. */
+  async approveDeletions(
+    id: string,
+    signal: AbortSignal,
+  ): Promise<DeletionApproval> {
+    const response = await this.session.write(
+      `${path(id)}/deletion-approval`,
+      "POST",
+      {},
+      undefined,
+      signal,
+    );
+    if ([404, 409].includes(response.status)) {
+      await response.body?.cancel();
+      throw new AdminFailure(
+        "conflict",
+        "未批准：来源不是已启用、未退休的拉取或推送来源，或已不存在。请重新读取来源核实。",
+      );
+    }
+    await requireStatus(response, [201]);
+    try {
+      const data = await boundedJSON(response);
+      if (
+        !object(data) ||
+        Object.keys(data).length !== 4 ||
+        data.source_id !== id ||
+        !positive(data.config_revision) ||
+        !Number.isSafeInteger(data.source_revision) ||
+        (data.source_revision as number) < 0 ||
+        !positive(data.expires_at)
+      )
+        throw unknown();
+      return data as DeletionApproval;
+    } catch {
+      this.session.clear();
+      throw new AdminFailure(
+        "unknown",
+        "响应不符合批准回执契约。未确认是否已批准，请重新读取来源核实。",
+      );
+    }
   }
   async retire(
     id: string,
