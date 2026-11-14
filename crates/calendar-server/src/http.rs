@@ -173,6 +173,7 @@ pub fn openapi() -> Value {
     crate::diagnostics::describe(&mut document);
     crate::source_refresh::describe(&mut document);
     crate::producer_tokens::describe(&mut document);
+    crate::deletion_approval::describe(&mut document);
     crate::source_upload::describe(&mut document);
     document
 }

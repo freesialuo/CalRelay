@@ -4,6 +4,7 @@ pub mod admin_sessions;
 pub mod aggregate;
 pub mod backup;
 pub mod configuration;
+pub mod deletion_approval;
 pub mod diagnostics;
 pub mod envelope;
 pub mod feed;

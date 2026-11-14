@@ -16,7 +16,7 @@
 
 配置 record 的 source_revision 与配置 JSON 来自同一次读取；构建 adapter 时 pin 该 revision。既有 synchronize 再读 SourceState，如果不匹配，在网络前返回 Conflict。网络期间修改、禁用、退休继续由 commit_snapshot/verify_unchanged 的最终 source CAS 拒绝，不能把旧配置配上新 revision 重放。已准入的外部 GET 无法跨数据库原子撤回；不把配置变更后已在途的请求误称“从未请求”。失败/超时/冲突不清空上次快照或推进成功核验。
 
-只读 `Storage::source_authentication` 从既有 immutable credential.kind 选择 None/Basic/Bearer，其他类型/缺失引用 fail closed。调度器不读取密文/秘密；实际 SecretProvider、版本与 HTTPS/DNS/SSRF/重定向/字节限额继续由原 HttpFetcher 执行。conditional_read=false 清除传给 adapter 的验证器并拒绝304；启用时复用原配置绑定 checkpoint 与完整快照证明。自动快照使用 DeletionPolicy::Limit(100)，保留已有清空审批/删除阈值，不自动批准大批删除。
+只读 `Storage::source_authentication` 从既有 immutable credential.kind 选择 None/Basic/Bearer，其他类型/缺失引用 fail closed。调度器不读取密文/秘密；实际 SecretProvider、版本与 HTTPS/DNS/SSRF/重定向/字节限额继续由原 HttpFetcher 执行。conditional_read=false 清除传给 adapter 的验证器并拒绝304；启用时复用原配置绑定 checkpoint 与完整快照证明。自动快照默认使用 DeletionPolicy::Limit(100)，不自动批准大批删除；超限时记为 review_required，只有管理员为当前配置与来源修订记录的一次性批准（#186）才让下一次同步以 Approved 提交。
 
 每次发现、配置读取、单源同步分别经过 Services::run_task；停止后无新准入，已准入的有界同步可保存结果，外层有限 drain 仍可取消。SourceProgress 只由真实查询/同步/外部结果产生；Scanned 和 Synchronized 携带当前缓存中是否仍有外部降级，单源成功不会清除另一来源的失败。存储故障返回上层，外部失败持续隔离重试；本模块不退出/重启进程，不操作 Docker，不解除恢复 pause/cutoff。
 
