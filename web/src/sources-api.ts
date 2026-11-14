@@ -236,13 +236,14 @@ export class SourcesAPI {
     revision: number,
     ics: string,
     signal: AbortSignal,
-  ): Promise<SnapshotReceipt> {
+    approveDeletions = false,
+  ): Promise<SnapshotReceipt | "approval-required"> {
     if (!positive(revision))
       throw new AdminFailure("invalid", "配置版本无效，请重新读取。");
     if (new TextEncoder().encode(ics).length > MAX_ICS_BYTES)
       throw new AdminFailure("invalid", "ICS 文件超过 1 MiB，未上传。");
     const response = await this.session.write(
-      `${path(id)}/snapshot`,
+      `${path(id)}/snapshot${approveDeletions ? "?approve_deletions=true" : ""}`,
       "PUT",
       {
         "content-type": "text/calendar; charset=utf-8",
@@ -258,12 +259,13 @@ export class SourcesAPI {
         "来源不是已启用的 ICS 静态来源，或配置已变化；既有事件未改变。请重新读取来源核实。",
       );
     }
+    if (response.status === 428 && !approveDeletions) {
+      await response.body?.cancel();
+      return "approval-required";
+    }
     if ([413, 415, 422].includes(response.status)) {
       await response.body?.cancel();
-      throw new AdminFailure(
-        "invalid",
-        "ICS 无效、超出预算，或一次会删除超过 100 个既有事件；既有事件未改变。",
-      );
+      throw new AdminFailure("invalid", "ICS 无效或超出预算；既有事件未改变。");
     }
     await requireStatus(response, [200]);
     try {

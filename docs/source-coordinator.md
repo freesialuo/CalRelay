@@ -73,8 +73,8 @@ manual-static 来源没有可拉取的 URL。`PUT /api/admin/v1/sources/{source_
 
 - 仅启用、未退休、manual-static、ICS、单日历来源接受上传；其他来源或配置修订不符返回 409，未知来源 404，媒体类型不符 415。
 - 文档经 `IcsUpload` adapter 走既有 `normalize_ics` 转为 EventV1，再由 `synchronize` 以来源修订 fence 和来源级 CAS 原子提交；没有分页、验证器或 checkpoint。
-- 整体成功或整体拒绝：无效 ICS 返回 422，超过 ICS 字节/事件等预算返回 413，均不改变既有快照和修订。文档中缺失的既有事件被删除，单次超过 100 条时拒绝（422），与拉取同步使用同一上限；本入口暂不提供越过该上限的显式批准。
+- 整体成功或整体拒绝：无效 ICS 返回 422，超过 ICS 字节/事件等预算返回 413，均不改变既有快照和修订。文档中缺失的既有事件被删除；单次超过 100 条（与拉取同步同一上限）时返回 428 且不做任何改变，同一上传带 `?approve_deletions=true` 重新提交才以 `DeletionPolicy::Approved` 提交（#160）。协调层以类型化 `IngestionError::ReviewRequired` 表达该情况；周期拉取没有批准入口，仍按外部失败处理，不删除、不推进。
 - 回执只含来源 ID、新来源修订和变更事件数；原始文档不落库，不向远端日历写回。请求体上限为 ICS 字节预算（默认 1 MiB），同时受服务全局请求上限约束。
 - 管理界面入口见[来源管理前端](source-web.md)（#158）；系统验收链路中，浏览器上传的事件经真实规划与投递循环到达模拟 Bark。
 
-验证：`admin_auth` 的 `ics_upload_replaces_only_manual_static_snapshots_atomically` 使用真实守卫与 SQLite，覆盖缺 CSRF、媒体类型、旧配置修订、pull 来源、未知来源、无效 ICS、超限正文、首次提交、替换（删除/不变/新增）、102 条批量与超限删除拒绝，并断言被拒绝的上传不改变来源状态、回执不含事件文本。受控去掉来源模式、配置修订、删除上限、媒体类型检查分别使该用例失败。
+验证：`admin_auth` 的 `ics_upload_replaces_only_manual_static_snapshots_atomically` 使用真实守卫与 SQLite，覆盖缺 CSRF、媒体类型、旧配置修订、pull 来源、未知来源、无效 ICS、超限正文、首次提交、替换（删除/不变/新增）、102 条批量、超限删除 428、`approve_deletions=false` 与未知查询参数拒绝、显式批准后提交，并断言被拒绝的上传不改变来源状态、回执不含事件文本。受控去掉来源模式、配置修订、删除上限、媒体类型检查，或让批准恒为真，分别使该用例失败。

@@ -43,6 +43,9 @@ pub enum IngestionError {
     /// The upstream asked for no further request before this many milliseconds have passed.
     #[error("source asked to retry later")]
     RetryAfter { retry_after_ms: u64 },
+    /// A complete snapshot would delete more events than the caller's limit allows.
+    #[error("snapshot deletions need approval")]
+    ReviewRequired { deletions: usize },
 }
 pub trait SourceRepository: EventRepository + Send + Sync {
     fn source_state(
