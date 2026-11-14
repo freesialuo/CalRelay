@@ -1816,6 +1816,240 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources/{source_id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List producer tokens of a source without secrets: every live token first, then the newest history */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Token metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProducerTokenPage"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source, or no such token of this source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid identifier or body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Issue a source-scoped producer token for a push-only standard-calendar source
+         * @description At least one permission. Snapshot batches need both upsert and delete. At most 16 unrevoked, unexpired tokens per source. The secret is returned once.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProducerTokenIssueRequest"];
+                };
+            };
+            responses: {
+                /** @description Token issued */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProducerTokenGrant"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source, or no such token of this source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Source is retired or not push-only standard-calendar, or the live token limit is reached */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid identifier or body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/sources/{source_id}/tokens/{token_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke a producer token; repeating it changes nothing */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                };
+                path: {
+                    source_id: string;
+                    token_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source, or no such token of this source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid identifier or body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/subscriptions": {
         parameters: {
             query?: never;
@@ -3634,6 +3868,32 @@ export interface components {
                 code: string;
                 request_id: string;
             };
+        };
+        ProducerToken: {
+            can_delete: boolean;
+            can_upsert: boolean;
+            /** @description Unix milliseconds */
+            expires_at: number | null;
+            /** @description Unix milliseconds; null for tokens issued before management existed */
+            issued_at: number | null;
+            /** @description Unix milliseconds */
+            revoked_at: number | null;
+            token_id: string;
+        };
+        ProducerTokenGrant: {
+            /** @description Bearer secret for the ingest entry points. Returned only here; never stored, listed or logged. */
+            readonly secret: string;
+            token: components["schemas"]["ProducerToken"];
+        };
+        ProducerTokenIssueRequest: {
+            can_delete: boolean;
+            can_upsert: boolean;
+            /** @description Unix milliseconds in the future, or null for no expiry */
+            expires_at: number | null;
+        };
+        ProducerTokenPage: {
+            items: components["schemas"]["ProducerToken"][];
+            more: boolean;
         };
         PushSourceState: {
             checkpoint: string | null;

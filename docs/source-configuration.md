@@ -45,6 +45,10 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 后续新批次摘要冻结为 SHA-256(JCS RFC 8785 的完整 envelope UTF-8)，服务端计算，不相信客户端提供的 digest；JSON 重复键必须在解析时拒绝，非 JCS 可表示数值拒绝。操作数组顺序有意义但重复 UID 拒绝；null/省略不等价（envelope 所有字段必填）。receipt 分区为认证 principal + source + versioned route + Idempotency-Key，24小时保留、全库100000未过期记录容量（沿用 IngestPolicy 部署范围）；同 key 异摘要409，容量满503不淘汰有效项，同 key 同摘要返回原回执。撤销/到期/禁用/退休即时拒绝，不能通过 receipt 绕过。记录过期后必须重新核对 base config/source/checkpoint 与 delete/event CAS，不能覆盖新修订。#30 既有摘要算法/token-wide key 继续不变，不能无迁移合并新 receipt namespace。
 
+### 生产者令牌（#178）
+
+`GET /api/admin/v1/sources/{id}/tokens` 列出该来源令牌元数据（ID、权限、到期、撤销、签发时间）：全部有效令牌在前（至多 16 个，始终在页内），其后为最新的历史记录，每页最多 100 条并以 `more` 提示更早历史，从不返回密钥或摘要。`POST /api/admin/v1/sources/{id}/tokens`（正文 `{can_upsert,can_delete,expires_at|null}`）只对受管、未退休的 push-only standard-calendar 来源签发，至少一项权限，到期须晚于当前时间；服务端生成 `pt_` 前缀 ID 与 256 位密钥，密钥只在 201 响应中返回一次，库内只存摘要。每来源最多 16 个未撤销且未过期的令牌，超限 409。`POST /api/admin/v1/sources/{id}/tokens/{token_id}/revoke` 立即撤销，重复撤销无副作用。签发与撤销沿用管理写入保护（Access、会话、Origin/CSRF、一次性写 nonce），并写入 `producer_token_audit`（令牌 ID、来源、动作、管理员摘要、时间，迁移 `0017`）；退休来源仍撤销其全部令牌。快照批次需要同时具备 upsert 与 delete 权限的令牌。
+
 ### 已执行的叶子（#174 快照、#176 增量）
 
 `POST /api/ingest/standard-calendar/v1/sources/{source_id}/batches` 执行单页批次：`pages=1`、`collection_tag=null`；多页返回 422（尚未支持），结构契约不变。来源须为已启用、未退休的 push-only + standard-calendar，快照须声明 snapshot，增量须声明 delta、含 delete 操作时还须声明 delete，否则 409。bearer 须绑定该来源；快照会删除缺失事件，须同时具备 upsert 与 delete 权限，增量按所含操作类型分别需要对应权限，否则 401；必须带 `Idempotency-Key`。解析拒绝重复键、小数与超出 ±(2^53−1) 的整数（本协议没有小数字段，安全整数在 JCS 下按十进制原样表示），随后执行 envelope 与 EventV1 Schema、类型化及领域校验。摘要为 SHA-256(JCS)，由服务端计算。

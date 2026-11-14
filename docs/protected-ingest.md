@@ -1,6 +1,7 @@
 # 来源作用域机器写入（#30）
 
 `PUT|DELETE /api/ingest/v1/sources/{source_id}/events/{uid}` 使用独立 API bearer token。
+受管 push-only standard-calendar 来源的 token 由管理 API 签发、列出与撤销（#178，见[来源配置](source-configuration.md)）。
 这细化了架构文档的路由示意：来源显式在路径中，并必须等于 token 的绑定来源。
 PUT 正文为 `{ "calendar_id": "…", "event": EventV1 }`；先对原始 event JSON 执行仓库 EventV1 Schema（含 format）校验，再类型化并执行领域校验；拒绝未知字段，event.external_uid 必须与解码后的路径 UID 完全一致。
 正文不能指定 source_id。calendar 必须属于同一来源。DELETE 正文必须为空。

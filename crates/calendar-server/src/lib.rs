@@ -11,6 +11,7 @@ mod envelope;
 mod feed;
 mod http;
 mod ingest;
+mod producer_tokens;
 pub mod production_runtime;
 mod reminder_configuration;
 mod source_configuration;

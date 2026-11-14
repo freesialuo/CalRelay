@@ -260,6 +260,7 @@ pub fn router(state: AdminState) -> Router {
         crate::source_configuration::routes()
             .merge(crate::diagnostics::routes())
             .merge(crate::source_refresh::routes())
+            .merge(crate::producer_tokens::routes())
             .with_state(state.clone())
             .layer(DefaultBodyLimit::max(65_536)),
     );
