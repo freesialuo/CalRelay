@@ -410,4 +410,30 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   expect(observed().accepted).toBe(4);
   for (const path of ["/health/live", "/health/ready"])
     expect((await request.get(path)).status(), path).toBe(200);
+
+  // An upstream that stops answering is bounded by the fetch timeout and becomes a
+  // source-level failure; the core stays live and ready while it hangs.
+  const failuresB = (await diagnostic(b.id))?.consecutive_failures ?? 0;
+  await control({ action: "hold", id: "b" });
+  await page
+    .locator("main section")
+    .filter({ hasText: b.id })
+    .getByRole("button", { name: "查看 / 编辑", exact: true })
+    .click();
+  await page.getByRole("button", { name: "请求立即刷新", exact: true }).click();
+  await expect(status(page)).toContainText("服务端已记录刷新请求");
+  // Still hanging: the request is bounded by the 3 s synthetic fetch timeout.
+  for (const path of ["/health/live", "/health/ready"])
+    expect((await request.get(path)).status(), path).toBe(200);
+  await expect
+    .poll(async () => (await diagnostic(b.id))?.consecutive_failures ?? 0, {
+      timeout: 30000,
+      intervals: [250, 500, 1000],
+    })
+    .toBeGreaterThan(failuresB);
+  // The synthetic fetcher reports its timeout as a transport failure.
+  expect((await diagnostic(b.id)).outcome).toBe("adapter");
+  for (const path of ["/health/live", "/health/ready"])
+    expect((await request.get(path)).status(), path).toBe(200);
+  await control({ action: "release" });
 });

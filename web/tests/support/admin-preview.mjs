@@ -207,6 +207,7 @@ try {
     // then the same state reopened) or a synthetic source/Bark status. Each is acknowledged.
     let handled = 0;
     let busy = false;
+    let held;
     const request = join(directory, "control-request");
     const done = join(directory, "control-done");
     setInterval(async () => {
@@ -225,6 +226,12 @@ try {
           fixture.source(command.id, { status: command.status });
         } else if (command.action === "bark") {
           fixture.bark(command.status);
+        } else if (command.action === "hold" && !held) {
+          // The next response for this target stalls until released.
+          held = fixture.holdNext(command.id);
+        } else if (command.action === "release" && held) {
+          held.release();
+          held = undefined;
         } else throw new Error("Unknown control request");
         handled++;
         await writeFile(done, String(handled));
