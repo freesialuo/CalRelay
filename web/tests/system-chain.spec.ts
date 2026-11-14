@@ -18,8 +18,8 @@ function state(): {
   fixture_status: string;
   clock_file?: string;
   initial_utc?: number;
-  restart_request?: string;
-  restart_done?: string;
+  control_request?: string;
+  control_done?: string;
 } {
   return JSON.parse(
     readFileSync(
@@ -42,6 +42,30 @@ print(json.dumps({'events':c.execute('SELECT count(*) FROM events').fetchone()[0
       { encoding: "utf8" },
     ),
   );
+}
+let controls = 0;
+// Ask the system fixture for one control action and wait for its acknowledgement.
+async function control(command: Record<string, unknown>) {
+  const { control_request, control_done } = state();
+  if (!control_request || !control_done)
+    throw new Error("Missing fixture control");
+  writeFileSync(control_request, JSON.stringify(command), {
+    flag: "wx",
+    mode: 0o600,
+  });
+  controls++;
+  await expect
+    .poll(
+      () => {
+        try {
+          return readFileSync(control_done, "utf8");
+        } catch {
+          return "";
+        }
+      },
+      { timeout: 30000, intervals: [100, 250, 500] },
+    )
+    .toBe(String(controls));
 }
 test("browser configuration drives actual scanner planner delivery and distinct aggregate UIDs", async ({
   page,
@@ -250,23 +274,8 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   expect((await request.get("/health/ready")).status()).toBe(200);
 
   // Forced restart: SIGKILL the service and start it again on the same database and clock.
-  const control = state();
-  if (!control.restart_request || !control.restart_done)
-    throw new Error("Missing restart control");
   const sources = [a, b, c, d].map((s) => s.id);
-  writeFileSync(control.restart_request, "kill", { flag: "wx", mode: 0o600 });
-  await expect
-    .poll(
-      () => {
-        try {
-          return readFileSync(control.restart_done ?? "", "utf8");
-        } catch {
-          return "";
-        }
-      },
-      { timeout: 30000, intervals: [100, 250, 500] },
-    )
-    .toBe("1");
+  await control({ action: "restart" });
   await expect
     .poll(async () => (await request.get("/health/ready")).status(), {
       timeout: 20000,
@@ -295,4 +304,110 @@ test("browser configuration drives actual scanner planner delivery and distinct 
         r.kind === "bark" && r.status === 200,
     ),
   ).toHaveLength(4);
+
+  // One upstream failing is a source-level state: the other source keeps syncing and the
+  // core stays live and ready.
+  const diagnostic = async (id: string) =>
+    (
+      await (
+        await page.request.get(`/api/admin/v1/sources/${id}/diagnostics`)
+      ).json()
+    ).sync_status;
+  const fetchedB = async () =>
+    (await (await request.get(state().fixture_status)).json()).requests.filter(
+      (r: { kind: string; status: number; source?: string }) =>
+        r.kind === "ics" && r.status !== 503 && r.source === "b",
+    ).length;
+  const before = await fetchedB();
+  await control({ action: "source", id: "a", status: 503 });
+  await page.getByRole("link", { name: "来源", exact: true }).click();
+  for (const s of [a, b]) {
+    await page
+      .locator("main section")
+      .filter({ hasText: s.id })
+      .getByRole("button", { name: "查看 / 编辑", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "请求立即刷新", exact: true })
+      .click();
+    await expect(status(page)).toContainText("服务端已记录刷新请求");
+  }
+  await expect
+    .poll(async () => (await diagnostic(a.id))?.consecutive_failures ?? 0, {
+      timeout: 30000,
+      intervals: [250, 500, 1000],
+    })
+    .toBeGreaterThan(0);
+  expect(["retry_after", "adapter", "unavailable"]).toContain(
+    (await diagnostic(a.id)).outcome,
+  );
+  await expect
+    .poll(fetchedB, { timeout: 30000, intervals: [250, 500, 1000] })
+    .toBeGreaterThan(before);
+  expect((await diagnostic(b.id)).consecutive_failures).toBe(0);
+  // Bark being down is also not a core fault: a new due reminder meets the outage, its
+  // attempt is recorded as retryable and the core stays live and ready.
+  await control({ action: "bark", status: 503 });
+  const businessNow = clock.clock_file
+    ? JSON.parse(readFileSync(clock.clock_file, "utf8")).utc_now_ms
+    : Date.now() + 3000;
+  const late = await (
+    await request.get(`${ingest}/state`, { headers: bearer })
+  ).json();
+  const event = (uid: string, at: number) => ({
+    op: "upsert",
+    calendar_id: d.calendar,
+    event: {
+      schema_version: "1.0",
+      external_uid: uid,
+      title: "Pushed synthetic event",
+      status: "confirmed",
+      start: {
+        kind: "utc",
+        value: new Date(at).toISOString().replace(/\.\d+Z$/, "Z"),
+      },
+    },
+  });
+  const repushed = await request.post(`${ingest}/batches`, {
+    headers: { ...bearer, "idempotency-key": "system-push-2" },
+    data: {
+      protocol_version: "standard-calendar-source/v1",
+      batch_id: "system-push-2",
+      mode: "snapshot",
+      base_source_revision: late.source_revision,
+      base_config_revision: late.config_revision,
+      base_checkpoint: null,
+      proposed_checkpoint: null,
+      complete: true,
+      pages: 1,
+      collection_tag: null,
+      operations: [event("pushed", due), event("pushed-late", businessNow)],
+    },
+  });
+  expect(repushed.status()).toBe(200);
+  const retryable = () =>
+    Number(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(c.execute(\"SELECT count(*) FROM delivery_attempts WHERE outcome='retryable'\").fetchone()[0])",
+          state().database,
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  await expect
+    .poll(retryable, { timeout: 45000, intervals: [250, 500, 1000] })
+    .toBeGreaterThan(0);
+  const outage = await (await request.get(state().fixture_status)).json();
+  expect(
+    outage.requests.some(
+      (r: { kind: string; status: number }) =>
+        r.kind === "bark" && r.status === 503,
+    ),
+  ).toBe(true);
+  expect(observed().accepted).toBe(4);
+  for (const path of ["/health/live", "/health/ready"])
+    expect((await request.get(path)).status(), path).toBe(200);
 });

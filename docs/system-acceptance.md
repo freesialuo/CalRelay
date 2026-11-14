@@ -84,6 +84,8 @@ npm test也包含该串联场景的真实UTC及显式受控Clock两次运行，�
 
 #117已合入main 7e0f5b2。显式测试进程环境 `CALRELAY_TEST_CONTROLLED_CLOCK=1` 选择同一浏览器场景的受控版本：启动时UTC冻结在真实当前时刻，同一Clock注入三worker与feed；先断言事件开始前无accepted，再用同目录临时文件+rename原子推进61秒，观察双源真实处理/accepted与聚合200/304。随后只回拨UTC、保持monotonic offset，条件读取因未来verified_at返回503，既有管理会话仍200；恢复UTC后feed重新200。无freshness豁免，真实鉴权与监督时钟不变。测试不声称覆盖任意时钟跳变或重启去重。
 
-强杀重启（#202）：系统链路在四个来源的提醒全部 accepted 后，经夹具控制文件请求强制重启；`admin-preview.mjs` 以 SIGKILL 终止服务进程，再以 `--reopen-database`（仅系统模式可用，选择既有 `DatabaseMode::Reopen`）在同一数据库、部署配置、模拟网络与时钟上启动，HTTPS 代理改指新实例。随后断言 live/ready 恢复、重新登录后四个来源配置保留、聚合订阅仍为 200，且再经若干工作器周期后 accepted 与模拟 Bark 成功请求仍各为 4（无重复投递）。受控与真实时钟两种模式均覆盖。
+强杀重启（#202）：系统链路在四个来源的提醒全部 accepted 后，经夹具控制文件（每次一个 JSON 请求：`restart`、`source` 或 `bark`，逐次确认）请求强制重启；`admin-preview.mjs` 以 SIGKILL 终止服务进程，再以 `--reopen-database`（仅系统模式可用，选择既有 `DatabaseMode::Reopen`）在同一数据库、部署配置、模拟网络与时钟上启动，HTTPS 代理改指新实例。随后断言 live/ready 恢复、重新登录后四个来源配置保留、聚合订阅仍为 200，且再经若干工作器周期后 accepted 与模拟 Bark 成功请求仍各为 4（无重复投递）。受控与真实时钟两种模式均覆盖。
+
+故障隔离（#204）：随后经同一控制文件让模拟来源 a 返回 503，并在页面对 a、b 各请求一次立即刷新：诊断显示 a 的失败分类与连续失败次数，b 继续从上游成功读取（以模拟网络记录计数，受控时钟下业务时间冻结）；再让模拟 Bark 返回 503，并用 push 来源的令牌提交一个当前到期的新事件：模拟网络记录到 Bark 503，投递尝试记为 retryable，accepted 仍为 4。全过程 live/ready 保持 200，来源与输出故障只体现为来源级状态。
 
 restore pause/cutoff、跨竞争与最终镜像精确source SHA/digest尚未接入浏览器系统场景；#117的Rust矩阵另有独立证据，不能替代浏览器或镜像全链。#78/#35/#77/#76保持开放。
