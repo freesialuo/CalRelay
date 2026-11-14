@@ -4,6 +4,8 @@
 
 发送固定 `POST /push`，`Content-Type: application/json; charset=utf-8`。JSON 只含 `device_key`、事件 `title` 和 `body`（description，无则 title）。不执行事件内 URL、附件或收件人。origin 只接受根路径或 `/push`，拒绝 URL 用户信息、query、fragment 和其他路径，避免旧版 key-in-path。所有诊断只暴露固定配置错误或 `DeliveryOutcome`，不记录请求/响应正文、key 或底层错误。Debug 隐去配置与凭据。
 
+投递仓储在最终修订/取消检查后提供该实例的有效 title/description；单次例外显式清空 description 时，Bark body 回退到该实例有效 title，不重新使用母事件描述。适配器不自行展开 recurrence 或修改原始实例身份。
+
 生产传输只连公网 HTTPS：复用现有公网地址策略，校验全部 DNS 结果并固定连接地址、校验 TLS 和实际 peer；禁用环境代理、重定向、透明重试与压缩。私网自托管访问当前拒绝，不提供隐式绕过；测试 root/loopback 注入仅在 `cfg(test)` 下存在。origin 可指定自托管公网主机与端口。DNS 最多 64 个结果、响应最多 16 KiB、title/body 合计最多 64 KiB、key 最多 4096 ASCII 可见字节；总尝试超时可配置在 (0,120s]，应用层仍保留自己的 deadline。
 
 | 可观察结果 | `DeliveryOutcome` |

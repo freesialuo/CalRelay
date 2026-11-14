@@ -982,6 +982,8 @@ fn generate_rrule_candidates<'a>(
                 return Err(ExpansionError::InvalidWindow);
             }
             let candidate_temporal = temporal_on_date(&event.start, date);
+            // A local time inside a DST gap is kept and counted, resolved like an explicit
+            // DATE-TIME (RFC 5545 Section 3.3.5); see docs/domain-capabilities.md (#129).
             let (candidate_utc, _, _) = resolver.resolve_temporal(&candidate_temporal)?;
 
             if let Some(until) = rrule.until {

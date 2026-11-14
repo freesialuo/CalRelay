@@ -548,7 +548,16 @@ async fn non_utf8_database_paths_never_touch_the_original_or_lossy_target() {
         .is_err());
     assert!(!database.exists());
     assert_eq!(std::fs::read(&lossy).unwrap(), b"existing lossy target");
-    std::fs::write(&database, b"existing original target").unwrap();
+    // APFS rejects file names that are not valid UTF-8 with EILSEQ, so the
+    // original file cannot exist there; every other failure stays fatal.
+    const MACOS_EILSEQ: i32 = 92;
+    match std::fs::write(&database, b"existing original target") {
+        Err(error) if cfg!(target_os = "macos") && error.raw_os_error() == Some(MACOS_EILSEQ) => {
+            eprintln!("skipping reopen/restored cases: file system rejects non-UTF-8 names");
+            return;
+        }
+        result => result.unwrap(),
+    }
     for mode in [DatabaseMode::Reopen, DatabaseMode::Restored] {
         assert!(f
             .root

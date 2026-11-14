@@ -6,6 +6,7 @@
 
 - `last_verified_at` 是最近成功同步或条件读取校验的时间，不是“最近尝试成功”。配置变更可能按已有配置逻辑清空它；从未校验与清空后的未知状态均显示无记录。
 - `snapshot_revision` 无值表示没有可用的已提交快照版本。`freshness` 使用既有配置判定：静态来源、无 SLA 的 push-only 不显示假轮询；有 SLA 的来源区分未校验、新鲜、陈旧和未来时间。启用/禁用/退休状态单独展示，陈旧不等于核心故障。
+- 退休来源的 `enabled` 始终为 `false`，与来源配置查询及实际运行状态一致；不会返回退休前保存在配置正文中的启用值。
 - 逐来源最近错误原因没有持久查询支持，因此明确显示不可查询；不猜测网络、凭据或配置哪个失败，也不展示外部原始响应。
 - 投递显示当前 job state、最近 attempt outcome 和时间，兼容仍在途、结果未知、重试及晚到 accepted 的不同状态。`accepted`/`accepted_at` 表示上游接收，不代表设备显示；无任务不能证明规则完成规划。`next_attempt_at` 是持久调度记录，只有 retry_wait 才标为下次重试，不承诺精确执行时刻。
 - 仅输出来源/任务/规则/输出标识、枚举和时间，不输出事件正文、endpoint、credential handle、lease token、request ID、feed URL/token 或外部错误正文。所有文本通过 DOM textContent 渲染，未可信或超限响应不显示为成功。

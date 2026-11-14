@@ -9,13 +9,15 @@
 3. 事务外执行输出，Tokio 单调计时器约束请求总超时；超时分类为 `unknown`。适配器必须能被取消且不能阻塞执行器。默认请求超时 30 秒，租约 60 秒；配置强制租约长于超时，不支持无界长请求。
 4. `finish` 在短事务中再次检查 owner/token 和租约，原子写入 attempt 结果、job 状态及逻辑 `accepted_at`。过期/旧 token 回写被拒绝。取消或 superseded 的在途请求仍记录真实 outcome，不复活旧 job；真实 accepted 保留逻辑去重并作废同一逻辑身份的新任务。
 
+`prepare` 在上述 fence 通过后，按任务的原始 `original_key` 从当前事件修订应用单次例外的通知文本：title/description 省略时继承，description 显式 null 时清空。`DeliveryEnvelope.event` 仅这两个字段投影为实例内容，时间与 recurrence 仍保留原事件，不表示完整展开实例；持久事件不被改写。普通实例沿用母事件文本；改期不改变匹配 key 或 accepted 去重。`this_and_future` 仍由领域验证拒绝，未新增范围覆盖支持。
+
 取消无法与外部发送原子化，最终检查后仍可能收到一次旧提醒。已记录发送意图但崩溃时，恢复只能判断结果未知；重试可能重复。`accepted` 仅指输出服务接受，不表示设备已显示，也不提供 exactly-once。
 
 ## 时间、重试与审计
 
 所有持久化时间使用 UTC Unix 毫秒，调度/租约通过可注入 `Clock` 重新扫描；请求超时使用 Tokio 单调时钟。时钟后跳不会提前发送未来任务，前跳超过截止时间直接过期。UTC 后跳可能延后租约回收；不把内存计时器作为任务真相源。
 
-`deadline_at` 在首次领取时持久化为 `due_at + catch_up_ms`，默认追赶窗口 15 分钟；已有截止时间不延长。默认最多 8 次领取尝试，指数退避采用 token 派生的 equal jitter，默认基数 1 秒、上限 60 秒。非负 Retry-After 是最早重试的下界；下一次时间达到截止时间即 `expired`，次数耗尽为 `failed_permanent`。包括领取后未发送的崩溃在内，尝试都会计数，避免无限循环。
+`deadline_at` 在首次领取时持久化为 `due_at + catch_up_ms`，默认追赶窗口 15 分钟；已有截止时间不延长。规划请求携带同一 `catch_up_ms`：展开窗口回看该时长，只为 `now < due_at + catch_up_ms` 的提醒保留或建立任务，因此修订不会丢弃已结束但仍可追赶的未发送提醒；due_at 不变时新 generation 继承已持久化截止时间（#126）。默认最多 8 次领取尝试，指数退避采用 token 派生的 equal jitter，默认基数 1 秒、上限 60 秒。非负 Retry-After 是最早重试的下界；下一次时间达到截止时间即 `expired`，次数耗尽为 `failed_permanent`。包括领取后未发送的崩溃在内，尝试都会计数，避免无限循环。
 
 默认来源新鲜度为 24 小时，`last_verified_at` 缺失或过旧暂停发送。调用者须提供与规划器一致的 `tzdata_version` 和同一服务级策略。持久化任务的截止时间不因后续策略调整重新计算。
 
@@ -37,7 +39,11 @@
 
 运行：`cargo test -p calendar-storage --test delivery`；迁移：`cargo test -p calendar-storage --test foundation`；完整检查遵守 [贡献指南](../CONTRIBUTING.md)。
 
+#125/#140 的 `cargo test -p calendar-storage --test delivery_content` 使用真实同步→规划→prepare，覆盖字段替换/继承/null、下一普通实例、改期身份与 accepted 去重、领取后修订/取消。三个测试先在旧实现因母事件文本断言失败，再在修复后通过；Bark 本地 TLS 模拟测试核对投影后的完整 JSON 和清空正文后的 title 回退，无真实外部通知。
+
 ## 实现参考
+
+通过 Exa 核对 [RFC 5545 §3.8.4.4](https://datatracker.ietf.org/doc/html/rfc5545#section-3.8.4.4)：改期实例的 RECURRENCE-ID 仍为原始开始时间，因此通知文本匹配使用原始 key，不使用新的开始或到期时间。字段省略/null 遵循仓库 `EventPatch` 的既有契约。
 
 通过 Context7 `/websites/rs_sqlx` 查询事务、`begin_with` 和 `busy_timeout`，再核对本地锁定 SQLx 0.8.6 公共源码的 `Pool::begin_with`、`Transaction::drop`、SQLite transaction worker 和扩展错误码。检索返回 latest 文档，因此以锁定源码与实际集成测试核对 API。
 

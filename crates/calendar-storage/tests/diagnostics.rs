@@ -2,6 +2,52 @@ use calendar_application::configuration::{
     ConfigurationCondition, ConfigurationError, SourceConfigurationV1,
 };
 use calendar_storage::Storage;
+
+#[tokio::test]
+async fn diagnostics_match_source_state_before_and_after_retirement() {
+    for enabled in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Storage::open(dir.path().join("db")).await.unwrap();
+        let mut config: SourceConfigurationV1 = serde_json::from_str(include_str!(
+            "../../../examples/source-configuration-v1.json"
+        ))
+        .unwrap();
+        db.put_source_configuration(
+            "retired",
+            ConfigurationCondition::Absent,
+            config.clone(),
+            "test",
+            1,
+        )
+        .await
+        .unwrap();
+        config.enabled = enabled;
+        db.put_source_configuration(
+            "retired",
+            ConfigurationCondition::Revision(1),
+            config,
+            "test",
+            2,
+        )
+        .await
+        .unwrap();
+        let before = db.source_diagnostic("retired").await.unwrap();
+        assert_eq!(before.configuration.enabled, enabled);
+        assert_eq!(before.retired_at, None);
+
+        db.retire_source_configuration("retired", 2, "test", 3)
+            .await
+            .unwrap();
+        let saved = db.source_configuration("retired").await.unwrap();
+        let diagnostic = db.source_diagnostic("retired").await.unwrap();
+        assert!(!saved.configuration.enabled);
+        assert_eq!(diagnostic.configuration, saved.configuration);
+        assert_eq!(diagnostic.retired_at, Some(3));
+        assert_eq!(diagnostic.retired_at, saved.retired_at);
+        db.close().await;
+    }
+}
+
 #[tokio::test]
 async fn read_projection_is_source_scoped_bounded_and_uses_latest_attempt() {
     let dir = tempfile::tempdir().unwrap();
