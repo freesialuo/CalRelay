@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -194,8 +194,8 @@ try {
         : {}),
       ...(systemMode
         ? {
-            restart_request: join(directory, "restart-request"),
-            restart_done: join(directory, "restart-done"),
+            control_request: join(directory, "control-request"),
+            control_done: join(directory, "control-done"),
           }
         : {}),
     }),
@@ -203,29 +203,36 @@ try {
   );
   stateCreated = true;
   if (systemMode) {
-    // A system test asks for a forced restart by creating the request file; the harness
-    // SIGKILLs the service, starts it again on the same state and acknowledges it.
-    let restarts = 0;
-    let restarting = false;
-    const request = join(directory, "restart-request");
-    const done = join(directory, "restart-done");
+    // A system test writes one JSON request to the control file: a forced restart (SIGKILL,
+    // then the same state reopened) or a synthetic source/Bark status. Each is acknowledged.
+    let handled = 0;
+    let busy = false;
+    const request = join(directory, "control-request");
+    const done = join(directory, "control-done");
     setInterval(async () => {
-      if (restarting || closing || !existsSync(request)) return;
-      restarting = true;
+      if (busy || closing || !existsSync(request)) return;
+      busy = true;
       try {
+        const command = JSON.parse(await readFile(request, "utf8"));
         await execute("find", [request, "-delete"]);
-        const exited = new Promise((resolve) => child.once("exit", resolve));
-        child.kill("SIGKILL");
-        await exited;
-        configuration = await launch(true);
-        proxy.retarget(configuration.upstream, configuration.access_jwt);
-        restarts++;
-        await writeFile(done, String(restarts));
+        if (command.action === "restart") {
+          const exited = new Promise((resolve) => child.once("exit", resolve));
+          child.kill("SIGKILL");
+          await exited;
+          configuration = await launch(true);
+          proxy.retarget(configuration.upstream, configuration.access_jwt);
+        } else if (command.action === "source") {
+          fixture.source(command.id, { status: command.status });
+        } else if (command.action === "bark") {
+          fixture.bark(command.status);
+        } else throw new Error("Unknown control request");
+        handled++;
+        await writeFile(done, String(handled));
       } catch {
         await close();
         process.exitCode = 1;
       } finally {
-        restarting = false;
+        busy = false;
       }
     }, 100).unref();
   }
