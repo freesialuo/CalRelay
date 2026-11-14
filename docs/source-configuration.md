@@ -49,11 +49,15 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 `GET /api/admin/v1/sources/{id}/tokens` 列出该来源令牌元数据（ID、权限、到期、撤销、签发时间）：全部有效令牌在前（至多 16 个，始终在页内），其后为最新的历史记录，每页最多 100 条并以 `more` 提示更早历史，从不返回密钥或摘要。`POST /api/admin/v1/sources/{id}/tokens`（正文 `{can_upsert,can_delete,expires_at|null}`）只对受管、未退休的 push-only standard-calendar 来源签发，至少一项权限，到期须晚于当前时间；服务端生成 `pt_` 前缀 ID 与 256 位密钥，密钥只在 201 响应中返回一次，库内只存摘要。每来源最多 16 个未撤销且未过期的令牌，超限 409。`POST /api/admin/v1/sources/{id}/tokens/{token_id}/revoke` 立即撤销，重复撤销无副作用。签发与撤销沿用管理写入保护（Access、会话、Origin/CSRF、一次性写 nonce），并写入 `producer_token_audit`（令牌 ID、来源、动作、管理员摘要、时间，迁移 `0017`）；退休来源仍撤销其全部令牌。快照批次需要同时具备 upsert 与 delete 权限的令牌。
 
+### 超限删除批准（#186）
+
+`POST /api/admin/v1/sources/{id}/deletion-approval`（空正文，沿用管理写入保护）为已启用、未退休的 pull 或 push-only 受管来源记录一次批准，绑定当前配置修订与来源修订，24 小时内有效，返回 `{source_id,config_revision,source_revision,expires_at}`；其他来源 409，不存在 404，重复批准覆盖为最新。匹配的批准让下一次快照提交（push 批次或周期拉取）可以删除超过 100 个事件或清空非空来源；任何提交都会推进来源修订，因此批准至多作用于下一次提交，生产者无法自行批准。每次批准写入 `deletion_approval_audit`（来源、修订、管理员摘要、时间；迁移 `0018`）。manual-static ICS 上传仍用逐次 `approve_deletions`。
+
 ### 已执行的叶子（#174 快照、#176 增量）
 
 `POST /api/ingest/standard-calendar/v1/sources/{source_id}/batches` 执行单页批次：`pages=1`、`collection_tag=null`；多页返回 422（尚未支持），结构契约不变。来源须为已启用、未退休的 push-only + standard-calendar，快照须声明 snapshot，增量须声明 delta、含 delete 操作时还须声明 delete，否则 409。bearer 须绑定该来源；快照会删除缺失事件，须同时具备 upsert 与 delete 权限，增量按所含操作类型分别需要对应权限，否则 401；必须带 `Idempotency-Key`。解析拒绝重复键、小数与超出 ±(2^53−1) 的整数（本协议没有小数字段，安全整数在 JCS 下按十进制原样表示），随后执行 envelope 与 EventV1 Schema、类型化及领域校验。摘要为 SHA-256(JCS)，由服务端计算。
 
-令牌、来源状态、回执与提交在同一写事务内：先验证令牌与来源，再查回执（同 key 同摘要返回原回执，异摘要 409），两条机器路由的未过期回执合计不超过 `IngestPolicy.max_records`，任一路由满额都返回 503 且不淘汰；然后核对 `base_config_revision`、`base_source_revision`（失配 409）。快照：删除超过 100 条或清空非空来源返回 409 且不变（批准入口留待后续叶子）。增量：须已有完整快照基线、`base_checkpoint` 等于已持久 checkpoint（含 null），每个 delete 的 `expected_event_revision` 须等于事件当前修订（已删除且修订相符为无变化），未出现的事件不删除；任一不符 409 且不推进 checkpoint。上游 `source_sequence` 回退 409。成功时写入 `proposed_checkpoint` 并返回 `{source_id,batch_id,source_revision,changed_events}`。回执表 `envelope_receipts`（迁移 `0016`）以 token + key 摘要为主键，只存摘要与计数，保留期沿用 `IngestPolicy.retention_ms`。
+令牌、来源状态、回执与提交在同一写事务内：先验证令牌与来源，再查回执（同 key 同摘要返回原回执，异摘要 409），两条机器路由的未过期回执合计不超过 `IngestPolicy.max_records`，任一路由满额都返回 503 且不淘汰；然后核对 `base_config_revision`、`base_source_revision`（失配 409）。快照：删除超过 100 条或清空非空来源返回 409 且不变，除非管理员已为当前配置与来源修订记录一次性批准（#186，见下文）。增量：须已有完整快照基线、`base_checkpoint` 等于已持久 checkpoint（含 null），每个 delete 的 `expected_event_revision` 须等于事件当前修订（已删除且修订相符为无变化），未出现的事件不删除；任一不符 409 且不推进 checkpoint。上游 `source_sequence` 回退 409。成功时写入 `proposed_checkpoint` 并返回 `{source_id,batch_id,source_revision,changed_events}`。回执表 `envelope_receipts`（迁移 `0016`）以 token + key 摘要为主键，只存摘要与计数，保留期沿用 `IngestPolicy.retention_ms`。
 
 `GET /api/ingest/standard-calendar/v1/sources/{source_id}/state` 对声明 snapshot 或 delta 的 push-only 来源，用同一来源令牌（任一写权限）返回 `{source_id,config_revision,source_revision,checkpoint,has_snapshot}`，供 producer 填写 base 字段；不返回事件、端点、凭据或配置正文，鉴权与来源拒绝同上。
 

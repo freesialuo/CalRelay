@@ -5,6 +5,7 @@ mod aggregate_configuration;
 mod aggregate_feed;
 mod config;
 pub mod credentials_bootstrap;
+mod deletion_approval;
 pub mod delivery_worker;
 mod diagnostics;
 mod envelope;

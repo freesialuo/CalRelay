@@ -307,7 +307,23 @@ impl Storage {
                 }
             }
         }
-        if snapshot && prepared.is_empty() {
+        // A separate administrator approval of exactly these revisions lifts the deletion limit.
+        let approved = snapshot
+            && crate::deletion_approval::approved(
+                &mut tx,
+                &batch.source_id,
+                source.config_revision,
+                source.revision,
+                now,
+            )
+            .await?;
+        if approved {
+            sync.mode = SyncMode::FullSnapshot {
+                complete: true,
+                deletion_policy: DeletionPolicy::Approved,
+            };
+        }
+        if snapshot && !approved && prepared.is_empty() {
             let current: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM events WHERE source_id=? AND deleted_at IS NULL",
             )

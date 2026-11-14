@@ -84,12 +84,26 @@ impl<F: RemoteFetcher> SourceRunner for IcsSourceRunner<F> {
                 format: SourceFormat::Ics(self.ics_limits),
             },
         };
+        // Only a separate administrator approval of exactly this revision lifts the limit.
+        let deletions = if storage
+            .source_deletions_approved(
+                &record.source_id,
+                record.config_revision,
+                record.source_revision,
+                now,
+            )
+            .await?
+        {
+            DeletionPolicy::Approved
+        } else {
+            DeletionPolicy::Limit(100)
+        };
         Ok(synchronize(
             storage,
             &adapter,
             &record.source_id,
             now,
-            DeletionPolicy::Limit(100),
+            deletions,
             self.sync_limits,
         )
         .await?)

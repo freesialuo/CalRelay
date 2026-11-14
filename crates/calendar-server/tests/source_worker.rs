@@ -112,6 +112,7 @@ struct Gate {
 struct MockState {
     statuses: Mutex<BTreeMap<String, u16>>,
     retry_after_s: Mutex<BTreeMap<String, u64>>,
+    bodies: Mutex<BTreeMap<String, String>>,
     requests: Mutex<Vec<(String, bool)>>,
     gate: Mutex<Option<Arc<Gate>>>,
 }
@@ -158,11 +159,17 @@ impl Http {
                             status
                         };
                         let retry = state.retry_after_s.lock().unwrap().get(&id).copied();
+                        let body = state.bodies.lock().unwrap().get(&id).cloned();
+                        let etag = format!("\"{}\"", body.as_ref().map_or(0, String::len));
                         (
                             axum::http::StatusCode::from_u16(status).unwrap(),
-                            [("etag", "\"same\"")],
+                            [("etag", etag)],
                             retry.map(|seconds| [("retry-after", seconds.to_string())]),
-                            if status == 200 { ICS } else { "" },
+                            if status == 200 {
+                                body.unwrap_or_else(|| ICS.into())
+                            } else {
+                                String::new()
+                            },
                         )
                     }
                 },
@@ -1349,5 +1356,85 @@ async fn an_outcome_finishing_during_shutdown_is_persisted_from_its_completion_t
         })
     );
     reopened.drain().await;
+    Ok(())
+}
+
+fn calendar(uids: std::ops::Range<usize>) -> String {
+    let mut text = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n");
+    for n in uids {
+        text += &format!("BEGIN:VEVENT\r\nUID:e{n}\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20261102T170000Z\r\nSUMMARY:E{n}\r\nEND:VEVENT\r\n");
+    }
+    text + "END:VCALENDAR\r\n"
+}
+#[tokio::test]
+async fn an_administrator_approval_lets_the_next_pull_commit_an_over_limit_deletion() -> Result {
+    use calendar_storage::{SourceSyncOutcome, SourceSyncStatus};
+    let dir = tempfile::tempdir()?;
+    let services = service(&dir.path().join("db")).await?;
+    let http = Http::new().await?;
+    let mut record = source(&services, "a", SourceMode::Pull, true).await?;
+    // Unconditional reads, so every round fetches the current body.
+    record.configuration.capabilities.conditional_read = false;
+    services
+        .storage
+        .put_source_configuration(
+            "a",
+            ConfigurationCondition::Revision(record.config_revision),
+            record.configuration,
+            "test",
+            1000,
+        )
+        .await?;
+    http.state
+        .bodies
+        .lock()
+        .unwrap()
+        .insert("a".into(), calendar(0..102));
+    let clock = Time::new();
+    let runner = http.runner();
+    let mut scanner = SourceScanner::new(limits(8));
+    let db = &services.storage;
+    let live = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM events WHERE deleted_at IS NULL")
+            .fetch_one(db.pool())
+            .await
+    };
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(live().await?, 102);
+    // Upstream now lists one event: 101 deletions need approval and nothing changes.
+    http.state
+        .bodies
+        .lock()
+        .unwrap()
+        .insert("a".into(), calendar(0..1));
+    clock.set(61_000, 60_000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(live().await?, 102);
+    let status: Option<SourceSyncStatus> = db.source_sync_status("a").await?;
+    assert_eq!(status.unwrap().outcome, SourceSyncOutcome::ReviewRequired);
+    db.approve_source_deletions("a", "admin", 61_000).await?;
+    clock.set(121_000, 120_000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(live().await?, 1);
+    let state = db.source_state("a").await?;
+    // The approval is spent: a later over-limit change is refused again.
+    http.state
+        .bodies
+        .lock()
+        .unwrap()
+        .insert("a".into(), calendar(0..102));
+    clock.set(181_000, 180_000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(live().await?, 102);
+    http.state
+        .bodies
+        .lock()
+        .unwrap()
+        .insert("a".into(), calendar(200..201));
+    clock.set(241_000, 240_000);
+    scanner.round(&services, &runner, &clock, |_| {}).await?;
+    assert_eq!(live().await?, 102);
+    assert!(db.source_state("a").await?.revision > state.revision);
+    services.drain().await;
     Ok(())
 }

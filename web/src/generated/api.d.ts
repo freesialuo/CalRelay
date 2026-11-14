@@ -1530,6 +1530,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sources/{source_id}/deletion-approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve the next snapshot commit of a pull or push-only source to exceed the deletion limit
+         * @description Empty body. The approval is bound to the source's current configuration and source revisions and expires after 24 hours; any commit advances the source revision, so it authorizes at most the next commit. It lets that commit delete more than 100 events or empty a non-empty source. Repeating it replaces the pending approval. Manual-static ICS uploads keep their per-request approve_deletions.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                    Origin: string;
+                    "X-CSRF-Token": string;
+                    "X-Admin-Write-Nonce": string;
+                };
+                path: {
+                    source_id: string;
+                };
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Approval recorded */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeletionApproval"];
+                    };
+                };
+                /** @description Access/session/Origin/CSRF denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No managed source */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Source is not an enabled, unretired pull or push-only source */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid source ID or non-empty body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/sources/{source_id}/diagnostics": {
         parameters: {
             query?: never;
@@ -3843,6 +3933,13 @@ export interface components {
             request_timeout_ms: number;
             /** @constant */
             version: "v1";
+        };
+        DeletionApproval: {
+            config_revision: number;
+            /** @description Unix milliseconds */
+            expires_at: number;
+            source_id: string;
+            source_revision: number;
         };
         DeliveryDiagnostic: {
             /** @description Unix milliseconds */
