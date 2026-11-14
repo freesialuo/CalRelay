@@ -39,9 +39,9 @@
 | #74 AC1 手动刷新 | #151（#150）、#153（#152） | 管理 API 与来源页面按钮；跳过周期和本地退避，不早于上游 Retry-After；见[周期扫描](runtime-source-scanning.md)。 |
 | #74 AC5 上传替换 | #157（#156）、#159（#158）、#161（#160） | manual-static ICS 来源经管理 API 或来源页面上传完整快照，超过 100 条删除需显式批准；系统验收链路覆盖上传事件到模拟 Bark；见[来源协调](source-coordinator.md)。 |
 
-标准源 envelope 首个执行叶子 #174：push-only 来源单页快照批次与来源状态读取，见[来源配置](source-configuration.md)。
+标准源 envelope 已执行叶子：#174 push-only 来源单页快照批次与来源状态读取，#176 单页增量批次；见[来源配置](source-configuration.md)。
 
-仍未交付：#74 的 envelope delta/多页执行与删除批准入口、更多接入器与完整竞争验收（多日历 ICS 已决定不支持：一个 ICS 文档对应一个日历，#172）；#77 的其他可执行 adapter 入口、inflight/unknown 审计呈现与 producer 权限负例。周期拉取的超限删除没有批准入口；待处理的手动刷新请求与最近同步状态（#164）持久化在 SQLite，重启后不早于上游 Retry-After 请求。
+仍未交付：#74 的 envelope 多页执行与删除批准入口、更多接入器与完整竞争验收（多日历 ICS 已决定不支持：一个 ICS 文档对应一个日历，#172）；#77 的其他可执行 adapter 入口、inflight/unknown 审计呈现与 producer 权限负例。周期拉取的超限删除没有批准入口；待处理的手动刷新请求与最近同步状态（#164）持久化在 SQLite，重启后不早于上游 Retry-After 请求。
 
 ## GitHub 工作项
 

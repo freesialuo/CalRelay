@@ -5,7 +5,7 @@ use axum::{
 };
 use calendar_application::{configuration::*, Clock, IngestPolicy};
 use calendar_server::{Config, Server};
-use calendar_storage::envelope::{EnvelopeError, SnapshotBatch};
+use calendar_storage::envelope::{BatchMode, EnvelopeBatch, EnvelopeError};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tower::ServiceExt;
@@ -21,6 +21,9 @@ struct Setup {
     record: SourceConfigurationRecord,
 }
 async fn setup() -> Setup {
+    setup_with(|_| {}).await
+}
+async fn setup_with(adjust: impl FnOnce(&mut SourceConfigurationV1)) -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::initialize(Config {
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -38,6 +41,7 @@ async fn setup() -> Setup {
     .unwrap();
     config.adapter = AdapterKind::StandardCalendar;
     config.mode = SourceMode::PushOnly;
+    adjust(&mut config);
     let created = db
         .put_source_configuration("push", ConfigurationCondition::Absent, config, "test", 1)
         .await
@@ -246,11 +250,7 @@ async fn malformed_unsupported_and_unauthorized_batches_change_nothing() {
         |v: &mut Value| v["protocol_version"] = json!("v2"),
         |v: &mut Value| v["operations"][0]["calendar_id"] = json!("not-this-source"),
         |v: &mut Value| v["operations"][0]["event"]["status"] = json!("unknown"),
-        // Not yet supported by this leaf.
-        |v: &mut Value| {
-            v["mode"] = json!("delta");
-            v["base_checkpoint"] = json!("old");
-        },
+        // Not yet supported.
         |v: &mut Value| {
             v["pages"] = json!(2);
             v["collection_tag"] = json!("collection");
@@ -390,15 +390,16 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
     let s = setup().await;
     let db = &s.server.services.storage;
     let base = s.record.source_revision;
-    let batch = |key: &str, digest: u8, source_revision: i64| SnapshotBatch {
+    let batch = |key: &str, digest: u8, source_revision: i64| EnvelopeBatch {
         source_id: "push".into(),
         key: key.into(),
         digest: [digest; 32],
         batch_id: "b".into(),
+        mode: BatchMode::Snapshot,
         base_config_revision: s.record.config_revision,
         base_source_revision: source_revision,
         proposed_checkpoint: None,
-        records: vec![],
+        operations: vec![],
     };
     let policy = IngestPolicy {
         retention_ms: 60_000,
@@ -406,18 +407,18 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
     };
     let secret = s.full.as_bytes();
     let first = db
-        .ingest_snapshot_batch(secret, batch("a", 1, base), policy, &At(10))
+        .ingest_batch(secret, batch("a", 1, base), policy, &At(10))
         .await
         .unwrap();
     assert!(!first.replayed);
     // Capacity is full: a new key is refused without evicting the live receipt.
     assert_eq!(
-        db.ingest_snapshot_batch(secret, batch("b", 2, base + 1), policy, &At(11))
+        db.ingest_batch(secret, batch("b", 2, base + 1), policy, &At(11))
             .await,
         Err(EnvelopeError::Capacity)
     );
     assert!(
-        db.ingest_snapshot_batch(secret, batch("a", 1, base), policy, &At(60_009))
+        db.ingest_batch(secret, batch("a", 1, base), policy, &At(60_009))
             .await
             .unwrap()
             .replayed
@@ -440,9 +441,234 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
     ));
     // After expiry the key executes again and the stale base revision is rejected.
     assert_eq!(
-        db.ingest_snapshot_batch(secret, batch("a", 1, base), policy, &At(60_010))
+        db.ingest_batch(secret, batch("a", 1, base), policy, &At(60_010))
             .await,
         Err(EnvelopeError::Conflict)
+    );
+    s.server.services.drain().await;
+}
+
+fn delta(config: i64, source: i64, base: Option<&str>, proposed: &str, ops: Vec<Value>) -> Value {
+    json!({"protocol_version":"standard-calendar-source/v1","batch_id":"delta-1","mode":"delta",
+        "base_source_revision":source,"base_config_revision":config,"base_checkpoint":base,
+        "proposed_checkpoint":proposed,"complete":true,"pages":1,"collection_tag":null,"operations":ops})
+}
+fn upsert(uid: &str, title: &str) -> Value {
+    json!({"op":"upsert","calendar_id":"calendar-a","event":event(uid,title)})
+}
+fn remove(uid: &str, revision: i64) -> Value {
+    json!({"op":"delete","external_uid":uid,"expected_event_revision":revision})
+}
+async fn live(s: &Setup, uid: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE source_id='push' AND external_uid=? AND deleted_at IS NULL)")
+        .bind(uid)
+        .fetch_one(s.server.services.storage.pool())
+        .await
+        .unwrap()
+}
+fn incremental(c: &mut SourceConfigurationV1) {
+    c.capabilities.delta = true;
+    c.capabilities.delete = true;
+}
+
+#[tokio::test]
+async fn delta_needs_a_baseline_matching_checkpoint_and_explicit_revisioned_deletes() {
+    let s = setup_with(incremental).await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    // No complete snapshot baseline yet: the producer must send a snapshot first.
+    let early = delta(config, base, None, "cp1", vec![upsert("a", "A")]);
+    assert_eq!(
+        post(&s, &s.full, "early", &early).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        post(
+            &s,
+            &s.full,
+            "snap",
+            envelope(config, base, &[("a", "A"), ("b", "B")])
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let rev = base + 1;
+    // Explicit delete of b at its revision plus a new event; absent events are kept.
+    let body = delta(
+        config,
+        rev,
+        Some("cp"),
+        "cp2",
+        vec![upsert("c", "C"), remove("b", 1)],
+    );
+    let (status, receipt) = post(&s, &s.full, "d1", &body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        receipt,
+        json!({"source_id":"push","batch_id":"delta-1","source_revision":rev+1,"changed_events":2})
+    );
+    assert!(live(&s, "a").await && live(&s, "c").await && !live(&s, "b").await);
+    let after = state(&s).await;
+    assert_eq!(
+        (&after["checkpoint"], &after["source_revision"]),
+        (&json!("cp2"), &json!(rev + 1))
+    );
+    let rev = rev + 1;
+    // Mismatched checkpoint, stale revisions, wrong or missing delete targets change nothing.
+    for (key, body) in [
+        (
+            "stale-cp",
+            delta(config, rev, Some("cp"), "x", vec![upsert("d", "D")]),
+        ),
+        (
+            "null-cp",
+            delta(config, rev, None, "x", vec![upsert("d", "D")]),
+        ),
+        (
+            "stale-rev",
+            delta(config, rev - 1, Some("cp2"), "x", vec![upsert("d", "D")]),
+        ),
+        (
+            "stale-config",
+            delta(config + 1, rev, Some("cp2"), "x", vec![upsert("d", "D")]),
+        ),
+        (
+            "wrong-revision",
+            delta(config, rev, Some("cp2"), "x", vec![remove("a", 7)]),
+        ),
+        (
+            "missing",
+            delta(config, rev, Some("cp2"), "x", vec![remove("zz", 1)]),
+        ),
+    ] {
+        assert_eq!(
+            post(&s, &s.full, key, &body).await.0,
+            StatusCode::CONFLICT,
+            "{key}"
+        );
+    }
+    assert!(!live(&s, "d").await && live(&s, "a").await);
+    assert_eq!(state(&s).await["checkpoint"], json!("cp2"));
+    // Deleting an already deleted event at its current revision is no change.
+    let (status, receipt) = post(
+        &s,
+        &s.full,
+        "again",
+        delta(config, rev, Some("cp2"), "cp3", vec![remove("b", 2)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["changed_events"], 0);
+    let rev = rev + 1;
+    // A lower upstream sequence than the stored one is a conflict.
+    let mut newer = upsert("a", "A2");
+    newer["event"]["source_sequence"] = json!(5);
+    assert_eq!(
+        post(
+            &s,
+            &s.full,
+            "seq5",
+            delta(config, rev, Some("cp3"), "cp4", vec![newer])
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut older = upsert("a", "A1");
+    older["event"]["source_sequence"] = json!(4);
+    assert_eq!(
+        post(
+            &s,
+            &s.full,
+            "seq4",
+            delta(config, rev + 1, Some("cp4"), "cp5", vec![older])
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    s.server.services.drain().await;
+}
+
+#[tokio::test]
+async fn delta_operations_need_their_own_permission_and_capability() {
+    let s = setup_with(incremental).await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    assert_eq!(
+        post(&s, &s.full, "snap", envelope(config, base, &[("a", "A")]))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    // An upsert-only token may send upserts but not deletes.
+    let deleting = delta(config, base + 1, Some("cp"), "cp2", vec![remove("a", 1)]);
+    assert_eq!(
+        post(&s, &s.upsert_only, "del", &deleting).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let adding = delta(config, base + 1, Some("cp"), "cp2", vec![upsert("b", "B")]);
+    assert_eq!(
+        post(&s, &s.upsert_only, "add", &adding).await.0,
+        StatusCode::OK
+    );
+    assert!(live(&s, "a").await);
+    s.server.services.drain().await;
+
+    // Without the delete capability a delete is refused; without delta no delta is accepted.
+    for (adjust, body_has_delete) in [
+        (
+            (|c: &mut SourceConfigurationV1| c.capabilities.delta = true)
+                as fn(&mut SourceConfigurationV1),
+            true,
+        ),
+        (
+            (|_: &mut SourceConfigurationV1| {}) as fn(&mut SourceConfigurationV1),
+            false,
+        ),
+    ] {
+        let s = setup_with(adjust).await;
+        let config = s.record.config_revision;
+        let base = s.record.source_revision;
+        assert_eq!(
+            post(&s, &s.full, "snap", envelope(config, base, &[("a", "A")]))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let op = if body_has_delete {
+            remove("a", 1)
+        } else {
+            upsert("b", "B")
+        };
+        let body = delta(config, base + 1, Some("cp"), "cp2", vec![op]);
+        assert_eq!(
+            post(&s, &s.full, "delta", &body).await.0,
+            StatusCode::CONFLICT
+        );
+        assert!(live(&s, "a").await);
+        s.server.services.drain().await;
+    }
+}
+
+#[tokio::test]
+async fn a_delta_only_source_reads_its_state_but_cannot_start_without_a_baseline() {
+    let s = setup_with(|c| {
+        c.capabilities.snapshot = false;
+        c.capabilities.delta = true;
+    })
+    .await;
+    assert_eq!(state(&s).await["has_snapshot"], json!(false));
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    let body = delta(config, base, None, "cp", vec![upsert("a", "A")]);
+    assert_eq!(post(&s, &s.full, "d", &body).await.0, StatusCode::CONFLICT);
+    assert_eq!(
+        post(&s, &s.full, "s", envelope(config, base, &[("a", "A")]))
+            .await
+            .0,
+        StatusCode::CONFLICT
     );
     s.server.services.drain().await;
 }
