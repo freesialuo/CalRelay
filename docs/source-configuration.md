@@ -47,7 +47,7 @@ id 为 1–128 ASCII 字母/数字/`_`/`-`；name 1–256 UTF-8 bytes、非空�
 
 ### 生产者令牌（#178）
 
-`GET /api/admin/v1/sources/{id}/tokens` 列出该来源令牌元数据（ID、权限、到期、撤销、签发时间），最新在前，每页最多 100 条并以 `more` 提示更早记录，从不返回密钥或摘要。`POST /api/admin/v1/sources/{id}/tokens`（正文 `{can_upsert,can_delete,expires_at|null}`）只对受管、未退休的 push-only standard-calendar 来源签发，至少一项权限，到期须晚于当前时间；服务端生成 `pt_` 前缀 ID 与 256 位密钥，密钥只在 201 响应中返回一次，库内只存摘要。每来源最多 16 个未撤销且未过期的令牌，超限 409。`POST /api/admin/v1/sources/{id}/tokens/{token_id}/revoke` 立即撤销，重复撤销无副作用。签发与撤销沿用管理写入保护（Access、会话、Origin/CSRF、一次性写 nonce），并写入 `producer_token_audit`（令牌 ID、来源、动作、管理员摘要、时间，迁移 `0017`）；退休来源仍撤销其全部令牌。快照批次需要同时具备 upsert 与 delete 权限的令牌。
+`GET /api/admin/v1/sources/{id}/tokens` 列出该来源令牌元数据（ID、权限、到期、撤销、签发时间）：全部有效令牌在前（至多 16 个，始终在页内），其后为最新的历史记录，每页最多 100 条并以 `more` 提示更早历史，从不返回密钥或摘要。`POST /api/admin/v1/sources/{id}/tokens`（正文 `{can_upsert,can_delete,expires_at|null}`）只对受管、未退休的 push-only standard-calendar 来源签发，至少一项权限，到期须晚于当前时间；服务端生成 `pt_` 前缀 ID 与 256 位密钥，密钥只在 201 响应中返回一次，库内只存摘要。每来源最多 16 个未撤销且未过期的令牌，超限 409。`POST /api/admin/v1/sources/{id}/tokens/{token_id}/revoke` 立即撤销，重复撤销无副作用。签发与撤销沿用管理写入保护（Access、会话、Origin/CSRF、一次性写 nonce），并写入 `producer_token_audit`（令牌 ID、来源、动作、管理员摘要、时间，迁移 `0017`）；退休来源仍撤销其全部令牌。快照批次需要同时具备 upsert 与 delete 权限的令牌。
 
 ### 已执行的叶子（#174 快照、#176 增量）
 

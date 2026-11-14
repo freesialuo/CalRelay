@@ -10,7 +10,8 @@ use sha2::{Digest, Sha256};
 
 /// Unrevoked, unexpired tokens one source may hold at a time.
 pub const MAX_LIVE_TOKENS: i64 = 16;
-/// Newest first; older tokens are reported through `more`.
+/// Live tokens first (at most `MAX_LIVE_TOKENS`, so always on the page), then the newest history;
+/// older history is reported through `more`.
 pub const PAGE_SIZE: i64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -56,11 +57,15 @@ async fn source(tx: &mut sqlx::SqliteConnection, id: &str) -> Result<bool, Error
 }
 
 impl Storage {
-    pub async fn list_producer_tokens(&self, source_id: &str) -> Result<ProducerTokenPage, Error> {
+    pub async fn list_producer_tokens(
+        &self,
+        source_id: &str,
+        now: i64,
+    ) -> Result<ProducerTokenPage, Error> {
         let mut tx = self.pool().begin().await.map_err(|_| Error::Storage)?;
         source(&mut tx, source_id).await?;
-        let mut items: Vec<ProducerToken> = sqlx::query_as("SELECT id AS token_id,can_upsert,can_delete,expires_at,revoked_at,issued_at FROM api_tokens WHERE source_id=? ORDER BY issued_at IS NULL,issued_at DESC,rowid DESC LIMIT ?")
-            .bind(source_id).bind(PAGE_SIZE + 1).fetch_all(&mut *tx).await.map_err(|_| Error::Storage)?;
+        let mut items: Vec<ProducerToken> = sqlx::query_as("SELECT id AS token_id,can_upsert,can_delete,expires_at,revoked_at,issued_at FROM api_tokens WHERE source_id=? ORDER BY (revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)) DESC,issued_at IS NULL,issued_at DESC,rowid DESC LIMIT ?")
+            .bind(source_id).bind(now).bind(PAGE_SIZE + 1).fetch_all(&mut *tx).await.map_err(|_| Error::Storage)?;
         tx.commit().await.map_err(|_| Error::Storage)?;
         let more = items.len() as i64 > PAGE_SIZE;
         items.truncate(PAGE_SIZE as usize);

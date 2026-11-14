@@ -1823,7 +1823,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List producer tokens of a source, newest first, without secrets */
+        /** List producer tokens of a source without secrets: every live token first, then the newest history */
         get: {
             parameters: {
                 query?: never;

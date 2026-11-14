@@ -312,6 +312,42 @@ async fn producer_tokens_are_issued_once_listed_without_secrets_and_revoked_with
         1
     );
 
+    // Live tokens are always listed first, however many newer revoked tokens exist: keep one
+    // long-lived token and issue and revoke 100 replacements.
+    let mut live: Vec<String> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["revoked_at"].is_null())
+        .map(|t| t["token_id"].as_str().unwrap().to_owned())
+        .collect();
+    let kept = live.pop().unwrap();
+    for other in live {
+        let path = format!("/api/admin/v1/sources/push/tokens/{other}/revoke");
+        assert_eq!(
+            admin.call("POST", &path, None, true).await.0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    for _ in 0..100 {
+        let (_, issued) = admin
+            .issue(
+                "push",
+                json!({"can_upsert":true,"can_delete":false,"expires_at":null}),
+            )
+            .await;
+        let fresh = issued["token"]["token_id"].as_str().unwrap().to_owned();
+        let path = format!("/api/admin/v1/sources/push/tokens/{fresh}/revoke");
+        assert_eq!(
+            admin.call("POST", &path, None, true).await.0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    let (_, page) = admin.call("GET", list, None, false).await;
+    assert_eq!(page["more"], json!(true));
+    assert_eq!(page["items"][0]["token_id"], json!(kept));
+    assert!(page["items"][0]["revoked_at"].is_null());
+
     // A retired source cannot take new tokens.
     let db = &server.services.storage;
     let current = db.source_configuration("push").await.unwrap();

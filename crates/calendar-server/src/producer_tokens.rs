@@ -42,9 +42,10 @@ async fn list(
     if !valid_id(&source) {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
+    let now = state.services.business_now_ms();
     let page = state
         .services
-        .run_task(async |db| db.list_producer_tokens(&source).await)
+        .run_task(async |db| db.list_producer_tokens(&source, now).await)
         .await
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
         .map_err(error)?;
@@ -155,7 +156,7 @@ pub(crate) fn describe(document: &mut Value) {
         responses
     };
     document["paths"][TOKENS] = json!({
-        "get":{"summary":"List producer tokens of a source, newest first, without secrets",
+        "get":{"summary":"List producer tokens of a source without secrets: every live token first, then the newest history",
             "parameters":read(),
             "responses":common(json!({"200":{"description":"Token metadata","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProducerTokenPage"}}}}}))},
         "post":{"summary":"Issue a source-scoped producer token for a push-only standard-calendar source",
