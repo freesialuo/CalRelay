@@ -9,7 +9,7 @@ use calendar_application::{
     synchronize, Clock, DeletionPolicy, IngestionError, RemoteFetcher, SourceAdapter,
     SourcePageOutcome, SourceRepository, SourceState, SyncLimits, SyncOutcome,
 };
-use calendar_storage::Storage;
+use calendar_storage::{SourceSyncOutcome, SourceSyncStatus, Storage};
 use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -156,6 +156,63 @@ impl SourceScanLimits {
             max_backoff_ms: max_backoff.as_millis() as u64,
         })
     }
+    /// Next schedule after one attempt; `None` for a storage failure, which is not external.
+    fn plan(
+        &self,
+        failures: u32,
+        interval: u64,
+        result: &Result<SyncOutcome, SourceRunError>,
+    ) -> Option<Plan> {
+        let error = match result {
+            Ok(outcome) => {
+                return Some(Plan {
+                    outcome: match outcome {
+                        SyncOutcome::NotModified => SourceSyncOutcome::NotModified,
+                        SyncOutcome::Committed(_) => SourceSyncOutcome::Success,
+                    },
+                    failures: 0,
+                    due_in: interval,
+                    allowed_in: self.backoff_ms,
+                })
+            }
+            Err(SourceRunError::Unsupported) => None,
+            Err(SourceRunError::Sync(error)) => Some(*error),
+        };
+        let outcome = match error {
+            None => SourceSyncOutcome::Unsupported,
+            Some(IngestionError::Storage) => return None,
+            Some(IngestionError::Unavailable) => SourceSyncOutcome::Unavailable,
+            Some(IngestionError::Conflict) => SourceSyncOutcome::Conflict,
+            Some(IngestionError::Adapter) => SourceSyncOutcome::Adapter,
+            Some(IngestionError::InvalidSnapshot) => SourceSyncOutcome::InvalidSnapshot,
+            Some(IngestionError::Budget) => SourceSyncOutcome::Budget,
+            Some(IngestionError::Timeout) => SourceSyncOutcome::Timeout,
+            Some(IngestionError::UnexpectedNotModified) => SourceSyncOutcome::UnexpectedNotModified,
+            Some(IngestionError::RetryAfter { .. }) => SourceSyncOutcome::RetryAfter,
+            Some(IngestionError::ReviewRequired { .. }) => SourceSyncOutcome::ReviewRequired,
+        };
+        // Upstream Retry-After is a lower bound the local cap never shortens.
+        let upstream = match error {
+            Some(IngestionError::RetryAfter { retry_after_ms }) => {
+                retry_after_ms.min(MAX_RETRY_AFTER_MS)
+            }
+            _ => 0,
+        };
+        let failures = failures.saturating_add(1);
+        Some(Plan {
+            outcome,
+            failures,
+            due_in: self.backoff(failures).max(upstream),
+            allowed_in: self.backoff_ms.max(upstream),
+        })
+    }
+    /// Local exponential backoff after `failures` consecutive failures, capped.
+    fn backoff(&self, failures: u32) -> u64 {
+        let factor = 1_u64 << failures.saturating_sub(1).min(63);
+        self.backoff_ms
+            .saturating_mul(factor)
+            .min(self.max_backoff_ms)
+    }
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum SourceProgress {
@@ -184,6 +241,14 @@ pub struct SourceRound {
     pub pages: usize,
     pub attempted: usize,
     pub end: SourceRoundEnd,
+}
+/// Schedule after one attempt, relative to its completion; also what is persisted.
+#[derive(Clone, Copy)]
+struct Plan {
+    outcome: SourceSyncOutcome,
+    failures: u32,
+    due_in: u64,
+    allowed_in: u64,
 }
 /// Longest honoured upstream wait: the largest configurable refresh interval (7 days).
 const MAX_RETRY_AFTER_MS: u64 = 604_800_000;
@@ -259,7 +324,8 @@ impl SourceScanner {
                         let record = db.source_configuration(&summary.source_id).await;
                         let state = db.source_state(&summary.source_id).await;
                         let refresh = db.source_refresh_request(&summary.source_id).await;
-                        (record, state, refresh)
+                        let status = db.source_sync_status(&summary.source_id).await;
+                        (record, state, refresh, status)
                     })
                     .await
                 else {
@@ -282,6 +348,7 @@ impl SourceScanner {
                     Err(_) => return Err(SourceScanError::Storage),
                 };
                 let refresh = loaded.2.map_err(|_| SourceScanError::Storage)?;
+                let status = loaded.3.map_err(|_| SourceScanError::Storage)?;
                 if !pull(&record) {
                     self.schedules.remove(&summary.source_id);
                     self.after = Some(summary.source_id);
@@ -322,18 +389,40 @@ impl SourceScanner {
                         return Err(SourceScanError::Capacity);
                     }
                 }
+                let limits = self.limits;
                 let entry = self
                     .schedules
                     .entry(summary.source_id.clone())
-                    .or_insert_with(|| Schedule {
-                        config_revision: record.config_revision,
-                        due: mono.saturating_add(remaining(
-                            state.last_verified_at,
-                            clock.utc_now_ms(),
-                            interval,
-                        )),
-                        not_before: 0,
-                        failures: 0,
+                    .or_insert_with(|| {
+                        let now = clock.utc_now_ms();
+                        let mut schedule = Schedule {
+                            config_revision: record.config_revision,
+                            due: mono.saturating_add(remaining(
+                                state.last_verified_at,
+                                now,
+                                interval,
+                            )),
+                            not_before: 0,
+                            failures: 0,
+                        };
+                        // A restart restores the persisted wait of this configuration revision.
+                        if let Some(s) =
+                            status.filter(|s| s.config_revision == record.config_revision)
+                        {
+                            let floor = left(s.attempted_at, s.next_allowed_at, now);
+                            let local = match s.consecutive_failures {
+                                0 => 0,
+                                n => left(
+                                    s.attempted_at,
+                                    s.attempted_at.saturating_add(limits.backoff(n) as i64),
+                                    now,
+                                ),
+                            };
+                            schedule.failures = s.consecutive_failures;
+                            schedule.not_before = mono.saturating_add(floor);
+                            schedule.due = schedule.due.max(mono.saturating_add(floor.max(local)));
+                        }
+                        schedule
                     });
                 if entry.config_revision != record.config_revision {
                     *entry = Schedule {
@@ -361,62 +450,60 @@ impl SourceScanner {
                     cleared.map_err(|_| SourceScanError::Storage)?;
                 }
                 if run {
+                    let failures = entry.failures;
+                    let id = &summary.source_id;
                     let Some(admission) = services
                         .run_task(async |db| {
-                            if clock.monotonic_now_ms().saturating_sub(started)
-                                >= self.limits.budget_ms
+                            if clock.monotonic_now_ms().saturating_sub(started) >= limits.budget_ms
                             {
                                 return None;
                             }
-                            Some(runner.run(db, &record, clock.utc_now_ms()).await)
+                            let result = runner.run(db, &record, clock.utc_now_ms()).await;
+                            let finished = clock.monotonic_now_ms();
+                            // Planned and persisted in the same admission as the sync, so an
+                            // outcome completing during shutdown is still recorded.
+                            let plan = limits.plan(failures, interval, &result);
+                            let recorded = match plan {
+                                Some(plan) => {
+                                    let now = clock.utc_now_ms();
+                                    let status = SourceSyncStatus {
+                                        config_revision: record.config_revision,
+                                        attempted_at: now,
+                                        outcome: plan.outcome,
+                                        consecutive_failures: plan.failures,
+                                        next_allowed_at: now.saturating_add(plan.allowed_in as i64),
+                                    };
+                                    db.record_source_sync_status(id, status).await
+                                }
+                                None => Err(IngestionError::Storage),
+                            };
+                            Some((result, finished, plan, recorded))
                         })
                         .await
                     else {
                         break 'scan SourceRoundEnd::Stopped;
                     };
-                    let Some(result) = admission else {
+                    let Some((result, finished, plan, recorded)) = admission else {
                         break 'scan SourceRoundEnd::Deadline;
                     };
                     attempted += 1;
-                    let finished = clock.monotonic_now_ms();
-                    match result {
-                        Ok(outcome) => {
-                            entry.failures = 0;
-                            entry.due = finished.saturating_add(interval);
-                            entry.not_before = finished.saturating_add(self.limits.backoff_ms);
-                            progress(SourceProgress::Synchronized {
-                                source_id: summary.source_id.clone(),
-                                not_modified: matches!(outcome, SyncOutcome::NotModified),
-                                external_degraded: self.schedules.values().any(|s| s.failures > 0),
-                            });
-                        }
-                        Err(SourceRunError::Sync(IngestionError::Storage)) => {
-                            return Err(SourceScanError::Storage)
-                        }
-                        Err(error) => {
-                            entry.failures = entry.failures.saturating_add(1);
-                            let factor = 1_u64 << entry.failures.saturating_sub(1).min(63);
-                            let local = self
-                                .limits
-                                .backoff_ms
-                                .saturating_mul(factor)
-                                .min(self.limits.max_backoff_ms);
-                            // Upstream Retry-After is a lower bound the local cap never shortens.
-                            let upstream = match error {
-                                SourceRunError::Sync(IngestionError::RetryAfter {
-                                    retry_after_ms,
-                                }) => retry_after_ms.min(MAX_RETRY_AFTER_MS),
-                                _ => 0,
-                            };
-                            entry.due = finished.saturating_add(local.max(upstream));
-                            entry.not_before =
-                                finished.saturating_add(self.limits.backoff_ms.max(upstream));
-                            progress(SourceProgress::ExternalFailure {
-                                source_id: summary.source_id.clone(),
-                                error,
-                            });
-                        }
-                    }
+                    let (Some(plan), Ok(())) = (plan, recorded) else {
+                        return Err(SourceScanError::Storage);
+                    };
+                    entry.failures = plan.failures;
+                    entry.due = finished.saturating_add(plan.due_in);
+                    entry.not_before = finished.saturating_add(plan.allowed_in);
+                    progress(match result {
+                        Ok(outcome) => SourceProgress::Synchronized {
+                            source_id: summary.source_id.clone(),
+                            not_modified: matches!(outcome, SyncOutcome::NotModified),
+                            external_degraded: self.schedules.values().any(|s| s.failures > 0),
+                        },
+                        Err(error) => SourceProgress::ExternalFailure {
+                            source_id: summary.source_id.clone(),
+                            error,
+                        },
+                    });
                     // Cleared only once the sync has an outcome, so a request that was not
                     // admitted this round is still served; a newer one keeps its sequence.
                     if let Some(served) = manual {
@@ -460,6 +547,17 @@ impl SourceScanner {
             }
             tokio::select! { ()=tokio::time::sleep(self.limits.delay)=>{}, _=shutdown.changed()=>{} }
         }
+    }
+}
+/// Milliseconds left of the persisted wait `start..end` at UTC `now`. A clock behind `start` waits
+/// the whole span; the span is capped at the longest honoured wait so nothing stalls forever.
+fn left(start: i64, end: i64, now: i64) -> u64 {
+    let span = u64::try_from(end.saturating_sub(start))
+        .unwrap_or(0)
+        .min(MAX_RETRY_AFTER_MS);
+    match u64::try_from(now.saturating_sub(start)) {
+        Ok(elapsed) => span.saturating_sub(elapsed),
+        Err(_) => span,
     }
 }
 fn remaining(verified: Option<i64>, now: i64, interval: u64) -> u64 {
