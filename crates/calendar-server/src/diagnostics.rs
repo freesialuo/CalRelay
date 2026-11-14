@@ -11,7 +11,9 @@ use calendar_storage::SourceSyncOutcome;
 use serde_json::{json, Value};
 
 pub(crate) fn routes() -> Router<AdminState> {
-    Router::new().route("/api/admin/v1/sources/{source_id}/diagnostics", get(read))
+    Router::new()
+        .route("/api/admin/v1/sources/{source_id}/diagnostics", get(read))
+        .route("/api/admin/v1/audit", get(audit))
 }
 async fn read(
     State(state): State<AdminState>,
@@ -58,6 +60,24 @@ async fn read(
         "freshness":freshness,"sync_status":sync_status,"deliveries":deliveries,"more_deliveries":row.more_deliveries}),
     ))
 }
+/// The latest management changes; identifiers, revisions, actions and times only.
+async fn audit(State(state): State<AdminState>) -> Result<Json<Value>, StatusCode> {
+    let page = state
+        .services
+        .run_task(async |db| db.recent_audit().await)
+        .await
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .map_err(error)?;
+    let items: Vec<_> = page
+        .items
+        .into_iter()
+        .map(|e| {
+            json!({"kind":e.kind,"subject_id":e.subject_id,"source_id":e.source_id,
+            "revision":e.revision,"action":e.action,"actor":e.actor,"at":e.at})
+        })
+        .collect();
+    Ok(Json(json!({"items":items,"more":page.more})))
+}
 pub(crate) fn describe(document: &mut Value) {
     let nullable_time = json!({"type":["integer","null"],"description":"Unix milliseconds"});
     let mut delivery = json!({"type":"object","additionalProperties":false,"properties":{
@@ -102,6 +122,29 @@ pub(crate) fn describe(document: &mut Value) {
         .keys()
         .collect::<Vec<_>>());
     document["components"]["schemas"]["SourceDiagnostic"] = source;
+    let mut entry = json!({"type":"object","additionalProperties":false,"properties":{
+        "kind":{"type":"string","enum":["source","rule","output","subscription","producer_token","deletion_approval"]},
+        "subject_id":{"type":"string"},"source_id":{"type":["string","null"],"description":"Owning source of a producer token"},
+        "revision":{"type":["integer","null"]},
+        "action":{"type":"string","enum":["create","update","retire","credential_changed","rotate","issue","revoke","approve"]},
+        "actor":{"type":["string","null"],"description":"First 12 hex digits of the administrator digest; null for system changes"},
+        "at":{"type":"integer","description":"Unix milliseconds"}
+    }});
+    entry["required"] = json!(entry["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .collect::<Vec<_>>());
+    document["components"]["schemas"]["AuditEntry"] = entry;
+    document["components"]["schemas"]["AuditPage"] = json!({"type":"object","additionalProperties":false,"required":["items","more"],
+        "properties":{"items":{"type":"array","maxItems":100,"items":{"$ref":"#/components/schemas/AuditEntry"}},"more":{"type":"boolean"}}});
+    document["paths"]["/api/admin/v1/audit"] = json!({"get":{
+        "summary":"Read the latest 100 management changes, newest first; not a complete audit export",
+        "parameters":[{"name":"Cf-Access-Jwt-Assertion","in":"header","required":true,"schema":{"type":"string"}},
+            {"name":"__Host-calrelay_admin","in":"cookie","required":true,"schema":{"type":"string"}}],
+        "responses":{"200":{"description":"Identifiers, revisions, actions and times only","content":{"application/json":{"schema":{"$ref":"#/components/schemas/AuditPage"}}}},
+            "403":{"description":"Management authentication denied"},"500":{"description":"Storage unavailable"},"503":{"description":"Service stopping or unavailable"}}
+    }});
     document["paths"]["/api/admin/v1/sources/{source_id}/diagnostics"] = json!({"get":{
         "summary":"Read source snapshot/freshness, last classified sync attempt and latest 20 created jobs",
         "parameters":[{"name":"source_id","in":"path","required":true,"schema":{"type":"string"}},

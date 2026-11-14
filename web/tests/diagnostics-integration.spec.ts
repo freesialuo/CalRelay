@@ -258,3 +258,25 @@ test("persisted sync status: never attempted, then a classified attempt with its
     `最近同步尝试：${new Date(attempted).toISOString()} · 结果：上游要求稍后重试 · 连续失败 2 次 · 最早下次请求：${new Date(attempted + 3_600_000).toISOString()}`,
   );
 });
+test("recent management changes are listed read-only and newest first", async ({
+  page,
+}) => {
+  await login(page);
+  const s = await source(page);
+  const card = await open(page);
+  const audit = card.getByLabel("最近管理变更");
+  await expect(audit).toBeEmpty();
+  await card
+    .getByRole("button", { name: "读取最近管理变更", exact: true })
+    .click();
+  await expect(audit).toContainText(`来源 ${s.id} · 修订 2 · 更新`);
+  await expect(audit).toContainText(`来源 ${s.id} · 修订 1 · 创建`);
+  const text = (await audit.textContent()) ?? "";
+  expect(text.indexOf("修订 2 · 更新")).toBeLessThan(
+    text.indexOf("修订 1 · 创建"),
+  );
+  const response = await page.request.get("/api/admin/v1/audit");
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  const body = await response.json();
+  expect(body.items[0].actor).toMatch(/^[0-9a-f]{12}$/);
+});

@@ -11,4 +11,6 @@
 - 投递显示当前 job state、最近 attempt outcome 和时间，兼容仍在途、结果未知、重试及晚到 accepted 的不同状态。`accepted`/`accepted_at` 表示上游接收，不代表设备显示；无任务不能证明规则完成规划。`next_attempt_at` 是持久调度记录，只有 retry_wait 才标为下次重试，不承诺精确执行时刻。
 - 仅输出来源/任务/规则/输出标识、枚举和时间，不输出事件正文、endpoint、credential handle、lease token、request ID、feed URL/token 或外部错误正文。所有文本通过 DOM textContent 渲染，未可信或超限响应不显示为成功。
 
+诊断页面另有“最近管理变更”（#196）：按需调用 `GET /api/admin/v1/audit`（同一 guard、`no-store`），列出来源配置、规则/输出、汇总订阅、生产者令牌与超限删除批准的最近 100 条变更，最新在前，以 `more` 提示更早记录；每条只含类型、对象 ID、令牌所属来源、修订、动作、管理员摘要前 12 位（系统变更为空）与时间，不含配置正文、密钥、令牌或事件内容。这不是完整审计导出；会话失效时清除旧结果。
+
 验证范围：真实 HTTPS 浏览器登录、guard、SQLite 和读取 API；投递状态由测试专用 SQLite 夹具构造，不发送真实 Bark，也不代表生产端到端互操作已完成。#77/#35 的其余验收继续保留。

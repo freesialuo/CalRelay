@@ -1,5 +1,66 @@
 // Generated from the local Rust service OpenAPI. Run npm run generate.
 export interface paths {
+    "/api/admin/v1/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the latest 100 management changes, newest first; not a complete audit export */
+        get: {
+            parameters: {
+                query?: never;
+                header: {
+                    "Cf-Access-Jwt-Assertion": string;
+                };
+                path?: never;
+                cookie: {
+                    "__Host-calrelay_admin": string;
+                };
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Identifiers, revisions, actions and times only */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditPage"];
+                    };
+                };
+                /** @description Management authentication denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Storage unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service stopping or unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/bootstrap": {
         parameters: {
             query?: never;
@@ -3917,6 +3978,24 @@ export interface components {
             revision: number;
             revoked_at: number | null;
             subscription_id: string;
+        };
+        AuditEntry: {
+            /** @enum {string} */
+            action: "create" | "update" | "retire" | "credential_changed" | "rotate" | "issue" | "revoke" | "approve";
+            /** @description First 12 hex digits of the administrator digest; null for system changes */
+            actor: string | null;
+            /** @description Unix milliseconds */
+            at: number;
+            /** @enum {string} */
+            kind: "source" | "rule" | "output" | "subscription" | "producer_token" | "deletion_approval";
+            revision: number | null;
+            /** @description Owning source of a producer token */
+            source_id: string | null;
+            subject_id: string;
+        };
+        AuditPage: {
+            items: components["schemas"]["AuditEntry"][];
+            more: boolean;
         };
         BarkOutputConfigurationRecord: {
             configuration: components["schemas"]["BarkOutputConfigurationV1"];
