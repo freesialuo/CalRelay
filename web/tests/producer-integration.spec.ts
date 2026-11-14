@@ -187,16 +187,13 @@ test("producer requests that must fail are rejected without side effects or admi
   const committed = await (
     await page.request.get(`${base}/state`, { headers: bearer(secret) })
   ).json();
-  expect(
-    (
-      await send(
-        batches,
-        secret,
-        "replay",
-        envelope({ proposed_checkpoint: "changed" }),
-      )
-    ).status(),
-  ).toBe(409);
+  // The changed envelope is valid at the current revision, so only the reused key rejects it.
+  const changed = envelope({
+    base_source_revision: committed.source_revision,
+    proposed_checkpoint: "changed",
+  });
+  expect((await send(batches, secret, "replay", changed)).status()).toBe(409);
+  expect((await send(batches, secret, "fresh", changed)).status()).toBe(200);
 
   // A producer token grants no management power, with or without a browser Origin.
   const anonymous = await playwright.request.newContext({
@@ -231,10 +228,10 @@ test("producer requests that must fail are rejected without side effects or admi
   expect((await send(batches, secret, "expired", envelope())).status()).toBe(
     401,
   );
-  // Nothing but the one accepted batch changed the source.
   const after = await (
     await page.request.get(`/api/admin/v1/sources/${s.id}/diagnostics`)
   ).json();
-  expect(after.snapshot_revision).toBe(committed.source_revision);
+  // Only the two accepted batches changed the source.
   expect(committed.source_revision).toBe(before.source_revision + 1);
+  expect(after.snapshot_revision).toBe(committed.source_revision + 1);
 });
