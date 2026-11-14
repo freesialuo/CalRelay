@@ -45,7 +45,10 @@ export const status = (page: Page) => page.locator("main > p[role=status]");
 
 export async function source(
   page: Page,
-  mode: "ics:manual-static" | "ics:pull" = "ics:manual-static",
+  mode:
+    | "ics:manual-static"
+    | "ics:pull"
+    | "standard-calendar:push-only" = "ics:manual-static",
   endpoint?: string,
   conditional = false,
 ) {
