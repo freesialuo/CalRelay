@@ -66,6 +66,49 @@ test("browser configuration drives actual scanner planner delivery and distinct 
     .getByRole("button", { name: "上传并替换快照", exact: true })
     .click();
   await expect(status(page)).toContainText("变更 1 个事件");
+  // A push-only producer writes its only event through a token issued in the browser.
+  const d = await source(page, "standard-calendar:push-only");
+  await page.getByRole("button", { name: "签发令牌", exact: true }).click();
+  const secret = await page
+    .getByLabel("新令牌密钥（只显示这一次）")
+    .inputValue();
+  const ingest = `/api/ingest/standard-calendar/v1/sources/${d.id}`;
+  const bearer = { authorization: `Bearer ${secret}` };
+  const pushState = await (
+    await request.get(`${ingest}/state`, { headers: bearer })
+  ).json();
+  const pushed = await request.post(`${ingest}/batches`, {
+    headers: { ...bearer, "idempotency-key": "system-push-1" },
+    data: {
+      protocol_version: "standard-calendar-source/v1",
+      batch_id: "system-push-1",
+      mode: "snapshot",
+      base_source_revision: pushState.source_revision,
+      base_config_revision: pushState.config_revision,
+      base_checkpoint: null,
+      proposed_checkpoint: null,
+      complete: true,
+      pages: 1,
+      collection_tag: null,
+      operations: [
+        {
+          op: "upsert",
+          calendar_id: d.calendar,
+          event: {
+            schema_version: "1.0",
+            external_uid: "pushed",
+            title: "Pushed synthetic event",
+            status: "confirmed",
+            start: {
+              kind: "utc",
+              value: new Date(due).toISOString().replace(/\.\d+Z$/, "Z"),
+            },
+          },
+        },
+      ],
+    },
+  });
+  expect(pushed.status()).toBe(200);
   const outputId = await output(page);
   await page
     .getByLabel("Bark HTTPS origin", { exact: false })
@@ -78,7 +121,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   await page.getByLabel("名称", { exact: true }).fill("系统双源规则");
   await page.getByLabel("提前提醒（秒）").fill("0");
   await page.getByRole("button", { name: "读取来源选项", exact: true }).click();
-  for (const s of [a, b, c]) {
+  for (const s of [a, b, c, d]) {
     await page
       .getByRole("combobox", { name: "选择来源", exact: true })
       .selectOption(s.id);
@@ -122,7 +165,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       },
       { timeout: 10000, intervals: [100, 250, 500] },
     )
-    .toEqual({ events: 3, watermarks: 3 });
+    .toEqual({ events: 4, watermarks: 4 });
   const clock = state();
   function frame(utc: number) {
     if (!clock.clock_file) throw new Error("Missing controlled clock");
@@ -141,10 +184,10 @@ test("browser configuration drives actual scanner planner delivery and distinct 
   await expect
     .poll(observed, { timeout: 75000, intervals: [100, 250, 500] })
     .toMatchObject({
-      events: 3,
-      watermarks: 3,
-      accepted: 3,
-      accepted_logical: 3,
+      events: 4,
+      watermarks: 4,
+      accepted: 4,
+      accepted_logical: 4,
     });
   const feed = await request.get(capability);
   expect(feed.status()).toBe(200);
@@ -175,7 +218,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
         { timeout: 3000 },
       )
       .toBe(503);
-    expect(observed().accepted).toBe(3);
+    expect(observed().accepted).toBe(4);
     // Management authentication keeps real UTC despite business time movement.
     expect((await page.request.get("/api/admin/v1/sources")).status()).toBe(
       200,
@@ -193,7 +236,7 @@ test("browser configuration drives actual scanner planner delivery and distinct 
       (r: { kind: string; status: number }) =>
         r.kind === "bark" && r.status === 200,
     ),
-  ).toHaveLength(3);
+  ).toHaveLength(4);
   for (const source of ["a", "b"])
     expect(
       network.requests.filter(
