@@ -1,5 +1,5 @@
-//! standard-calendar-source/v1 batches for push-only sources: single-page snapshots (#174) and
-//! deltas (#176). Multi-page batches are rejected as not yet supported.
+//! standard-calendar-source/v1 batches for push-only sources: snapshots (#174) and deltas (#176),
+//! single- or multi-page (#194).
 //! Never log bearer bytes, envelopes, event bodies or idempotency keys.
 use crate::{ingest::SystemClock, Services};
 use axum::{
@@ -11,7 +11,9 @@ use axum::{
     Json, Router,
 };
 use calendar_application::{configuration::valid_id, EventV1};
-use calendar_storage::envelope::{BatchMode, BatchOperation, EnvelopeBatch, EnvelopeError};
+use calendar_storage::envelope::{
+    BatchMode, BatchOperation, BatchOutcome, EnvelopeBatch, EnvelopeError,
+};
 use serde::{de, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -210,6 +212,7 @@ fn failure(error: EnvelopeError) -> Response {
         EnvelopeError::NotAccepting | EnvelopeError::Conflict | EnvelopeError::ReviewRequired => {
             StatusCode::CONFLICT.into_response()
         }
+        EnvelopeError::Budget => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         EnvelopeError::Capacity => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         EnvelopeError::Database => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -240,10 +243,7 @@ async fn batch(
     let Ok(envelope) = serde_json::from_value::<Envelope>(value) else {
         return StatusCode::UNPROCESSABLE_ENTITY.into_response();
     };
-    // Not yet supported: multi-page collections.
-    if envelope.pages != 1 || envelope.collection_tag.is_some() {
-        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
-    }
+    let batch_id = envelope.batch_id.clone();
     let mode = match envelope.mode.as_str() {
         "snapshot" => BatchMode::Snapshot,
         "delta" => BatchMode::Delta {
@@ -271,11 +271,13 @@ async fn batch(
         source_id: source.clone(),
         key: key.into(),
         digest,
-        batch_id: envelope.batch_id,
+        batch_id: batch_id.clone(),
         mode,
         base_config_revision: envelope.base_config_revision,
         base_source_revision: envelope.base_source_revision,
         proposed_checkpoint: envelope.proposed_checkpoint,
+        pages: envelope.pages,
+        collection_tag: envelope.collection_tag.clone(),
         operations,
     };
     let result = s
@@ -288,8 +290,17 @@ async fn batch(
         None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Some(Err(error)) => failure(error),
         // Explicit allowlist: no event content is echoed.
-        Some(Ok(receipt)) => ok(json!({"source_id":source,"batch_id":receipt.batch_id,
+        Some(Ok(BatchOutcome::Committed(receipt))) => ok(json!({"source_id":source,"batch_id":receipt.batch_id,
             "source_revision":receipt.source_revision,"changed_events":receipt.changed_events})),
+        Some(Ok(BatchOutcome::Staged {
+            received_pages,
+            pages,
+        })) => (
+            StatusCode::ACCEPTED,
+            ok(json!({"source_id":source,"batch_id":batch_id,"collection_tag":envelope.collection_tag,
+                "received_pages":received_pages,"pages":pages})),
+        )
+            .into_response(),
     }
 }
 async fn state(
@@ -324,6 +335,10 @@ pub(crate) fn describe(document: &mut Value) {
         "required":["source_id","batch_id","source_revision","changed_events"],
         "properties":{"source_id":{"type":"string"},"batch_id":{"type":"string"},
             "source_revision":{"type":"integer"},"changed_events":{"type":"integer","minimum":0}}});
+    schemas["StandardCalendarPageReceipt"] = json!({"type":"object","additionalProperties":false,
+        "required":["source_id","batch_id","collection_tag","received_pages","pages"],
+        "properties":{"source_id":{"type":"string"},"batch_id":{"type":"string"},"collection_tag":{"type":"string"},
+            "received_pages":{"type":"integer","minimum":1},"pages":{"type":"integer","minimum":2,"maximum":32}}});
     schemas["PushSourceState"] = json!({"type":"object","additionalProperties":false,
         "required":["source_id","config_revision","source_revision","checkpoint","has_snapshot"],
         "properties":{"source_id":{"type":"string"},"config_revision":{"type":"integer"},
@@ -331,15 +346,16 @@ pub(crate) fn describe(document: &mut Value) {
             "has_snapshot":{"type":"boolean"}}});
     document["paths"][BATCHES] = json!({"post":{
         "summary":"Commit one standard-calendar-source/v1 snapshot or delta of a push-only source",
-        "description":"Body: schemas/standard-calendar-source-v1.schema.json. This version accepts pages=1 and collection_tag=null only. base_config_revision and base_source_revision must equal the current values (see the state endpoint). A snapshot needs the snapshot capability and a token with both upsert and delete permission; events absent from it are deleted, and more than 100 deletions or emptying a non-empty source is rejected unchanged pending administrator approval. A delta needs the delta capability (and delete for delete operations), the token permission of each operation kind, an existing snapshot baseline and base_checkpoint equal to the persisted checkpoint; each delete must name the event's current revision, and no absent event is deleted. A lower source_sequence than stored is a conflict. proposed_checkpoint is persisted only on success. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.",
+        "description":"Body: schemas/standard-calendar-source-v1.schema.json. A collection of 2-32 pages shares one collection_tag and identical mode, pages, base revisions, base_checkpoint and proposed_checkpoint; pages are numbered in arrival order, each with its own Idempotency-Key. Earlier pages are held (202) and nothing is visible until the final page commits the whole collection atomically under every rule below; afterwards every page key replays the collection receipt. One open collection per source: starting another tag discards an unfinished one; held pages expire after an hour; a collection is limited to 10000 operations and 32 MiB (413). base_config_revision and base_source_revision must equal the current values (see the state endpoint). A snapshot needs the snapshot capability and a token with both upsert and delete permission; events absent from it are deleted, and more than 100 deletions or emptying a non-empty source is rejected unchanged pending administrator approval. A delta needs the delta capability (and delete for delete operations), the token permission of each operation kind, an existing snapshot baseline and base_checkpoint equal to the persisted checkpoint; each delete must name the event's current revision, and no absent event is deleted. A lower source_sequence than stored is a conflict. proposed_checkpoint is persisted only on success. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.",
         "security":[{"IngestBearer":[]}],
         "parameters":[string("source_id","path"),string("Idempotency-Key","header")],
         "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","description":"standard-calendar-source/v1 envelope"}}}},
         "responses":{"200":{"description":"Snapshot committed, or the identical receipt replayed","content":{"application/json":{"schema":{"$ref":"#/components/schemas/StandardCalendarBatchReceipt"}}}},
             "401":{"description":"Token missing, wrong source, revoked, expired or without the permission the batch needs"},
             "409":{"description":"Source not accepting this mode, stale base revision or checkpoint, missing baseline, delete revision mismatch, lower source sequence, idempotency conflict, or deletions needing approval"},
-            "413":{"description":"Request exceeds the byte budget"},
-            "422":{"description":"Invalid envelope, event or calendar; multi-page batch not yet supported"},
+            "413":{"description":"Request or collection exceeds the byte or operation budget"},
+            "202":{"description":"Page held until the collection is complete","content":{"application/json":{"schema":{"$ref":"#/components/schemas/StandardCalendarPageReceipt"}}}},
+            "422":{"description":"Invalid envelope, event or calendar"},
             "500":{"description":"Persistence failed"},"503":{"description":"Stopping or receipt capacity exhausted"}}
     }});
     document["paths"][STATE] = json!({"get":{

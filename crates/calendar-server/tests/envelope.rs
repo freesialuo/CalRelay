@@ -250,11 +250,8 @@ async fn malformed_unsupported_and_unauthorized_batches_change_nothing() {
         |v: &mut Value| v["protocol_version"] = json!("v2"),
         |v: &mut Value| v["operations"][0]["calendar_id"] = json!("not-this-source"),
         |v: &mut Value| v["operations"][0]["event"]["status"] = json!("unknown"),
-        // Not yet supported.
-        |v: &mut Value| {
-            v["pages"] = json!(2);
-            v["collection_tag"] = json!("collection");
-        },
+        // Two pages need a shared collection tag.
+        |v: &mut Value| v["pages"] = json!(2),
     ] {
         let mut body = valid.clone();
         mutate(&mut body);
@@ -399,6 +396,8 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
         base_config_revision: s.record.config_revision,
         base_source_revision: source_revision,
         proposed_checkpoint: None,
+        pages: 1,
+        collection_tag: None,
         operations: vec![],
     };
     let policy = IngestPolicy {
@@ -410,19 +409,19 @@ async fn receipts_are_bounded_and_expire_into_fresh_base_checks() {
         .ingest_batch(secret, batch("a", 1, base), policy, &At(10))
         .await
         .unwrap();
-    assert!(!first.replayed);
+    assert!(
+        matches!(first, calendar_storage::envelope::BatchOutcome::Committed(ref r) if !r.replayed)
+    );
     // Capacity is full: a new key is refused without evicting the live receipt.
     assert_eq!(
         db.ingest_batch(secret, batch("b", 2, base + 1), policy, &At(11))
             .await,
         Err(EnvelopeError::Capacity)
     );
-    assert!(
-        db.ingest_batch(secret, batch("a", 1, base), policy, &At(60_009))
-            .await
-            .unwrap()
-            .replayed
-    );
+    assert!(matches!(
+        db.ingest_batch(secret, batch("a", 1, base), policy, &At(60_009)).await,
+        Ok(calendar_storage::envelope::BatchOutcome::Committed(r)) if r.replayed
+    ));
     // The budget is shared: a single-event write (#30) cannot add a receipt past it either.
     let event: calendar_application::EventV1 = serde_json::from_value(event("one", "One")).unwrap();
     let single = calendar_application::IngestRequest {
@@ -669,6 +668,191 @@ async fn a_delta_only_source_reads_its_state_but_cannot_start_without_a_baseline
             .await
             .0,
         StatusCode::CONFLICT
+    );
+    s.server.services.drain().await;
+}
+
+fn paged(mut body: Value, tag: &str, pages: u32, batch: &str) -> Value {
+    body["pages"] = json!(pages);
+    body["collection_tag"] = json!(tag);
+    body["batch_id"] = json!(batch);
+    body
+}
+
+#[tokio::test]
+async fn a_multi_page_snapshot_commits_only_when_every_page_has_arrived() {
+    let s = setup().await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    let first = paged(
+        envelope(config, base, &[("a", "A"), ("b", "B")]),
+        "t1",
+        2,
+        "p1",
+    );
+    let staged = json!({"source_id":"push","batch_id":"p1","collection_tag":"t1","received_pages":1,"pages":2});
+    assert_eq!(
+        post(&s, &s.full, "k1", &first).await,
+        (StatusCode::ACCEPTED, staged.clone())
+    );
+    // Nothing is visible before the collection is complete.
+    assert_eq!(live_events(&s).await, 0);
+    assert_eq!(state(&s).await["source_revision"], json!(base));
+    // A page replays its staged answer; the same key with another page is a conflict.
+    assert_eq!(
+        post(&s, &s.full, "k1", &first).await,
+        (StatusCode::ACCEPTED, staged)
+    );
+    let other = paged(envelope(config, base, &[("z", "Z")]), "t1", 2, "p1");
+    assert_eq!(
+        post(&s, &s.full, "k1", &other).await.0,
+        StatusCode::CONFLICT
+    );
+    // A page whose header differs from the first page is refused.
+    let mut mismatched = paged(envelope(config, base, &[("c", "C")]), "t1", 2, "p2");
+    mismatched["proposed_checkpoint"] = json!("other");
+    assert_eq!(
+        post(&s, &s.full, "k2", &mismatched).await.0,
+        StatusCode::CONFLICT
+    );
+    let last = paged(envelope(config, base, &[("c", "C")]), "t1", 2, "p2");
+    let (status, receipt) = post(&s, &s.full, "k2", &last).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        receipt,
+        json!({"source_id":"push","batch_id":"p2","source_revision":base+1,"changed_events":3})
+    );
+    assert_eq!(live_events(&s).await, 3);
+    assert_eq!(state(&s).await["checkpoint"], json!("cp"));
+    // After the commit every page key replays the collection receipt.
+    assert_eq!(
+        post(&s, &s.full, "k1", &first).await,
+        (StatusCode::OK, receipt)
+    );
+    s.server.services.drain().await;
+}
+
+#[tokio::test]
+async fn a_new_collection_replaces_an_unfinished_one_and_bad_collections_commit_nothing() {
+    let s = setup().await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    let old = paged(envelope(config, base, &[("old", "O")]), "old", 2, "o1");
+    assert_eq!(post(&s, &s.full, "o1", &old).await.0, StatusCode::ACCEPTED);
+    for (key, uid) in [("n1", "a"), ("n2", "b")] {
+        let page = paged(envelope(config, base, &[(uid, "N")]), "new", 2, key);
+        post(&s, &s.full, key, &page).await;
+        // Starting "new" discarded the unfinished "old" collection.
+        let held: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM envelope_pages WHERE collection_tag='old'")
+                .fetch_one(s.server.services.storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(held, 0);
+    }
+    assert_eq!(live_events(&s).await, 2);
+    let rev = base + 1;
+    // A duplicate UID across pages rejects the whole collection.
+    let one = paged(envelope(config, rev, &[("a", "A")]), "dup", 2, "d1");
+    assert_eq!(post(&s, &s.full, "d1", &one).await.0, StatusCode::ACCEPTED);
+    let two = paged(envelope(config, rev, &[("a", "A2")]), "dup", 2, "d2");
+    assert_eq!(
+        post(&s, &s.full, "d2", &two).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(state(&s).await["source_revision"], json!(rev));
+    // At most 10000 operations across all pages.
+    let uids: Vec<String> = (0..10_200).map(|n| format!("u{n}")).collect();
+    let mut status = StatusCode::OK;
+    for (n, chunk) in uids.chunks(3_400).enumerate() {
+        let events: Vec<(&str, &str)> = chunk.iter().map(|u| (u.as_str(), "x")).collect();
+        let page = paged(envelope(config, rev, &events), "big", 3, &format!("b{n}"));
+        status = post(&s, &s.full, &format!("b{n}"), &page).await.0;
+    }
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(state(&s).await["source_revision"], json!(rev));
+    s.server.services.drain().await;
+}
+
+#[tokio::test]
+async fn a_multi_page_delta_applies_every_page_atomically() {
+    let s = setup_with(incremental).await;
+    let config = s.record.config_revision;
+    let base = s.record.source_revision;
+    assert_eq!(
+        post(&s, &s.full, "snap", envelope(config, base, &[("a", "A")]))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let rev = base + 1;
+    let one = paged(
+        delta(config, rev, Some("cp"), "cp2", vec![upsert("b", "B")]),
+        "d",
+        2,
+        "d1",
+    );
+    assert_eq!(post(&s, &s.full, "d1", &one).await.0, StatusCode::ACCEPTED);
+    assert!(!live(&s, "b").await);
+    let two = paged(
+        delta(config, rev, Some("cp"), "cp2", vec![remove("a", 1)]),
+        "d",
+        2,
+        "d2",
+    );
+    let (status, receipt) = post(&s, &s.full, "d2", &two).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["changed_events"], 2);
+    assert!(live(&s, "b").await && !live(&s, "a").await);
+    assert_eq!(state(&s).await["checkpoint"], json!("cp2"));
+    s.server.services.drain().await;
+}
+
+#[tokio::test]
+async fn unfinished_pages_expire_after_an_hour() {
+    use calendar_storage::envelope::{BatchOperation, BatchOutcome};
+    let s = setup().await;
+    let db = &s.server.services.storage;
+    let page = |key: &str, uid: &str| EnvelopeBatch {
+        source_id: "push".into(),
+        key: key.into(),
+        digest: [key.len() as u8; 32],
+        batch_id: key.into(),
+        mode: BatchMode::Snapshot,
+        base_config_revision: s.record.config_revision,
+        base_source_revision: s.record.source_revision,
+        proposed_checkpoint: None,
+        pages: 2,
+        collection_tag: Some("t".into()),
+        operations: vec![BatchOperation::Upsert {
+            calendar_id: "calendar-a".into(),
+            event: Box::new(serde_json::from_value(event(uid, "x")).unwrap()),
+        }],
+    };
+    let policy = IngestPolicy::default();
+    let secret = s.full.as_bytes();
+    let first = db
+        .ingest_batch(secret, page("a", "a"), policy, &At(1_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        first,
+        BatchOutcome::Staged {
+            received_pages: 1,
+            pages: 2
+        }
+    );
+    // The first page expired, so the next one starts the collection again.
+    let second = db
+        .ingest_batch(secret, page("bb", "b"), policy, &At(3_601_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        second,
+        BatchOutcome::Staged {
+            received_pages: 1,
+            pages: 2
+        }
     );
     s.server.services.drain().await;
 }

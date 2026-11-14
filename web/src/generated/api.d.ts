@@ -2634,7 +2634,7 @@ export interface paths {
         put?: never;
         /**
          * Commit one standard-calendar-source/v1 snapshot or delta of a push-only source
-         * @description Body: schemas/standard-calendar-source-v1.schema.json. This version accepts pages=1 and collection_tag=null only. base_config_revision and base_source_revision must equal the current values (see the state endpoint). A snapshot needs the snapshot capability and a token with both upsert and delete permission; events absent from it are deleted, and more than 100 deletions or emptying a non-empty source is rejected unchanged pending administrator approval. A delta needs the delta capability (and delete for delete operations), the token permission of each operation kind, an existing snapshot baseline and base_checkpoint equal to the persisted checkpoint; each delete must name the event's current revision, and no absent event is deleted. A lower source_sequence than stored is a conflict. proposed_checkpoint is persisted only on success. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.
+         * @description Body: schemas/standard-calendar-source-v1.schema.json. A collection of 2-32 pages shares one collection_tag and identical mode, pages, base revisions, base_checkpoint and proposed_checkpoint; pages are numbered in arrival order, each with its own Idempotency-Key. Earlier pages are held (202) and nothing is visible until the final page commits the whole collection atomically under every rule below; afterwards every page key replays the collection receipt. One open collection per source: starting another tag discards an unfinished one; held pages expire after an hour; a collection is limited to 10000 operations and 32 MiB (413). base_config_revision and base_source_revision must equal the current values (see the state endpoint). A snapshot needs the snapshot capability and a token with both upsert and delete permission; events absent from it are deleted, and more than 100 deletions or emptying a non-empty source is rejected unchanged pending administrator approval. A delta needs the delta capability (and delete for delete operations), the token permission of each operation kind, an existing snapshot baseline and base_checkpoint equal to the persisted checkpoint; each delete must name the event's current revision, and no absent event is deleted. A lower source_sequence than stored is a conflict. proposed_checkpoint is persisted only on success. Idempotency receipts are keyed per token and kept for the ingest retention; the same key with a different SHA-256 of the RFC 8785 canonical envelope is a conflict. Duplicate JSON keys and non-integer or unsafe-integer numbers are rejected.
          */
         post: {
             parameters: {
@@ -2662,6 +2662,15 @@ export interface paths {
                         "application/json": components["schemas"]["StandardCalendarBatchReceipt"];
                     };
                 };
+                /** @description Page held until the collection is complete */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StandardCalendarPageReceipt"];
+                    };
+                };
                 /** @description Token missing, wrong source, revoked, expired or without the permission the batch needs */
                 401: {
                     headers: {
@@ -2676,14 +2685,14 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Request exceeds the byte budget */
+                /** @description Request or collection exceeds the byte or operation budget */
                 413: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description Invalid envelope, event or calendar; multi-page batch not yet supported */
+                /** @description Invalid envelope, event or calendar */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4132,6 +4141,13 @@ export interface components {
             changed_events: number;
             source_id: string;
             source_revision: number;
+        };
+        StandardCalendarPageReceipt: {
+            batch_id: string;
+            collection_tag: string;
+            pages: number;
+            received_pages: number;
+            source_id: string;
         };
     };
     responses: never;
