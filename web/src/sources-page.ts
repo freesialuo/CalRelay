@@ -453,6 +453,41 @@ export function mountSources(
       });
       form.append(refreshNow);
     }
+    if (
+      record &&
+      !retired &&
+      record.configuration.enabled &&
+      ["pull", "push-only"].includes(record.configuration.mode)
+    ) {
+      const approve = node("button", "批准下一次超限删除");
+      approve.type = "button";
+      const confirm = node("button", "确认批准");
+      confirm.type = "button";
+      confirm.hidden = true;
+      for (const button of [approve, confirm]) {
+        writes.add(button);
+        localWrites.add(button);
+      }
+      approve.addEventListener("click", () => {
+        confirm.hidden = false;
+        display(
+          "确认后，下一次快照提交（推送批次或周期拉取）可以删除超过 100 个事件或清空来源；只作用于当前配置版本与来源修订，24 小时内有效，删除不可撤销。",
+          "pending",
+        );
+      });
+      confirm.addEventListener("click", () => {
+        confirm.hidden = true;
+        void write(async (sourceId, signal) => {
+          const granted = await api.approveDeletions(sourceId, signal);
+          if (!disposed && !signal.aborted)
+            display(
+              `服务端已批准：配置版本 ${granted.config_revision}、来源修订 ${granted.source_revision} 的下一次提交可以超限删除，至 ${new Date(granted.expires_at).toISOString()} 有效。任何提交都会使其失效。`,
+              "success",
+            );
+        }, false);
+      });
+      form.append(approve, confirm);
+    }
     if (retired)
       editor.append(
         node(

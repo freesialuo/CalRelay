@@ -1306,3 +1306,107 @@ test("a superseded token list response never overwrites a newer one", async ({
     page.getByRole("button", { name: "撤销 pt_live", exact: true }),
   ).toHaveCount(0);
 });
+
+// Over-limit deletion approval (#188).
+async function approvalBackend(
+  page: Page,
+  configuration: SourceConfiguration,
+  reply: { status: number; json?: unknown },
+) {
+  const base = backend(page, {
+    source_id: "source_a",
+    config_revision: 3,
+    source_revision: 7,
+    retired_at: null,
+    configuration,
+  });
+  await base.install();
+  const calls: string[] = [];
+  await page.route(
+    /\/api\/admin\/v1\/sources\/source_a\/deletion-approval$/,
+    async (route) => {
+      calls.push(
+        `${route.request().method()} ${route.request().postData() ?? ""}`,
+      );
+      await route.fulfill({
+        ...reply,
+        headers: { "x-admin-write-nonce": `rotated_${calls.length}` },
+      });
+    },
+  );
+  await page.goto(fixture);
+  await page.getByRole("button", { name: "查看 / 编辑", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("已读取配置版本 3");
+  return calls;
+}
+const approveButton = (page: Page) =>
+  page.getByRole("button", { name: "批准下一次超限删除", exact: true });
+const confirmApproval = (page: Page) =>
+  page.getByRole("button", { name: "确认批准", exact: true });
+const approval = {
+  source_id: "source_a",
+  config_revision: 3,
+  source_revision: 7,
+  expires_at: 1_900_000_000_000,
+};
+
+for (const [name, configuration] of [
+  ["pull", pullConfig()],
+  ["push-only", pushConfig()],
+] as const) {
+  test(`an enabled ${name} source approves the next over-limit deletion after confirmation`, async ({
+    page,
+  }) => {
+    const calls = await approvalBackend(page, configuration, {
+      status: 201,
+      json: approval,
+    });
+    await approveButton(page).click();
+    expect(calls).toHaveLength(0);
+    await confirmApproval(page).click();
+    await expect(page.getByRole("status")).toContainText(
+      `服务端已批准：配置版本 3、来源修订 7 的下一次提交可以超限删除，至 ${new Date(approval.expires_at).toISOString()} 有效`,
+    );
+    expect(calls).toEqual(["POST "]);
+    await expect(confirmApproval(page)).toBeHidden();
+  });
+}
+
+test("manual-static and disabled sources offer no deletion approval", async ({
+  page,
+}) => {
+  await approvalBackend(page, staticConfig(), { status: 500 });
+  await expect(approveButton(page)).toHaveCount(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await approvalBackend(
+    page,
+    { ...pullConfig(), enabled: false },
+    {
+      status: 500,
+    },
+  );
+  await expect(approveButton(page)).toHaveCount(0);
+});
+
+test("a refused approval says nothing was approved", async ({ page }) => {
+  await approvalBackend(page, pullConfig(), { status: 409 });
+  await approveButton(page).click();
+  await confirmApproval(page).click();
+  await expect(page.getByRole("status")).toContainText("未批准");
+  await expect(page.getByRole("status")).not.toContainText("服务端已批准");
+});
+
+test("an invalid approval receipt clears write authorization", async ({
+  page,
+}) => {
+  await approvalBackend(page, pullConfig(), {
+    status: 201,
+    json: { ...approval, source_id: "other" },
+  });
+  await approveButton(page).click();
+  await confirmApproval(page).click();
+  await expect(page.getByRole("status")).toContainText(
+    "响应不符合批准回执契约",
+  );
+  await expect(authorizationMissing(page)).toBeVisible();
+});
