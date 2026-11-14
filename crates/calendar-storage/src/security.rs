@@ -131,7 +131,7 @@ fn aad(id: &str, kind: &str, version: i64) -> Vec<u8> {
     // Length-delimited canonical tuple avoids ambiguous concatenation.
     serde_json::to_vec(&("CalRelay/credential/v1", id, kind, version)).expect("serializable tuple")
 }
-fn random(bytes: &mut [u8]) -> Result<(), SecurityError> {
+pub(crate) fn random(bytes: &mut [u8]) -> Result<(), SecurityError> {
     OsRng
         .try_fill_bytes(bytes)
         .map_err(|_| SecurityError::Randomness)

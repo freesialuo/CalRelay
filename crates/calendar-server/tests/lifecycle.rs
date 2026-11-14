@@ -118,7 +118,7 @@ async fn http_contract_limits_ids_errors_and_openapi() {
     let (status, _, document) = get(app.clone(), "/api/v1/openapi.json", "GET", "").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["paths"].as_object().unwrap().len(), 23);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 25);
     let snapshot = &document["paths"]["/api/admin/v1/sources/{source_id}/snapshot"]["put"];
     assert!(snapshot["requestBody"]["content"]["text/calendar"].is_object());
     assert_eq!(

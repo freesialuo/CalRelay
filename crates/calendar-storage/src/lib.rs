@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod envelope;
 pub mod feed;
 pub mod ingest;
+pub mod producer_tokens;
 pub mod reminder_configuration;
 pub mod security;
 
